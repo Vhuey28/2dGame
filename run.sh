@@ -4,7 +4,7 @@
 # This script copies the project to /tmp, builds it, and runs it
 # This is necessary due to filesystem issues with the external drive
 
-ORIGINAL_DIR="/Volumes/NO NAME/Homework/code/my2Dgame"
+ORIGINAL_DIR="$(cd "$(dirname "$0")" && pwd)/my2Dgame"
 WORK_DIR="/tmp/my2Dgame_work"
 
 echo "Setting up game in temporary directory..."

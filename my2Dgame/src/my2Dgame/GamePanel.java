@@ -73,9 +73,7 @@ public class GamePanel extends JPanel implements Runnable{
 	int waveMessageTimer = 0;
 	String crashError = null;
 
-	// --- LPC character creation ---
-	boolean showCharacterCreation = false;
-	CharacterCreationScreen characterCreationScreen;
+
 
 	public GamePanel() {
 		this.setPreferredSize(new Dimension(screenWidth, screenHeight));
@@ -86,10 +84,9 @@ public class GamePanel extends JPanel implements Runnable{
 			@Override
 			public void keyPressed(KeyEvent e) {
 				int code = e.getKeyCode();
-				if (!gameStarted && !showCharacterCreation && code == KeyEvent.VK_ENTER) {
-					// Show character creation before entering the game
-					showCharacterCreation = true;
-					characterCreationScreen = new CharacterCreationScreen(GamePanel.this);
+				if (!gameStarted && code == KeyEvent.VK_ENTER) {
+					gameStarted = true;
+					gamePaused = false;
 					repaint();
 					return;
 				}
@@ -98,29 +95,12 @@ public class GamePanel extends JPanel implements Runnable{
 					repaint();
 				}
 			}
-			@Override
-			public void keyTyped(KeyEvent e) {
-				if (showCharacterCreation && characterCreationScreen != null) {
-					characterCreationScreen.handleKeyTyped(e);
-					repaint();
-				}
-			}
 		});
 		this.setFocusable(true);
 		this.addMouseListener(new MouseAdapter() {
 			@Override
 			public void mouseClicked(MouseEvent e) {
-				// Route click to character creation screen while active
-				if (showCharacterCreation && characterCreationScreen != null) {
-					characterCreationScreen.handleClick(e.getPoint());
-					if (characterCreationScreen.isDone()) {
-						showCharacterCreation = false;
-						gameStarted = true;
-						gamePaused = false;
-					}
-					repaint();
-					return;
-				}
+
 				if (gamePaused) {
 					if (getRestartButtonRect().contains(e.getPoint())) {
 						restartGame();
@@ -358,11 +338,7 @@ public class GamePanel extends JPanel implements Runnable{
 	}*/
 	
 	public void update() {
-		// Drive character creation screen animation while open
-		if (showCharacterCreation && characterCreationScreen != null) {
-			characterCreationScreen.update();
-			return;
-		}
+
 		if (!gameStarted || gamePaused) {
 			return;
 		}
@@ -601,11 +577,7 @@ public class GamePanel extends JPanel implements Runnable{
 		Graphics2D g2 = (Graphics2D)g;
 		
 		if (!gameStarted) {
-			if (showCharacterCreation && characterCreationScreen != null) {
-				characterCreationScreen.draw(g2);
-			} else {
-				drawStartMenu(g2);
-			}
+			drawStartMenu(g2);
 			if (gameCrashed) {
 				drawCrashMenu(g2);
 			}

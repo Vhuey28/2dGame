@@ -21,9 +21,7 @@ public class Player extends Entity{
 	KeyHandler keyH;
 	public List<String> inventory = new ArrayList<>();
 
-	// --- LPC character system ---
-	public CharacterAppearance appearance = new CharacterAppearance();
-	private final CharacterCompositor compositor;
+
 
 	public int maxHealth = 100;
 	public int health = maxHealth;
@@ -42,24 +40,13 @@ public class Player extends Entity{
 		
 		this.gp = gp;
 		this.keyH = keyH;
-		this.compositor = new CharacterCompositor(gp);
-		
-		CharacterAppearance loaded = CharacterAppearance.load("appearance.properties");
-		if (loaded != null) {
-			this.appearance = loaded;
-		}
+
 		
 		setDefaultValues();
 		getPlayerImage();
 	}
 
-	/**
-	 * Called by CharacterCreationScreen (and any code that changes appearance at runtime)
-	 * to flush the compositor cache and force a re-composite on next draw.
-	 */
-	public void refreshComposited() {
-		compositor.invalidateCache();
-	}
+
 	
 	public void setDefaultValues() {
 		
@@ -323,25 +310,7 @@ public class Player extends Entity{
 			}
 		}
 
-		// --- Try compositor first (LPC character system) ---
-		// Sheet row layout: 0=up, 1=left, 2=down, 3=right
-		int sheetRow;
-		switch (direction) {
-			case "up":    sheetRow = 0; break;
-			case "left":  sheetRow = 1; break;
-			case "down":  sheetRow = 2; break;
-			case "right": sheetRow = 3; break;
-			default:      sheetRow = 2; break;
-		}
-		int sheetCol = (spriteNum == 1) ? 0 : 2; // alternate frames 0 and 2 for walk cycle
 
-		BufferedImage compositedFrame = compositor.getFrame(appearance, sheetRow, sheetCol);
-		if (compositedFrame != null) {
-			g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
-				             java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-			g2.drawImage(compositedFrame, x - cameraX, y - cameraY, gp.tileSize, gp.tileSize, null);
-			return;
-		}
 
 		// --- Fallback: old static images ---
 		BufferedImage image = null;
