@@ -7,7 +7,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-
+import java.awt.image.BufferedImage;
 import javax.imageio.ImageIO;
 
 import my2Dgame.GamePanel;
@@ -16,14 +16,47 @@ public class tileManager {
 	GamePanel gp;
 	Tile[] tile;
 	int mapTileNum[][];
-	
+	BufferedImage tileSheet;
+
 	public tileManager(GamePanel gp) {
 		this.gp = gp;
 		
-		tile = new Tile[10];
+		tile = new Tile[256];
 		mapTileNum = new int[gp.maxWorldCol][gp.maxWorldRow];
 		getTileImage();
-		loadMap();
+		loadMap("map1.txt");
+	}
+
+	public void loadMap(String filename) {
+		try {
+			InputStream is = loadMapResource("/res/maps/" + filename, "res/maps/" + filename);
+			BufferedReader br = new BufferedReader(new InputStreamReader(is));
+			String line;
+			int row = 0;
+			while (row < gp.maxWorldRow && (line = br.readLine()) != null) {
+				line = line.trim();
+				if (line.isEmpty()) {
+					continue;
+				}
+
+				String[] tokens = line.split("[\\s,]+");
+				for (int col = 0; col < gp.maxWorldCol && col < tokens.length; col++) {
+					try {
+						mapTileNum[col][row] = Integer.parseInt(tokens[col]);
+					} catch (NumberFormatException nfe) {
+						mapTileNum[col][row] = 0;
+					}
+				}
+				row++;
+			}
+			br.close();
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+
+	public int[][] getMapTileNum() {
+		return mapTileNum;
 	}
 	
 	public void getTileImage() {
@@ -36,10 +69,47 @@ public class tileManager {
 
 			tile[2] = new Tile();
 			tile[2].image = ImageIO.read(loadTileResource("/tiles/water.png"));
+
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-	}
+	}/* 
+	public void getTileImage() {
+
+    try {
+
+        // Load ONE spritesheet
+        tileSheet = ImageIO.read(loadTileResource("/res/tile/Pixel Crawler - Free Pack/Environment/Tilesets/Floors_Tiles.png"));
+
+        int spriteSize = 16; // Original tile size inside the PNG
+
+        int columns = tileSheet.getWidth() / spriteSize;
+        int rows = tileSheet.getHeight() / spriteSize;
+
+        int index = 0;
+
+        for (int y = 0; y < rows; y++) {
+
+            for (int x = 0; x < columns; x++) {
+
+                tile[index] = new Tile();
+
+                tile[index].image = tileSheet.getSubimage(
+                        x * spriteSize,
+                        y * spriteSize,
+                        spriteSize,
+                        spriteSize);
+
+                index++;
+            }
+        }
+
+        System.out.println("Loaded " + index + " tiles.");
+
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}*/
 
 	private InputStream loadTileResource(String path) throws IOException {
 		InputStream is = getClass().getResourceAsStream(path);
@@ -150,3 +220,4 @@ public class tileManager {
 	}
 
 }
+
