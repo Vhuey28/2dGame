@@ -106,8 +106,8 @@ public class Player extends Entity{
 				direction = "right";
 				newX += speed;
 			}
-
-			if (canMoveTo(newX, newY)) {
+			
+			if (pcanMoveTo(newX, newY)) {
 				x = newX;
 				y = newY;
 				moved = true;
@@ -184,7 +184,7 @@ public class Player extends Entity{
 			}
 			int nextX = x + dx;
 			int nextY = y + dy;
-			if (canMoveTo(nextX, nextY)) {
+			if (pcanMoveTo(nextX, nextY)) {
 				x = nextX; y = nextY;
 			}
 		}
@@ -269,8 +269,8 @@ public class Player extends Entity{
 			}
 		}
 	}
-
-	private boolean canMoveTo(int nextX, int nextY) {
+	
+	private boolean pcanMoveTo(int nextX, int nextY) {
 		int left = nextX;
 		int right = nextX + gp.tileSize - 1;
 		int top = nextY;
@@ -279,7 +279,8 @@ public class Player extends Entity{
 		boolean tileBlocked = gp.isTileBlocked(left, top)
 			|| gp.isTileBlocked(right, top)
 			|| gp.isTileBlocked(left, bottom)
-			|| gp.isTileBlocked(right, bottom);
+			|| gp.isTileBlocked(right, bottom)
+			|| gp.isTileBlocked(left, top);
 
 		if (tileBlocked) {
 			return false;

@@ -1,8 +1,11 @@
 package entity;
 
 import java.awt.image.BufferedImage;
+import my2Dgame.GamePanel;
 
 public class Entity {
+
+	GamePanel gp;
 	
 	public int x, y;
 	public int speed;
@@ -12,5 +15,7 @@ public class Entity {
 	
 	public int spriteCounter = 0;
 	public int spriteNum = 1;
+
+	
 
 }

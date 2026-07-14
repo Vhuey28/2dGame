@@ -53,7 +53,7 @@ public class GamePanel extends JPanel implements Runnable{
 	public java.util.List<Enemy> enemies = new java.util.ArrayList<>();
     public java.util.List<entity.Troop> troops = new java.util.ArrayList<>();
     java.util.List<CoinItem> coins = new java.util.ArrayList<>();
-    public int gold = 0;
+    public int gold = 100;
 	String currentMap = "map1.txt";
 	java.util.List<MapLink> mapLinks = new java.util.ArrayList<>();
 	Rectangle shopArea;
@@ -135,7 +135,7 @@ public class GamePanel extends JPanel implements Runnable{
 	}
 
 	public void restartGame() {
-		gold = 0;
+		gold = 100;
 		player.health = player.maxHealth;
 		player.stamina = player.maxStamina;
 		player.mana = player.maxMana;
@@ -729,6 +729,22 @@ public class GamePanel extends JPanel implements Runnable{
 		String subtitle = "An error occurred during gameplay.";
 		int subtitleWidth = g2.getFontMetrics().stringWidth(subtitle);
 		g2.drawString(subtitle, x + (width - subtitleWidth) / 2, y + 95);
+
+		//restart button
+		Rectangle btn = getRestartButtonRect();
+		g2.setColor(new Color(180, 50, 50, 255));
+		g2.fillRoundRect(btn.x, btn.y, btn.width, btn.height, 10, 10);
+		g2.setColor(Color.white);
+		g2.drawRoundRect(btn.x, btn.y, btn.width, btn.height, 10, 10);
+		g2.setFont(new Font("Arial", Font.BOLD, 18));
+		String btnText = "Restart Game";
+		int btnTextW = g2.getFontMetrics().stringWidth(btnText);
+		g2.drawString(btnText, btn.x + (btn.width - btnTextW) / 2, btn.y + 24);
+
+		g2.setFont(new Font("Arial", Font.PLAIN, 14));
+		String controls = "Controls: WASD Move, SPACE Melee, 1/2/3 Magic, E Dodge";
+		int cw = g2.getFontMetrics().stringWidth(controls);
+		g2.drawString(controls, x + (width - cw) / 2, y + 200);
 
 		int textX = x + 20;
 		int textY = y + 130;

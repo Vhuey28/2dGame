@@ -7,11 +7,10 @@ import java.util.ArrayList;
 import java.util.Iterator;
 
 import javax.imageio.ImageIO;
-
 import my2Dgame.GamePanel;
 
 public class Enemy extends Entity {
-
+	Entity emEntity;
 	GamePanel gp;
 	BufferedImage image;
 
@@ -160,10 +159,15 @@ public class Enemy extends Entity {
 		int top = nextY;
 		int bottom = nextY + gp.tileSize - 1;
 
-		return !gp.isTileBlocked(left, top)
-			&& !gp.isTileBlocked(right, top)
-			&& !gp.isTileBlocked(left, bottom)
-			&& !gp.isTileBlocked(right, bottom);
+		boolean tileBlocked = gp.isTileBlocked(left, top)	
+			|| gp.isTileBlocked(left, top)
+			|| gp.isTileBlocked(right, top)
+			|| gp.isTileBlocked(left, bottom)
+			|| gp.isTileBlocked(right, bottom);
+		
+			if(tileBlocked) return false;
+
+		return !gp.isCollidingWithAnyEntity(nextX,nextY, this);	
 	}
 
 	public void draw(Graphics2D g2, int cameraX, int cameraY) {

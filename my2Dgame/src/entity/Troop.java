@@ -27,12 +27,27 @@ public class Troop extends Entity {
     }
 
     GamePanel gp;
+    private boolean canMoveTo(int nextX, int nextY) {
+		int left = nextX;
+		int right = nextX + gp.tileSize - 1;
+		int top = nextY;
+		int bottom = nextY + gp.tileSize - 1;
 
+		boolean tileBlocked = gp.isTileBlocked(left, top)	
+			|| gp.isTileBlocked(left, top)
+			|| gp.isTileBlocked(right, top)
+			|| gp.isTileBlocked(left, bottom)
+			|| gp.isTileBlocked(right, bottom);
+		
+			if(tileBlocked) return false;
+
+		return !gp.isCollidingWithAnyEntity(nextX,nextY, this);	
+	}
     public void update() {
         Player player = gp.player;
         int dx = 0, dy = 0;
         if (mode == Mode.FOLLOW || mode == Mode.DEFEND) {
-            dx = player.x - x;
+            dx = player.x - x - 100;
             dy = player.y - y;
         } else if (mode == Mode.CHARGE) {
             dx = targetX - x;
@@ -42,6 +57,12 @@ public class Troop extends Entity {
             x += (int)Math.signum(dx) * speed;
         } else {
             y += (int)Math.signum(dy) * speed;
+        }
+
+        int nextX = x, nextY = y;
+        if (canMoveTo(x, y)){
+            x = nextX;
+            y = nextY;
         }
 
         if (role == Role.ARCHER) {
@@ -73,6 +94,7 @@ public class Troop extends Entity {
                 }
             }
         }
+
 
         Iterator<Projectile> projIterator = projectiles.iterator();
         while (projIterator.hasNext()) {
