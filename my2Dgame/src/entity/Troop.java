@@ -60,7 +60,7 @@ public class Troop extends Entity {
         }
 
         int nextX = x, nextY = y;
-        if (canMoveTo(x, y)){
+        if (canMoveTo(nextX, nextY)){
             x = nextX;
             y = nextY;
         }

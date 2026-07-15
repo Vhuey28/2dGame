@@ -15,8 +15,8 @@ public class Projectile {
     }
 
     public void update() {
-        x += dx * speed;
-        y += dy * speed;
+        x += dx * (speed +10);
+        y += dy * (speed +10);
         life--;
     }
 }
