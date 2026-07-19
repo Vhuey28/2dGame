@@ -4,7 +4,7 @@ import java.awt.Color;
 
 public class AreaEffect {
     public enum Type { STUN_AND_DAMAGE, HEAL }
-    public int x, y;
+    public float x, y;
     public int radius;
     public int duration; // frames
     public Type type;
@@ -12,11 +12,11 @@ public class AreaEffect {
     private Player owner;
     private int blinkCounter = 0;
 
-    public AreaEffect(int x, int y, int radius, int duration, Type type) {
+    public AreaEffect(float x, float y, int radius, int duration, Type type) {
         this(x, y, radius, duration, type, false, null);
     }
 
-    public AreaEffect(int x, int y, int radius, int duration, Type type, boolean followsPlayer, Player owner) {
+    public AreaEffect(float x, float y, int radius, int duration, Type type, boolean followsPlayer, Player owner) {
         this.x = x;
         this.y = y;
         this.radius = radius;
@@ -28,8 +28,8 @@ public class AreaEffect {
 
     public void update(Player player) {
         if (followsPlayer && owner != null) {
-            x = owner.x + owner.gp.tileSize / 2;
-            y = owner.y + owner.gp.tileSize / 2;
+            x = owner.x + owner.gp.tileSize / 2f;
+            y = owner.y + owner.gp.tileSize / 2f;
         }
         duration--;
         blinkCounter++;

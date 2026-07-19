@@ -194,7 +194,7 @@ public class GamePanel extends JPanel implements Runnable{
 				java.awt.Point openPt = findOpenSpawnSpace(sx, baseY, enemy);
 				enemy.x = openPt.x;
 				enemy.y = openPt.y;
-				enemy.type = (i == 1 ? Enemy.Type.ARCHER : Enemy.Type.BASIC);
+				enemy.setType(i == 1 ? Enemy.Type.ARCHER : Enemy.Type.BASIC);
 				enemies.add(enemy);
 			}
 		} else {
@@ -204,14 +204,14 @@ public class GamePanel extends JPanel implements Runnable{
 				java.awt.Point openPt = findOpenSpawnSpace(sx, baseY, enemy);
 				enemy.x = openPt.x;
 				enemy.y = openPt.y;
-				enemy.type = Enemy.Type.BASIC;
+				enemy.setType(Enemy.Type.BASIC);
 				enemies.add(enemy);
 			}
 			Enemy boss = new Enemy(this);
 			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 20, baseY, boss);
 			boss.x = openPt.x;
 			boss.y = openPt.y;
-			boss.type = Enemy.Type.BOSS;
+			boss.setType(Enemy.Type.BOSS);
 			boss.maxHealth = 60;
 			boss.health = boss.maxHealth;
 			boss.goldDrop = 10;
@@ -360,8 +360,8 @@ public class GamePanel extends JPanel implements Runnable{
 			Iterator<Projectile> projIterator = enemy.projectiles.iterator();
 			while (projIterator.hasNext()) {
 				Projectile p = projIterator.next();
-				int px = p.x;
-				int py = p.y;
+				int px = (int)p.x;
+				int py = (int)p.y;
 				boolean hit = false;
 				if (px > player.x && px < player.x + tileSize && py > player.y && py < player.y + tileSize) {
 					player.health -= 8;
@@ -389,7 +389,7 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 		// shop area (green box)
 		// buy troops if in shop and B pressed
-		Rectangle playerRect = new Rectangle(player.x, player.y, tileSize, tileSize);
+		Rectangle playerRect = new Rectangle((int)player.x, (int)player.y, tileSize, tileSize);
 		Rectangle waveArea = getWaveSpawnArea();
 		boolean inShop = playerRect.intersects(getShopArea());
 		boolean inWaveArea = playerRect.intersects(waveArea);
@@ -398,8 +398,8 @@ public class GamePanel extends JPanel implements Runnable{
 			if (inShop && gold >= 5) {
 				gold -= 5;
 				entity.Troop.Role role = keyH.shiftPressed ? entity.Troop.Role.ARCHER : entity.Troop.Role.MELEE;
-				entity.Troop newTroop = new entity.Troop(this, player.x, player.y, role);
-				java.awt.Point openPt = findOpenSpawnSpace(player.x + tileSize, player.y, newTroop);
+				entity.Troop newTroop = new entity.Troop(this, (int)player.x, (int)player.y, role);
+				java.awt.Point openPt = findOpenSpawnSpace((int)player.x + tileSize, (int)player.y, newTroop);
 				newTroop.x = openPt.x;
 				newTroop.y = openPt.y;
 				troops.add(newTroop);
@@ -431,8 +431,8 @@ public class GamePanel extends JPanel implements Runnable{
 				t.mode = entity.Troop.Mode.CHARGE;
 				if (!enemies.isEmpty()) {
 					Enemy target = enemies.get(0);
-					t.targetX = target.x;
-					t.targetY = target.y;
+					t.targetX = (int)target.x;
+					t.targetY = (int)target.y;
 				}
 			}
 		}
@@ -458,8 +458,8 @@ public class GamePanel extends JPanel implements Runnable{
 				boolean hit = false;
 				for (Enemy enemy : enemies) {
 					if (enemy.dead) continue;
-					int px = p.x;
-					int py = p.y;
+					int px = (int)p.x;
+					int py = (int)p.y;
 					if (px > enemy.x && px < enemy.x + tileSize && py > enemy.y && py < enemy.y + tileSize) {
 						enemy.health -= 8;
 						enemy.showHealthCounter = 60;
@@ -482,13 +482,13 @@ public class GamePanel extends JPanel implements Runnable{
 		return tileM.isBlocked(worldX, worldY);
 	}
 
-	public boolean isCollidingWithAnyEntity(int nextX, int nextY, Object self) {
+	public boolean isCollidingWithAnyEntity(float nextX, float nextY, Object self) {
 		int padding = 4;
-		Rectangle nextRect = new Rectangle(nextX + padding, nextY + padding, tileSize - padding * 2, tileSize - padding * 2);
+		Rectangle nextRect = new Rectangle((int)Math.floor(nextX) + padding, (int)Math.floor(nextY) + padding, tileSize - padding * 2, tileSize - padding * 2);
 
 		// Check player
 		if (self != player) {
-			Rectangle playerRect = new Rectangle(player.x + padding, player.y + padding, tileSize - padding * 2, tileSize - padding * 2);
+			Rectangle playerRect = new Rectangle((int)Math.floor(player.x) + padding, (int)Math.floor(player.y) + padding, tileSize - padding * 2, tileSize - padding * 2);
 			if (nextRect.intersects(playerRect)) {
 				return true;
 			}
@@ -498,7 +498,7 @@ public class GamePanel extends JPanel implements Runnable{
 		for (int i = 0; i < enemies.size(); i++) {
 			Enemy enemy = enemies.get(i);
 			if (enemy != null && enemy != self && !enemy.dead) {
-				Rectangle enemyRect = new Rectangle(enemy.x + padding, enemy.y + padding, tileSize - padding * 2, tileSize - padding * 2);
+				Rectangle enemyRect = new Rectangle((int)Math.floor(enemy.x) + padding, (int)Math.floor(enemy.y) + padding, tileSize - padding * 2, tileSize - padding * 2);
 				if (nextRect.intersects(enemyRect)) {
 					return true;
 				}
@@ -509,7 +509,7 @@ public class GamePanel extends JPanel implements Runnable{
 		for (int i = 0; i < troops.size(); i++) {
 			entity.Troop troop = troops.get(i);
 			if (troop != null && troop != self && troop.health > 0) {
-				Rectangle troopRect = new Rectangle(troop.x + padding, troop.y + padding, tileSize - padding * 2, tileSize - padding * 2);
+				Rectangle troopRect = new Rectangle((int)Math.floor(troop.x) + padding, (int)Math.floor(troop.y) + padding, tileSize - padding * 2, tileSize - padding * 2);
 				if (nextRect.intersects(troopRect)) {
 					return true;
 				}
@@ -517,6 +517,11 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 
 		return false;
+	}
+
+	// Backward compatibility for int coordinates
+	public boolean isCollidingWithAnyEntity(int nextX, int nextY, Object self) {
+		return isCollidingWithAnyEntity((float)nextX, (float)nextY, self);
 	}
 
 	public java.awt.Point findOpenSpawnSpace(int startX, int startY, Object self) {
@@ -558,8 +563,8 @@ public class GamePanel extends JPanel implements Runnable{
 	}
 
 	public void updateCamera() {
-		cameraX = player.x - screenX;
-		cameraY = player.y - screenY;
+		cameraX = (int)player.x - screenX;
+		cameraY = (int)player.y - screenY;
 
 		int maxCameraX = Math.max(0, worldWidth - screenWidth);
 		int maxCameraY = Math.max(0, worldHeight - screenHeight);
@@ -594,14 +599,14 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 		if (defendBox != null) defendBox.draw(g2, cameraX, cameraY);
 		for (Enemy enemy : enemies) {
-			if (!enemy.dead) {
+			if (!enemy.dead || enemy.isDying) {
 				enemy.draw(g2, cameraX, cameraY);
 			}
 		}
 		// draw player projectiles
 		for (entity.Projectile p : player.projectiles) {
-			int sx = p.x - cameraX - p.size/2;
-			int sy = p.y - cameraY - p.size/2;
+			int sx = (int)p.x - cameraX - p.size/2;
+			int sy = (int)p.y - cameraY - p.size/2;
 			g2.setColor(new java.awt.Color(p.color.getRGB()));
 			int[] xs = {sx, sx + p.size, sx + p.size/2};
 			int[] ys = {sy + p.size, sy + p.size, sy};
@@ -609,8 +614,8 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 		// draw areas
 		for (entity.AreaEffect a : player.areas) {
-			int sx = a.x - cameraX - a.radius;
-			int sy = a.y - cameraY - a.radius;
+			int sx = (int)a.x - cameraX - a.radius;
+			int sy = (int)a.y - cameraY - a.radius;
 			if (a.type == entity.AreaEffect.Type.STUN_AND_DAMAGE) {
 				if (a.followsPlayer) {
 					int alpha = a.isBlinkVisible() ? 140 : 60;
@@ -741,10 +746,6 @@ public class GamePanel extends JPanel implements Runnable{
 		int btnTextW = g2.getFontMetrics().stringWidth(btnText);
 		g2.drawString(btnText, btn.x + (btn.width - btnTextW) / 2, btn.y + 24);
 
-		g2.setFont(new Font("Arial", Font.PLAIN, 14));
-		String controls = "Controls: WASD Move, SPACE Melee, 1/2/3 Magic, E Dodge";
-		int cw = g2.getFontMetrics().stringWidth(controls);
-		g2.drawString(controls, x + (width - cw) / 2, y + 200);
 
 		int textX = x + 20;
 		int textY = y + 130;
@@ -825,8 +826,8 @@ public class GamePanel extends JPanel implements Runnable{
 		for (int i = 0; i < troops.size(); i++) {
 			entity.Troop t = troops.get(i);
 			if (t != null && t.health > 0) {
-				int troopPx = miniX + t.x * cellW / tileSize;
-				int troopPy = miniY + t.y * cellH / tileSize;
+				int troopPx = miniX + (int)t.x * cellW / tileSize;
+				int troopPy = miniY + (int)t.y * cellH / tileSize;
 				g2.setColor(Color.blue);
 				g2.fillRect(troopPx, troopPy, Math.max(2, cellW), Math.max(2, cellH));
 			}
@@ -834,8 +835,8 @@ public class GamePanel extends JPanel implements Runnable{
 		// Draw enemies
 		for (Enemy enemy : enemies) {
 			if (enemy != null && !enemy.dead) {
-				int enemyPx = miniX + enemy.x * cellW / tileSize;
-				int enemyPy = miniY + enemy.y * cellH / tileSize;
+				int enemyPx = miniX + (int)enemy.x * cellW / tileSize;
+				int enemyPy = miniY + (int)enemy.y * cellH / tileSize;
 				if (enemy.type == Enemy.Type.BOSS) {
 					g2.setColor(Color.red);
 					g2.fillRect(enemyPx - 1, enemyPy - 1, Math.max(2, cellW) + 2, Math.max(2, cellH) + 2);
@@ -847,8 +848,8 @@ public class GamePanel extends JPanel implements Runnable{
 				}
 			}
 		}
-		int playerPx = miniX + player.x * cellW / tileSize;
-		int playerPy = miniY + player.y * cellH / tileSize;
+		int playerPx = miniX + (int)player.x * cellW / tileSize;
+		int playerPy = miniY + (int)player.y * cellH / tileSize;
 		g2.setColor(Color.orange);
 		g2.fillOval(playerPx, playerPy, Math.max(2, cellW), Math.max(2, cellH));
 		g2.setColor(Color.white);
@@ -857,8 +858,8 @@ public class GamePanel extends JPanel implements Runnable{
 	}
 
 	private void teleportPlayerForMap(String targetMap) {
-		int targetX = player.x;
-		int targetY = player.y;
+		int targetX = (int)player.x;
+		int targetY = (int)player.y;
 		if ("map1.txt".equals(targetMap)) {
 			targetX = tileSize * 4;
 			targetY = tileSize * 7;
@@ -888,7 +889,7 @@ public class GamePanel extends JPanel implements Runnable{
 			java.awt.Point openPt = findOpenSpawnSpace(sx, sy, enemy);
 			enemy.x = openPt.x;
 			enemy.y = openPt.y;
-			enemy.type = Enemy.Type.BASIC;
+			enemy.setType(Enemy.Type.BASIC);
 			enemies.add(enemy);
 		}
 		Enemy boss = new Enemy(this);
@@ -897,7 +898,7 @@ public class GamePanel extends JPanel implements Runnable{
 		java.awt.Point openPt = findOpenSpawnSpace(bx, by, boss);
 		boss.x = openPt.x;
 		boss.y = openPt.y;
-		boss.type = Enemy.Type.BOSS;
+		boss.setType(Enemy.Type.BOSS);
 		boss.maxHealth = 80;
 		boss.health = boss.maxHealth;
 		boss.goldDrop = 12;
@@ -1043,8 +1044,8 @@ public class GamePanel extends JPanel implements Runnable{
 				return;
 			}
 
-			int dx = player.x - x;
-			int dy = player.y - y;
+			int dx = (int)player.x - x;
+			int dy = (int)player.y - y;
 			double distance = Math.sqrt(dx * dx + dy * dy);
 
 			if (distance < tileSize * 4 && distance > 0) {
@@ -1087,8 +1088,8 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 
 		void update(Player player) {
-			int dx = player.x - x;
-			int dy = player.y - y;
+			int dx = (int)player.x - x;
+			int dy = (int)player.y - y;
 			double distance = Math.sqrt(dx * dx + dy * dy);
 
 			if (distance < tileSize * 4 && distance > 0) {
