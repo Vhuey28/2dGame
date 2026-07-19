@@ -79,6 +79,35 @@ public class Enemy extends Entity {
         }
         getEnemyImage();
     }
+    private BufferedImage cropTransparentBorders(BufferedImage src) {
+    if (src == null) return null;
+
+    int width = src.getWidth();
+    int height = src.getHeight();
+    int minX = width, minY = height, maxX = -1, maxY = -1;
+
+    // Scan for non-transparent pixels
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        int argb = src.getRGB(x, y);
+        if ((argb >> 24) != 0) { // alpha != 0
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+         // If image is fully transparent, return original
+    if (maxX < minX || maxY < minY) {
+      return src;
+    }
+
+    // Crop to content bounds
+    int cropWidth = maxX - minX + 1;
+    int cropHeight = maxY - minY + 1;
+    return src.getSubimage(minX, minY, cropWidth, cropHeight);
+    }
     public void setDefaultValues() {
         x = gp.tileSize * 20f;
         y = gp.tileSize * 10f;
@@ -117,8 +146,8 @@ public class Enemy extends Entity {
                 // Load boss attack animations (thrust_oversize: 8 frames per direction)
                 // Attack up
                 for (int i = 0; i <= 7; i++) {
-                    bossAttackUp[i] = ImageIO.read(
-                        getClass().getResourceAsStream("/player/enemyBoss_animations/custom/thrust_oversize/up/" + (i+1) + ".png"));
+                    bossAttackUp[i] = cropTransparentBorders(ImageIO.read(
+                        getClass().getResourceAsStream("/player/enemyBoss_animations/custom/thrust_oversize/up/" + (i+1) + ".png")));
                 }
                 // Attack down
                 for (int i = 0; i <= 7; i++) {
@@ -144,8 +173,8 @@ public class Enemy extends Entity {
                 // Only "up" direction files exist; copy to all other directions
                 // Death up
                 for (int i = 1; i <= 6; i++) {
-                    bossDeathUp[i] = ImageIO.read(
-                        getClass().getResourceAsStream("/player/enemyBoss_animations/standard/hurt/up/" + i + ".png"));
+                    bossDeathUp[i] =  cropTransparentBorders(ImageIO.read(
+                        getClass().getResourceAsStream("/player/enemyBoss_animations/standard/hurt/up/" + i + ".png")));
                 }
                 // Copy up to all other cardinal directions (no separate hurt files exist)
                 copyArrayFrom1(bossDeathUp, bossDeathDown);
@@ -399,8 +428,8 @@ public class Enemy extends Entity {
         // Boss uses larger sprite size (2x tile size for boss)
         int drawWidth, drawHeight;
         if (type == Type.BOSS) {
-            drawWidth = gp.tileSize * 3;  // 3x tile = 144px
-            drawHeight = gp.tileSize * 3;
+            drawWidth = gp.tileSize *2;  // 3x tile = 144px
+            drawHeight = gp.tileSize *2;
         } else {
             drawWidth = gp.tileSize;  // 1x tile = 48px
             drawHeight = gp.tileSize;
