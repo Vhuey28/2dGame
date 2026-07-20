@@ -26,15 +26,15 @@ public class GamePanel extends JPanel implements Runnable{
 	//Screen Settings
 	final int originalTileSize = 16; //16x16 tile
 	final int scale = 3;
-	
+
 	public final int tileSize = originalTileSize * scale;
 	public final int maxScreenCol = 16;
 	public final int maxScreenRow = 12;
 	public final int screenWidth = tileSize * maxScreenCol; //768 pixels
 	public final int screenHeight = tileSize * maxScreenRow; //576 pixels
 
-	public final int maxWorldCol = 50;
-	public final int maxWorldRow = 50;
+	public final int maxWorldCol = 800;
+	public final int maxWorldRow = 310;
 	public final int worldWidth = tileSize * maxWorldCol;
 	public final int worldHeight = tileSize * maxWorldRow;
 
@@ -68,6 +68,8 @@ public class GamePanel extends JPanel implements Runnable{
 	boolean gamePaused = false;
 	boolean gameCrashed = false;
 	boolean bWasPressedLastFrame = false;
+	boolean mWasPressedLastFrame = false;
+	boolean miniMapVisible = false;
 	int portalCooldown = 0;
 	boolean waveActive = false;
 	int waveMessageTimer = 0;
@@ -178,7 +180,14 @@ public class GamePanel extends JPanel implements Runnable{
 			mapLinks.add(new MapLink(new Rectangle(tileSize * 7, tileSize - 4, tileSize, 8), "map2.txt", "Forest"));
 			mapLinks.add(new MapLink(new Rectangle(tileSize * 7, worldHeight - tileSize + 4, tileSize, 8), "map3.txt", "Cave"));
 			mapLinks.add(new MapLink(new Rectangle(-4, tileSize * 5, 8, tileSize), "map4.txt", "Ruins"));
+			mapLinks.add(new MapLink(new Rectangle(-4, tileSize * 6, 8, tileSize), "home.txt", "Home"));
 			mapLinks.add(new MapLink(new Rectangle(worldWidth - 4, tileSize * 5, 8, tileSize), "map5.txt", "Tower"));
+			// Portal to mapA - middle left side
+			mapLinks.add(new MapLink(new Rectangle(-4, tileSize * 12, 8, tileSize), "mapA.txt", "Map A"));
+		} else if ("mapA.txt".equals(currentMap)) {
+			mapLinks.add(new MapLink(new Rectangle(tileSize * 7, tileSize - 4, tileSize, 8), "map1.txt", "Return"));
+		} else if ("home.txt".equals(currentMap)) {
+			mapLinks.add(new MapLink(new Rectangle(tileSize * 7, tileSize - 4, tileSize, 8), "map1.txt", "Return"));
 		} else {
 			mapLinks.add(new MapLink(new Rectangle(tileSize * 7, tileSize - 4, tileSize, 8), "map1.txt", "Return"));
 		}
@@ -194,9 +203,48 @@ public class GamePanel extends JPanel implements Runnable{
 				java.awt.Point openPt = findOpenSpawnSpace(sx, baseY, enemy);
 				enemy.x = openPt.x;
 				enemy.y = openPt.y;
-				enemy.setType(i == 1 ? Enemy.Type.ARCHER : Enemy.Type.BASIC);
+				enemy.setType(i == 1 ? Enemy.Type.ARCHER : Enemy.Type.TROOP);
 				enemies.add(enemy);
 			}
+		} else if ("mapA.txt".equals(mapFile)) {
+			for (int i = 0; i < 5; i++) {
+				Enemy enemy = new Enemy(this);
+				int sx = tileSize * 6 + random.nextInt(tileSize * 12);
+				java.awt.Point openPt = findOpenSpawnSpace(sx, tileSize * 15, enemy);
+				enemy.x = openPt.x;
+				enemy.y = openPt.y;
+				enemy.setType(Enemy.Type.TROOP);
+				enemies.add(enemy);
+			}
+			Enemy boss = new Enemy(this);
+			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 18, tileSize * 10, boss);
+			boss.x = openPt.x;
+			boss.y = openPt.y;
+			boss.setType(Enemy.Type.BOSS);
+			boss.maxHealth = 70;
+			boss.health = boss.maxHealth;
+			boss.goldDrop = 15;
+			enemies.add(boss);
+		} else if ("home.txt".equals(mapFile)) {
+			// Home map - spawn some enemies for testing
+			for (int i = 0; i < 8; i++) {
+				Enemy enemy = new Enemy(this);
+				int sx = tileSize * 50 + random.nextInt(tileSize * 100);
+				java.awt.Point openPt = findOpenSpawnSpace(sx, tileSize * 100, enemy);
+				enemy.x = openPt.x;
+				enemy.y = openPt.y;
+				enemy.setType(Enemy.Type.TROOP);
+				enemies.add(enemy);
+			}
+			Enemy boss = new Enemy(this);
+			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 150, tileSize * 80, boss);
+			boss.x = openPt.x;
+			boss.y = openPt.y;
+			boss.setType(Enemy.Type.BOSS);
+			boss.maxHealth = 100;
+			boss.health = boss.maxHealth;
+			boss.goldDrop = 25;
+			enemies.add(boss);
 		} else {
 			for (int i = 0; i < 3; i++) {
 				Enemy enemy = new Enemy(this);
@@ -204,7 +252,7 @@ public class GamePanel extends JPanel implements Runnable{
 				java.awt.Point openPt = findOpenSpawnSpace(sx, baseY, enemy);
 				enemy.x = openPt.x;
 				enemy.y = openPt.y;
-				enemy.setType(Enemy.Type.BASIC);
+				enemy.setType(Enemy.Type.TROOP);
 				enemies.add(enemy);
 			}
 			Enemy boss = new Enemy(this);
@@ -409,6 +457,12 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 		bWasPressedLastFrame = keyH.bPressed;
 
+		// Toggle minimap with M key
+		if (keyH.mPressed && !mWasPressedLastFrame) {
+			miniMapVisible = !miniMapVisible;
+		}
+		mWasPressedLastFrame = keyH.mPressed;
+
 		if (portalCooldown > 0) {
 			portalCooldown--;
 		}
@@ -599,7 +653,7 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 		if (defendBox != null) defendBox.draw(g2, cameraX, cameraY);
 		for (Enemy enemy : enemies) {
-			if (!enemy.dead || enemy.isDying) {
+			if (!enemy.dead || enemy.isDying || enemy.isArcherDying || enemy.isTroopDying) {
 				enemy.draw(g2, cameraX, cameraY);
 			}
 		}
@@ -662,7 +716,7 @@ public class GamePanel extends JPanel implements Runnable{
 		g2.fillRect(0, 0, screenWidth, screenHeight);
 		g2.setColor(Color.white);
 		g2.setFont(new Font("Arial", Font.BOLD, 40));
-		String title = "Retribution Beta";
+		String title = "Chronicle Conquest Beta";
 		int titleWidth = g2.getFontMetrics().stringWidth(title);
 		g2.drawString(title, (screenWidth - titleWidth) / 2, screenHeight / 3);
 
@@ -796,13 +850,13 @@ public class GamePanel extends JPanel implements Runnable{
 	}
 
 	private void drawMiniMap(Graphics2D g2) {
-		int mapSize = 150;
-		int margin = 12;
-		int miniX = screenWidth - mapSize - margin;
-		int miniY = screenHeight - mapSize - margin;
+		if (!miniMapVisible) return;
+		int mapSize = 400;
+		int miniX = (screenWidth - mapSize) / 2;
+		int miniY = (screenHeight - mapSize) / 2;
 		int cellW = Math.max(1, mapSize / maxWorldCol);
 		int cellH = Math.max(1, mapSize / maxWorldRow);
-		g2.setColor(new Color(0, 0, 0, 180));
+		g2.setColor(new Color(0, 0, 0, 200));
 		g2.fillRect(miniX - 4, miniY - 4, mapSize + 8, mapSize + 8);
 		for (int row = 0; row < maxWorldRow; row++) {
 			for (int col = 0; col < maxWorldCol; col++) {
@@ -854,7 +908,8 @@ public class GamePanel extends JPanel implements Runnable{
 		g2.fillOval(playerPx, playerPy, Math.max(2, cellW), Math.max(2, cellH));
 		g2.setColor(Color.white);
 		g2.drawRect(miniX, miniY, mapSize, mapSize);
-		g2.drawString(currentMap.replace(".txt", ""), miniX + 6, miniY + 14);
+		g2.setFont(new Font("Arial", Font.BOLD, 16));
+		g2.drawString(currentMap.replace(".txt", ""), miniX + 10, miniY + 20);
 	}
 
 	private void teleportPlayerForMap(String targetMap) {
@@ -875,6 +930,12 @@ public class GamePanel extends JPanel implements Runnable{
 		} else if ("map5.txt".equals(targetMap)) {
 			targetX = tileSize * 2;
 			targetY = tileSize * 0;
+		} else if ("mapA.txt".equals(targetMap)) {
+			targetX = tileSize * 3;
+			targetY = tileSize * 12;
+		} else if ("home.txt".equals(targetMap)) {
+			targetX = tileSize * 10;
+			targetY = tileSize * 10;
 		}
 		java.awt.Point openPt = findOpenSpawnSpace(targetX, targetY, player);
 		player.x = openPt.x;
@@ -889,7 +950,7 @@ public class GamePanel extends JPanel implements Runnable{
 			java.awt.Point openPt = findOpenSpawnSpace(sx, sy, enemy);
 			enemy.x = openPt.x;
 			enemy.y = openPt.y;
-			enemy.setType(Enemy.Type.BASIC);
+			enemy.setType(Enemy.Type.TROOP);
 			enemies.add(enemy);
 		}
 		Enemy boss = new Enemy(this);

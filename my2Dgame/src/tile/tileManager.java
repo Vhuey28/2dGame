@@ -20,14 +20,16 @@ public class tileManager {
 
 	public tileManager(GamePanel gp) {
 		this.gp = gp;
-		
-		tile = new Tile[256];
+
+		tile = new Tile[2048];
 		mapTileNum = new int[gp.maxWorldCol][gp.maxWorldRow];
-		getTileImage();
 		loadMap("map1.txt");
 	}
 
 	public void loadMap(String filename) {
+		// Load appropriate tiles for this map
+		loadTileImages(filename);
+
 		try {
 			InputStream is = loadMapResource("/res/maps/" + filename, "res/maps/" + filename);
 			BufferedReader br = new BufferedReader(new InputStreamReader(is));
@@ -51,6 +53,58 @@ public class tileManager {
 			}
 			br.close();
 		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+
+	private void loadTileImages(String filename) {
+		if ("mapA.txt".equals(filename)) {
+			// Load mapA spritesheet (128x32 = 8 cols x 2 rows = 16 tiles of 16x16)
+			loadSpriteSheet("maps/mapA/spritesheet.png", 16);
+		} else if ("home.txt".equals(filename)) {
+			// Load home map spritesheet (128x3632 = 8 cols x 227 rows = 1816 tiles)
+			loadSpriteSheet("maps/home/spritesheet.png", 16);
+		} else {
+			// Default tiles for map1 and others
+			loadDefaultTiles();
+		}
+	}
+
+	private void loadSpriteSheet(String path, int tileSize) {
+		try {
+			tileSheet = ImageIO.read(loadTileResource(path));
+			int columns = tileSheet.getWidth() / tileSize;
+			int rows = tileSheet.getHeight() / tileSize;
+			int index = 0;
+			for (int y = 0; y < rows; y++) {
+				for (int x = 0; x < columns; x++) {
+					if (index < tile.length) {
+						tile[index] = new Tile();
+						tile[index].image = tileSheet.getSubimage(
+							x * tileSize, y * tileSize, tileSize, tileSize);
+						index++;
+					}
+				}
+			}
+			System.out.println("Loaded " + index + " tiles from spritesheet: " + path);
+		} catch (IOException e) {
+			e.printStackTrace();
+			// Fallback to default tiles
+			loadDefaultTiles();
+		}
+	}
+
+	private void loadDefaultTiles() {
+		try {
+			tile[0] = new Tile();
+			tile[0].image = ImageIO.read(loadTileResource("/tiles/greenFloor.png"));
+
+			tile[1] = new Tile();
+			tile[1].image = ImageIO.read(loadTileResource("/tiles/wall.png"));
+
+			tile[2] = new Tile();
+			tile[2].image = ImageIO.read(loadTileResource("/tiles/water.png"));
+		} catch (IOException e) {
 			e.printStackTrace();
 		}
 	}
@@ -118,10 +172,10 @@ public class tileManager {
 		}
 
 		String[] fallbackPaths = {
-			"src" + path,
-			"my2Dgame/src" + path,
-			"res" + path,
-			"my2Dgame/res" + path
+			"src/" + path,
+			"my2Dgame/src/" + path,
+			"res/" + path,
+			"my2Dgame/res/" + path
 		};
 
 		for (String fallbackPath : fallbackPaths) {

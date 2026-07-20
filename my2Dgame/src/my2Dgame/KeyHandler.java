@@ -12,6 +12,7 @@ public class KeyHandler implements KeyListener{
 	public boolean shiftPressed;
 	public boolean cPressed, vPressed;
 	public boolean bPressed;
+	public boolean mPressed;
 
 	@Override
 	public void keyTyped(KeyEvent e) {
@@ -62,7 +63,10 @@ public class KeyHandler implements KeyListener{
 		if(code == KeyEvent.VK_B) {
 			bPressed = true;
 		}
-		
+		if(code == KeyEvent.VK_M) {
+			mPressed = true;
+		}
+
 	}
 
 	@Override
@@ -109,8 +113,11 @@ public class KeyHandler implements KeyListener{
 		if(code == KeyEvent.VK_B) {
 			bPressed = false;
 		}
-		
-		
+		if(code == KeyEvent.VK_M) {
+			mPressed = false;
+		}
+
+
 	}
 
 }
