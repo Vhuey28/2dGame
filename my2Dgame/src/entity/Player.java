@@ -3,12 +3,13 @@ package entity;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.io.InputStream;
 import javax.imageio.ImageIO;
 
 import my2Dgame.GamePanel;
@@ -65,8 +66,26 @@ public class Player extends Entity{
     	InputStream is = getClass().getResourceAsStream(path);
 
    		 if (is == null) {
-       	 	throw new IOException("Resource not found: " + path);
-    	}
+           // Try fallback paths like tileManager does
+           String[] fallbackPaths = {
+               "src/" + path.substring(1),  // remove leading /
+               "my2Dgame/src/" + path.substring(1),
+               "res/" + path.substring(1),
+               "my2Dgame/res/" + path.substring(1)
+           };
+
+           for (String fallbackPath : fallbackPaths) {
+               File fallback = new File(fallbackPath);
+               if (fallback.exists()) {
+                   is = new FileInputStream(fallback);
+                   break;
+               }
+           }
+
+           if (is == null) {
+               throw new IOException("Resource not found: " + path);
+           }
+       }
 
    		 return ImageIO.read(is);
 	}
@@ -447,6 +466,7 @@ public class Player extends Entity{
 			if (ex + ew > attackX && ex < attackX + attackW && ey + eh > attackY && ey < attackY + attackH) {
 				enemy.health -= 12;
 				enemy.showHealthCounter = 60;
+				enemy.threatTable.addThreat(this, 12);
 				if (enemy.health < 0) enemy.health = 0;
 			}
 		}

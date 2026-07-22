@@ -18,7 +18,6 @@
   - ally commanders
   - enemy diversity
   - controller support
-  - map toggle
 
 
 ## Current Issues Found
@@ -26,9 +25,5 @@
   - ally/enemy path finding
   - enemy/ally targeting
   - player gets stuck between allies when surrounded by them
-  - enemy archers arnt spwaning
-  - foot troop attack animation is small
-  - mini-map appears stupidly
   - home map doesnt apear correctly
-  - seems to lag with the mini-map enabled
   - freezes after a  lot of enemies are spawned

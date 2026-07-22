@@ -10,6 +10,7 @@ import java.util.Iterator;
 import javax.imageio.ImageIO;
 
 import my2Dgame.GamePanel;
+import entity.Player;
 
 public class Troop extends Entity {
     public enum Role { MELEE, ARCHER }
@@ -17,9 +18,14 @@ public class Troop extends Entity {
     public enum Mode { FOLLOW, CHARGE, DEFEND }
     public Mode mode = Mode.FOLLOW;
     public float targetX = 0, targetY = 0;
+    public Squad squad;
     public int maxHealth = 30;
     public int health = maxHealth;
     public int shootCooldown = 0;
+    public ThreatTable threatTable = new ThreatTable();
+    public Morale morale = new Morale();
+    public java.util.List<java.awt.Point> currentPath = null;
+    public int pathIndex = 0;
     public java.util.List<Projectile> projectiles = new ArrayList<>();
 
     // Animation state for archer
@@ -128,6 +134,21 @@ public class Troop extends Entity {
         return !gp.isCollidingWithAnyEntity(nextX, nextY, this);
     }
 
+    private float getPlayerFacingAngle() {
+        //Player player = new Player(gp, null);
+        switch (gp.player.direction) {
+            case "right": return 0f;
+            case "left": return (float) Math.PI;
+            case "up": return (float) (-Math.PI / 2);
+            case "down": return (float) (Math.PI / 2);
+            case "upRight": return (float) (-Math.PI / 4);
+            case "upLeft": return (float) (-3 * Math.PI / 4);
+            case "downRight": return (float) (Math.PI / 4);
+            case "downLeft": return (float) (3 * Math.PI / 4);
+            default: return 0f;
+         }  
+    }
+
     public void update() {
         // Handle archer attack animation
         if (role == Role.ARCHER && isArcherAttacking && !isArcherDying) {
@@ -161,13 +182,34 @@ public class Troop extends Entity {
         Player player = gp.player;
         float dx = 0, dy = 0;
         if (mode == Mode.FOLLOW || mode == Mode.DEFEND) {
-            dx = player.x - x - 100;
-            dy = player.y - y;
+            if (squad != null) {
+                float facingAngle = getPlayerFacingAngle();
+                int slotIndex = squad.members.indexOf(this);
+                if (slotIndex < 0) slotIndex = 0;
+                java.awt.Point slot = squad.formation.getSlotPosition(slotIndex, player.x, player.y, facingAngle);
+                dx = slot.x - x;
+                dy = slot.y - y;
+            } else {
+                dx = player.x - x - 100; // fallback if squad wasn't assigned
+                dy = player.y - y;
+            }
         } else if (mode == Mode.CHARGE) {
-            dx = targetX - x;
-            dy = targetY - y;
+            if (currentPath == null || pathIndex >= currentPath.size()) {
+                currentPath = AStarPathfinder.findPath(gp, (int)x, (int)y, (int)targetX, (int)targetY);
+                pathIndex = 0;
+            }
+            if (currentPath != null && pathIndex < currentPath.size()) {
+                java.awt.Point waypoint = currentPath.get(pathIndex);
+                dx = waypoint.x - x;
+                dy = waypoint.y - y;
+                if (Math.abs(dx) < 4 && Math.abs(dy) < 4) pathIndex++;
+            } else {
+                dx = targetX - x;
+                dy = targetY - y;
+            }
         }
-
+        
+       
         // Normalize for diagonal movement
         float distance = (float)Math.sqrt(dx * dx + dy * dy);
         if (distance > 0) {
@@ -203,7 +245,7 @@ public class Troop extends Entity {
                 moved = true;
             }
         }
-
+        
         // Walk animation for both roles when moving
         if (moved && !isArcherAttacking && !isArcherDying && !isMeleeAttacking && !isMeleeDying) {
             spriteCounter++;
@@ -301,6 +343,7 @@ public class Troop extends Entity {
                 target.health -= 10;
                 if (target.health < 0) target.health = 0;
                 target.showHealthCounter = 60;
+                target.threatTable.addThreat(this, 10);   // <-- add this, makes the enemy retarget this troop
             }
         }
 
@@ -367,6 +410,8 @@ public class Troop extends Entity {
         while (projIterator.hasNext()) {
             Projectile p = projIterator.next();
             p.update();
+            threatTable.decay();
+            morale.update();
             if (p.life <= 0) projIterator.remove();
         }
     }

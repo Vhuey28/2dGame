@@ -66,6 +66,9 @@ public class KeyHandler implements KeyListener{
 		if(code == KeyEvent.VK_M) {
 			mPressed = true;
 		}
+		if(code == KeyEvent.VK_T) {
+			mPressed = true;
+		}
 
 	}
 
@@ -114,6 +117,9 @@ public class KeyHandler implements KeyListener{
 			bPressed = false;
 		}
 		if(code == KeyEvent.VK_M) {
+			mPressed = false;
+		}
+		if(code == KeyEvent.VK_T) {
 			mPressed = false;
 		}
 

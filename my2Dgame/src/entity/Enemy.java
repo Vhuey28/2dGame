@@ -23,6 +23,10 @@ public class Enemy extends Entity {
     public enum Type { BASIC, ARCHER, BOSS, TROOP }
     public Type type = Type.BASIC;
     public boolean dead = false;
+    public ThreatTable threatTable = new ThreatTable();
+    public Morale morale = new Morale();
+    public java.util.List<java.awt.Point> currentPath = null;
+    public int pathIndex = 0;
     public java.util.List<Projectile> projectiles = new ArrayList<>();
     // Animation state for boss
     public boolean isAttacking = false;
@@ -550,6 +554,14 @@ public class Enemy extends Entity {
             }
             return;
         }
+        Object aggroTarget = threatTable.getHighestThreatTarget();
+        float targetX = (aggroTarget != null) ? gp.getEntityX(aggroTarget) : player.x;
+        float targetY = (aggroTarget != null) ? gp.getEntityY(aggroTarget) : player.y;
+
+        if (currentPath == null || pathIndex >= currentPath.size()) {
+            currentPath = AStarPathfinder.findPath(gp, (int)x, (int)y, (int)targetX, (int)targetY);
+            pathIndex = 0;
+        }
         float dx = player.x - x;
         float dy = player.y - y;
         float distance = (float)Math.sqrt(dx * dx + dy * dy);
@@ -693,6 +705,7 @@ public class Enemy extends Entity {
             }
             attackCooldown = 30; // Troop attack cooldown
         }
+        
         // Update attack animation for boss (independent of cooldown)
         if (type == Type.BOSS && isAttacking && !isDying) {
             attackAnimationCounter++;
@@ -738,6 +751,8 @@ public class Enemy extends Entity {
                 }
             }
         }
+        threatTable.decay();
+        morale.update();
         if (attackCooldown > 0) {
             attackCooldown--;
         }
@@ -763,6 +778,8 @@ public class Enemy extends Entity {
                 health -= 10;
                 p.life = 0;
                 showHealthCounter = 60;
+                threatTable.addThreat(player, 10);   // <-- add this
+                morale.onDamageTaken(10);            // <-- add this
             }
         }
         // Check areas from player
@@ -779,6 +796,13 @@ public class Enemy extends Entity {
             }
         }
         if (showHealthCounter > 0) showHealthCounter--;
+
+        for (entity.Troop t : gp.troops) {
+            if (t.health <= 0) continue;
+            float tdx = t.x - x, tdy = t.y - y;
+            float tdist = (float) Math.sqrt(tdx * tdx + tdy * tdy);
+            threatTable.addProximityThreat(t, tdist, chaseRange);
+        }
     }
     private boolean canMoveTo(float nextX, float nextY) {
         int left = (int)Math.floor(nextX);

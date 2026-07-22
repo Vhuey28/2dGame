@@ -1,11 +1,13 @@
 package my2Dgame;
 
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
+import java.awt.Shape;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
@@ -18,8 +20,10 @@ import java.util.Random;
 import javax.swing.JPanel;
 
 import entity.Enemy;
+//import entity.NPC;
 import entity.Player;
 import entity.Projectile;
+import entity.Squad;
 import tile.tileManager;
 
 public class GamePanel extends JPanel implements Runnable{
@@ -38,10 +42,21 @@ public class GamePanel extends JPanel implements Runnable{
 	public final int worldWidth = tileSize * maxWorldCol;
 	public final int worldHeight = tileSize * maxWorldRow;
 
-	public int cameraX = 0;
-	public int cameraY = 0;
+	//public int cameraX = 0;
+	//public int cameraY = 0;
 	public final int screenX = screenWidth / 2 - tileSize / 2;
 	public final int screenY = screenHeight / 2 - tileSize / 2;
+
+	private float minimapZoom = 1.0f;          // current smoothed zoom
+	private float targetMinimapZoom = 1.0f;    // zoom level being eased toward
+	private float minZoom = 0.5f;              // most zoomed-out
+	private float maxZoom = 3.0f;              // most zoomed-in
+	private float zoomLerpSpeed = 6f;          // higher = snappier zoom transitions
+	private int minimapScreenSize = 250;       // on-screen pixel size of the minimap (fixed square)
+	private float baseViewRadiusTiles = 20f;   // how many tiles are visible at zoom = 1.0
+ 
+	// Camera fields — replace with your actual camera tracking if named differently
+	private float cameraX, cameraY;
 	
 	//FPS
 	int FPS = 60;
@@ -52,7 +67,10 @@ public class GamePanel extends JPanel implements Runnable{
 	public Player player = new Player(this,keyH);
 	public java.util.List<Enemy> enemies = new java.util.ArrayList<>();
     public java.util.List<entity.Troop> troops = new java.util.ArrayList<>();
+	public java.util.List<entity.NPC> npcs = new java.util.ArrayList<>();
     java.util.List<CoinItem> coins = new java.util.ArrayList<>();
+	public Squad enemySquad = new Squad();
+	public Squad allySquad = new Squad(); 
     public int gold = 100;
 	String currentMap = "map1.txt";
 	java.util.List<MapLink> mapLinks = new java.util.ArrayList<>();
@@ -74,6 +92,8 @@ public class GamePanel extends JPanel implements Runnable{
 	boolean waveActive = false;
 	int waveMessageTimer = 0;
 	String crashError = null;
+	public int getCurrentMapWidthTiles() { return tileM.currentMapWidth; }
+	public int getCurrentMapHeightTiles() { return tileM.currentMapHeight; }
 
 
 
@@ -96,7 +116,27 @@ public class GamePanel extends JPanel implements Runnable{
 					gamePaused = !gamePaused;
 					repaint();
 				}
+				if (code == KeyEvent.VK_T) {
+					int col = (int) player.x / tileSize;
+					int row = (int) player.y / tileSize;
+					System.out.println("Ground tile: " + tileM.getMapTileNum()[col][row]
+						+ " | Decoration tile: " + tileM.getDecorationTileNum(col, row));
+				}
+				
 			}
+		});
+		this.addKeyListener(new KeyAdapter() {
+   		 @Override
+    		public void keyPressed(KeyEvent e) {
+       		 if (!miniMapVisible) return;
+        		int code = e.getKeyCode();
+        		// = / + zooms in, - zooms out (works with or without shift, so no need to hold Shift for +)
+       			 if (code == KeyEvent.VK_EQUALS || code == KeyEvent.VK_PLUS || code == KeyEvent.VK_ADD) {
+           		 adjustMinimapZoom(0.3f);
+        	} else if (code == KeyEvent.VK_MINUS || code == KeyEvent.VK_SUBTRACT) {
+            adjustMinimapZoom(-0.3f);
+       		 }
+    	}
 		});
 		this.setFocusable(true);
 		this.addMouseListener(new MouseAdapter() {
@@ -119,9 +159,17 @@ public class GamePanel extends JPanel implements Runnable{
 					handleInventoryClick(e.getPoint());
 				}
 			}
+			@Override
+    		public void mouseWheelMoved(java.awt.event.MouseWheelEvent e) {
+        		if (miniMapVisible) {
+           		 // scrolling up (negative rotation) zooms in
+            	adjustMinimapZoom(-e.getWheelRotation() * 0.2f);
+        		}
+   			 }
+			
 		});
 		this.setFocusable(true);
-		setupMap("map1.txt");
+		setupMap("forest.tmx");
 	}
 
 	public Rectangle getRestartButtonRect() {
@@ -167,6 +215,9 @@ public class GamePanel extends JPanel implements Runnable{
 		tileM.loadMap(mapFile);
 		enemies.clear();
 		troops.clear();
+		enemySquad.members.clear();   // add this
+		enemySquad.commander = null;
+		allySquad.members.clear();
 		coins.clear();
 		redBox = null;
 		defendBox = new entity.DefendBox(tileSize * 30, tileSize * 10, tileSize * 3);
@@ -184,7 +235,11 @@ public class GamePanel extends JPanel implements Runnable{
 			mapLinks.add(new MapLink(new Rectangle(worldWidth - 4, tileSize * 5, 8, tileSize), "map5.txt", "Tower"));
 			// Portal to mapA - middle left side
 			mapLinks.add(new MapLink(new Rectangle(-4, tileSize * 12, 8, tileSize), "mapA.txt", "Map A"));
+			// Portal to forest - middle right side
+			mapLinks.add(new MapLink(new Rectangle(worldWidth - 4, tileSize * 12, 8, tileSize), "forest.tmx", "Forest"));
 		} else if ("mapA.txt".equals(currentMap)) {
+			mapLinks.add(new MapLink(new Rectangle(tileSize * 7, tileSize - 4, tileSize, 8), "map1.txt", "Return"));
+		} else if ("forest.tmx".equals(currentMap)) {
 			mapLinks.add(new MapLink(new Rectangle(tileSize * 7, tileSize - 4, tileSize, 8), "map1.txt", "Return"));
 		} else if ("home.txt".equals(currentMap)) {
 			mapLinks.add(new MapLink(new Rectangle(tileSize * 7, tileSize - 4, tileSize, 8), "map1.txt", "Return"));
@@ -205,6 +260,7 @@ public class GamePanel extends JPanel implements Runnable{
 				enemy.y = openPt.y;
 				enemy.setType(i == 1 ? Enemy.Type.ARCHER : Enemy.Type.TROOP);
 				enemies.add(enemy);
+				enemySquad.addMember(enemy);
 			}
 		} else if ("mapA.txt".equals(mapFile)) {
 			for (int i = 0; i < 5; i++) {
@@ -215,6 +271,7 @@ public class GamePanel extends JPanel implements Runnable{
 				enemy.y = openPt.y;
 				enemy.setType(Enemy.Type.TROOP);
 				enemies.add(enemy);
+				enemySquad.addMember(enemy);
 			}
 			Enemy boss = new Enemy(this);
 			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 18, tileSize * 10, boss);
@@ -225,6 +282,34 @@ public class GamePanel extends JPanel implements Runnable{
 			boss.health = boss.maxHealth;
 			boss.goldDrop = 15;
 			enemies.add(boss);
+			enemySquad.addMember(boss);
+			enemySquad.setCommander(boss);   // only for the boss line specifically
+		} else if ("forest.tmx".equals(mapFile)) {
+			int mapW = getCurrentMapWidthTiles();
+    		int mapH = getCurrentMapHeightTiles();
+			// Forest map - spawn forest-themed enemies
+			for (int i = 0; i < 6; i++) {
+				Enemy enemy = new Enemy(this);
+				int sx = tileSize * 2 + random.nextInt(tileSize * Math.max(1, mapW - 4));
+        		int sy = tileSize * 2 + random.nextInt(tileSize * Math.max(1, mapH - 4));
+				java.awt.Point openPt = findOpenSpawnSpace(sx, sy, enemy);
+				enemy.x = openPt.x;
+				enemy.y = openPt.y;
+				enemy.setType(i % 2 == 0 ? Enemy.Type.TROOP : Enemy.Type.ARCHER);
+				enemies.add(enemy);
+				enemySquad.addMember(enemy);
+			}
+			Enemy boss = new Enemy(this);
+			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 40, tileSize * 15, boss);
+			boss.x = openPt.x;
+			boss.y = openPt.y;
+			boss.setType(Enemy.Type.BOSS);
+			boss.maxHealth = 80;
+			boss.health = boss.maxHealth;
+			boss.goldDrop = 20;
+			enemies.add(boss);
+			enemySquad.addMember(boss);
+			enemySquad.setCommander(boss);   // only for the boss line specifically
 		} else if ("home.txt".equals(mapFile)) {
 			// Home map - spawn some enemies for testing
 			for (int i = 0; i < 8; i++) {
@@ -235,6 +320,7 @@ public class GamePanel extends JPanel implements Runnable{
 				enemy.y = openPt.y;
 				enemy.setType(Enemy.Type.TROOP);
 				enemies.add(enemy);
+				enemySquad.addMember(enemy);
 			}
 			Enemy boss = new Enemy(this);
 			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 150, tileSize * 80, boss);
@@ -245,6 +331,8 @@ public class GamePanel extends JPanel implements Runnable{
 			boss.health = boss.maxHealth;
 			boss.goldDrop = 25;
 			enemies.add(boss);
+			enemySquad.addMember(boss);
+			enemySquad.setCommander(boss);   // only for the boss line specifically
 		} else {
 			for (int i = 0; i < 3; i++) {
 				Enemy enemy = new Enemy(this);
@@ -254,6 +342,7 @@ public class GamePanel extends JPanel implements Runnable{
 				enemy.y = openPt.y;
 				enemy.setType(Enemy.Type.TROOP);
 				enemies.add(enemy);
+				enemySquad.addMember(enemy);
 			}
 			Enemy boss = new Enemy(this);
 			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 20, baseY, boss);
@@ -264,6 +353,8 @@ public class GamePanel extends JPanel implements Runnable{
 			boss.health = boss.maxHealth;
 			boss.goldDrop = 10;
 			enemies.add(boss);
+			enemySquad.addMember(boss);
+			enemySquad.setCommander(boss);   // only for the boss line specifically
 		}
 	}
 
@@ -314,6 +405,24 @@ public class GamePanel extends JPanel implements Runnable{
 	public java.util.List<Enemy> getEnemies() {
 		return enemies;
 	}
+
+	public float getEntityX(Object aggroTarget) {
+		// TODO Auto-generated method stub
+		//throw new UnsupportedOperationException("Unimplemented method 'getEntityX'");
+		if (aggroTarget instanceof Enemy) return ((Enemy) aggroTarget).x;
+		if (aggroTarget instanceof entity.Troop) return ((entity.Troop) aggroTarget).x;
+		if (aggroTarget instanceof Player) return ((Player) aggroTarget).x;
+		return 0f;
+	}
+
+    public float getEntityY(Object aggroTarget) {
+        // TODO Auto-generated method stub
+        //throw new UnsupportedOperationException("Unimplemented method 'getEntityY'");
+		if (aggroTarget instanceof Enemy) return ((Enemy) aggroTarget).y;
+		if (aggroTarget instanceof entity.Troop) return ((entity.Troop) aggroTarget).y;
+		if (aggroTarget instanceof Player) return ((Player) aggroTarget).y;
+		return 0f;
+    }
 
 	@Override
 	//sleep mathod: a game loop
@@ -451,6 +560,8 @@ public class GamePanel extends JPanel implements Runnable{
 				newTroop.x = openPt.x;
 				newTroop.y = openPt.y;
 				troops.add(newTroop);
+				troops.add(newTroop);
+				allySquad.addMember(newTroop); 
 			} else if (inWaveArea) {
 				spawnWaveEnemies();
 			}
@@ -483,10 +594,21 @@ public class GamePanel extends JPanel implements Runnable{
 		if (keyH.cPressed) {
 			for (entity.Troop t : troops) {
 				t.mode = entity.Troop.Mode.CHARGE;
-				if (!enemies.isEmpty()) {
-					Enemy target = enemies.get(0);
-					t.targetX = (int)target.x;
-					t.targetY = (int)target.y;
+				Enemy nearest = null;
+				float shortestDist = Float.MAX_VALUE;
+				for (Enemy e : enemies) {
+					if (e.dead) continue;
+					float dx = e.x - t.x;
+					float dy = e.y - t.y;
+					float dist = (float) Math.sqrt(dx * dx + dy * dy);
+					if (dist < shortestDist) {
+						shortestDist = dist;
+						nearest = e;
+					}
+				}
+				if (nearest != null) {
+					t.targetX = (int) nearest.x;
+					t.targetY = (int) nearest.y;
 				}
 			}
 		}
@@ -500,6 +622,7 @@ public class GamePanel extends JPanel implements Runnable{
 			entity.Troop t = tit.next();
 			t.update();
 			if (t.health <= 0) {
+				allySquad.removeMember(t);   // <-- add this
 				tit.remove();
 			}
 		}
@@ -517,6 +640,7 @@ public class GamePanel extends JPanel implements Runnable{
 					if (px > enemy.x && px < enemy.x + tileSize && py > enemy.y && py < enemy.y + tileSize) {
 						enemy.health -= 8;
 						enemy.showHealthCounter = 60;
+						enemy.threatTable.addThreat(t, 8); 
 						p.life = 0;
 						if (enemy.health < 0) enemy.health = 0;
 						hit = true;
@@ -528,7 +652,17 @@ public class GamePanel extends JPanel implements Runnable{
 				}
 			}
 		}
+		for (Iterator<entity.Troop> tit = troops.iterator(); tit.hasNext();) {
+   			 entity.Troop t = tit.next();
+   			 t.update();
+  			  if (t.health <= 0) {
+       			 tit.remove();
+   				 }
+		}
 
+		enemySquad.updateCommanderAI(this);   // <-- add this line here
+
+		updateMinimapZoom(1f / FPS);   // FPS = 60, so this advances zoom by a 60th of a second each tick
 		updateCamera();
 	}
 
@@ -644,23 +778,23 @@ public class GamePanel extends JPanel implements Runnable{
 			return;
 		}
 		
-		tileM.draw(g2, cameraX, cameraY);
+		tileM.draw(g2, (int)cameraX,(int) cameraY);
 		if (redBox != null) {
-			redBox.draw(g2, cameraX, cameraY);
+			redBox.draw(g2, (int)cameraX,(int) cameraY);
 		}
 		for (CoinItem coin : coins) {
-			coin.draw(g2, cameraX, cameraY);
+			coin.draw(g2, (int)cameraX, (int)cameraY);
 		}
-		if (defendBox != null) defendBox.draw(g2, cameraX, cameraY);
+		if (defendBox != null) defendBox.draw(g2, (int)cameraX, (int)cameraY);
 		for (Enemy enemy : enemies) {
 			if (!enemy.dead || enemy.isDying || enemy.isArcherDying || enemy.isTroopDying) {
-				enemy.draw(g2, cameraX, cameraY);
+				enemy.draw(g2, (int)cameraX, (int)cameraY);
 			}
 		}
 		// draw player projectiles
 		for (entity.Projectile p : player.projectiles) {
-			int sx = (int)p.x - cameraX - p.size/2;
-			int sy = (int)p.y - cameraY - p.size/2;
+			int sx = (int)p.x - (int)cameraX - p.size/2;
+			int sy = (int)p.y - (int)cameraY - p.size/2;
 			g2.setColor(new java.awt.Color(p.color.getRGB()));
 			int[] xs = {sx, sx + p.size, sx + p.size/2};
 			int[] ys = {sy + p.size, sy + p.size, sy};
@@ -668,8 +802,8 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 		// draw areas
 		for (entity.AreaEffect a : player.areas) {
-			int sx = (int)a.x - cameraX - a.radius;
-			int sy = (int)a.y - cameraY - a.radius;
+			int sx = (int)a.x - (int)cameraX - a.radius;
+			int sy = (int)a.y - (int)cameraY - a.radius;
 			if (a.type == entity.AreaEffect.Type.STUN_AND_DAMAGE) {
 				if (a.followsPlayer) {
 					int alpha = a.isBlinkVisible() ? 140 : 60;
@@ -684,8 +818,8 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 
 		// draw shop green box
-		int shopX = tileSize * 2 - cameraX;
-		int shopY = tileSize * 2 - cameraY;
+		int shopX = tileSize * 2 - (int)cameraX;
+		int shopY = tileSize * 2 - (int)cameraY;
 		int shopSize = tileSize * 3;
 		g2.setColor(new java.awt.Color(0,200,0,160));
 		g2.fillRect(shopX, shopY, shopSize, shopSize);
@@ -694,9 +828,9 @@ public class GamePanel extends JPanel implements Runnable{
 
 		// draw troops
 		for (entity.Troop t : troops) {
-			t.draw(g2, cameraX, cameraY);
+			t.draw(g2, (int)cameraX, (int)cameraY);
 		}
-		player.draw(g2, cameraX, cameraY);
+		player.draw(g2, (int)cameraX,(int) cameraY);
 		drawWaveSpawnArea(g2);
 		drawMapLinks(g2);
 		drawMiniMap(g2);
@@ -816,8 +950,8 @@ public class GamePanel extends JPanel implements Runnable{
 
 	private void drawWaveSpawnArea(Graphics2D g2) {
 		Rectangle waveArea = getWaveSpawnArea();
-		int x = waveArea.x - cameraX;
-		int y = waveArea.y - cameraY;
+		int x = waveArea.x - (int)cameraX;
+		int y = waveArea.y - (int)cameraY;
 		int w = waveArea.width;
 		int h = waveArea.height;
 		g2.setColor(new Color(255, 255, 0, 80));
@@ -834,8 +968,8 @@ public class GamePanel extends JPanel implements Runnable{
 
 	private void drawMapLinks(Graphics2D g2) {
 		for (MapLink link : mapLinks) {
-			int x = link.area.x - cameraX;
-			int y = link.area.y - cameraY;
+			int x = link.area.x - (int)cameraX;
+			int y = link.area.y - (int)cameraY;
 			int w = link.area.width;
 			int h = link.area.height;
 			g2.setColor(new Color(0, 180, 255, 120));
@@ -848,10 +982,10 @@ public class GamePanel extends JPanel implements Runnable{
 			}
 		}
 	}
-
+	/* 
 	private void drawMiniMap(Graphics2D g2) {
 		if (!miniMapVisible) return;
-		int mapSize = 400;
+		int mapSize = 250;
 		int miniX = (screenWidth - mapSize) / 2;
 		int miniY = (screenHeight - mapSize) / 2;
 		int cellW = Math.max(1, mapSize / maxWorldCol);
@@ -910,7 +1044,226 @@ public class GamePanel extends JPanel implements Runnable{
 		g2.drawRect(miniX, miniY, mapSize, mapSize);
 		g2.setFont(new Font("Arial", Font.BOLD, 16));
 		g2.drawString(currentMap.replace(".txt", ""), miniX + 10, miniY + 20);
-	}
+	}*/
+
+ 
+// ---- Call this once per game update tick (not per draw call) ----
+public void updateMinimapZoom(float deltaTime) {
+    if (Math.abs(minimapZoom - targetMinimapZoom) < 0.001f) {
+        minimapZoom = targetMinimapZoom;
+        return;
+    }
+    minimapZoom += (targetMinimapZoom - minimapZoom) * Math.min(1f, zoomLerpSpeed * deltaTime);
+}
+ 
+// ---- Hook this to scroll wheel / keybind input ----
+public void adjustMinimapZoom(float delta) {
+    targetMinimapZoom = Math.max(minZoom, Math.min(maxZoom, targetMinimapZoom + delta));
+}
+ 
+// ---- Converts a world pixel position into a minimap screen position ----
+// centerWorldCol/Row = the tile column/row the minimap is centered on (player's position)
+// viewRadiusTiles     = how many tiles are visible from center to edge at current zoom
+private float[] worldToMiniMap(float worldX, float worldY, int miniX, int miniY,
+                                float centerWorldCol, float centerWorldRow,
+                                float viewRadiusTiles, int tileSize) {
+    float col = worldX / tileSize;
+    float row = worldY / tileSize;
+ 
+    float halfSize = minimapScreenSize / 2f;
+    float pxPerTile = halfSize / viewRadiusTiles;
+ 
+    float screenX = miniX + halfSize + (col - centerWorldCol) * pxPerTile;
+    float screenY = miniY + halfSize + (row - centerWorldRow) * pxPerTile;
+ 
+    return new float[]{screenX, screenY, pxPerTile};
+}
+ 
+private void drawMiniMap(Graphics2D g2) {
+    if (!miniMapVisible) return;
+ 
+    int mapSize = minimapScreenSize;
+    int miniX = (screenWidth - mapSize) / 2;
+    int miniY = (screenHeight - mapSize) / 2;
+ 
+    // Player-centered: everything is computed relative to the player's current tile position
+    float centerCol = player.x / tileSize;
+    float centerRow = player.y / tileSize;
+ 
+    // Auto scaling: viewRadius shrinks as zoom increases (more zoom = fewer tiles visible = bigger tiles)
+    float viewRadiusTiles = baseViewRadiusTiles / minimapZoom;
+    float pxPerTile = (mapSize / 2f) / viewRadiusTiles;
+ 
+    // Clip everything to the minimap's square so tiles/markers don't bleed outside the border
+    Shape oldClip = g2.getClip();
+    g2.setClip(miniX, miniY, mapSize, mapSize);
+ 
+    drawBackground(g2, miniX, miniY, mapSize);
+    drawTiles(g2, miniX, miniY, centerCol, centerRow, viewRadiusTiles, pxPerTile);
+    drawTeleporterMarkers(g2, miniX, miniY, centerCol, centerRow, viewRadiusTiles);
+    //drawNpcMarkers(g2, miniX, miniY, centerCol, centerRow, viewRadiusTiles);
+    drawTroopMarkers(g2, miniX, miniY, centerCol, centerRow, viewRadiusTiles);
+    drawEnemyMarkers(g2, miniX, miniY, centerCol, centerRow, viewRadiusTiles);
+    drawCameraRect(g2, miniX, miniY, centerCol, centerRow, viewRadiusTiles);
+ 
+    // Player marker is always drawn dead-center since the map is centered on them
+    float playerPx = miniX + mapSize / 2f;
+    float playerPy = miniY + mapSize / 2f;
+    g2.setColor(Color.orange);
+    g2.fillOval((int) playerPx - 4, (int) playerPy - 4, 8, 8);
+    g2.setColor(Color.white);
+    g2.drawOval((int) playerPx - 4, (int) playerPy - 4, 8, 8);
+ 
+    g2.setClip(oldClip);
+ 
+    // Border + label (drawn outside the clip so they aren't cut off)
+    g2.setColor(Color.white);
+    g2.drawRect(miniX, miniY, mapSize, mapSize);
+    g2.setFont(new Font("Arial", Font.BOLD, 16));
+    g2.drawString(currentMap.replace(".txt", ""), miniX + 10, miniY + 20);
+}
+ 
+private void drawBackground(Graphics2D g2, int miniX, int miniY, int mapSize) {
+    g2.setColor(new Color(0, 0, 0, 200));
+    g2.fillRect(miniX - 4, miniY - 4, mapSize + 8, mapSize + 8);
+}
+ 
+private void drawTiles(Graphics2D g2, int miniX, int miniY, float centerCol, float centerRow,
+                        float viewRadiusTiles, float pxPerTile) {
+    int startCol = Math.max(0, (int) (centerCol - viewRadiusTiles) - 1);
+    int endCol = Math.min(maxWorldCol - 1, (int) (centerCol + viewRadiusTiles) + 1);
+    int startRow = Math.max(0, (int) (centerRow - viewRadiusTiles) - 1);
+    int endRow = Math.min(maxWorldRow - 1, (int) (centerRow + viewRadiusTiles) + 1);
+ 
+    int cellSize = Math.max(1, (int) Math.ceil(pxPerTile));
+ 
+    for (int row = startRow; row <= endRow; row++) {
+        for (int col = startCol; col <= endCol; col++) {
+            int tileNum = tileM.getMapTileNum()[col][row];
+            Color color = tileNum == 1 ? Color.darkGray : (tileNum == 2 ? Color.blue : Color.black);
+            g2.setColor(color);
+ 
+            float px = miniX + mapSizeHalf() + (col - centerCol) * pxPerTile;
+            float py = miniY + mapSizeHalf() + (row - centerRow) * pxPerTile;
+            g2.fillRect((int) px, (int) py, cellSize, cellSize);
+        }
+    }
+}
+ 
+private float mapSizeHalf() {
+    return minimapScreenSize / 2f;
+}
+ 
+private void drawTeleporterMarkers(Graphics2D g2, int miniX, int miniY, float centerCol, float centerRow,
+                                    float viewRadiusTiles) {
+    g2.setColor(Color.magenta);
+    for (MapLink link : mapLinks) {
+        float col = (float) link.area.x / tileSize;
+        float row = (float) link.area.y / tileSize;
+        float pxPerTile = mapSizeHalf() / viewRadiusTiles;
+ 
+        float px = miniX + mapSizeHalf() + (col - centerCol) * pxPerTile;
+        float py = miniY + mapSizeHalf() + (row - centerRow) * pxPerTile;
+        float pw = Math.max(3, link.area.width * pxPerTile / tileSize);
+        float ph = Math.max(3, link.area.height * pxPerTile / tileSize);
+ 
+        // Diamond marker so teleporters read differently from square tile icons
+        int cx = (int) (px + pw / 2);
+        int cy = (int) (py + ph / 2);
+        int r = (int) Math.max(4, pw / 2);
+        int[] xs = {cx, cx + r, cx, cx - r};
+        int[] ys = {cy - r, cy, cy + r, cy};
+        g2.fillPolygon(xs, ys, 4);
+    }
+}
+ 
+private void drawNpcMarkers(Graphics2D g2, int miniX, int miniY, float centerCol, float centerRow,
+                             float viewRadiusTiles, Rectangle npc) {
+	if (npcs == null|| npc.isEmpty()) return; // remove this guard once npcs is a guaranteed field
+    float pxPerTile = mapSizeHalf() / viewRadiusTiles;
+ 
+    for (entity.NPC npcs : npcs) {
+        if (npc == null) continue;
+        float col = npc.x / tileSize;
+        float row = npc.y / tileSize;
+        float px = miniX + mapSizeHalf() + (col - centerCol) * pxPerTile;
+        float py = miniY + mapSizeHalf() + (row - centerRow) * pxPerTile;
+ 
+        g2.setColor(Color.green);
+        int size = Math.max(3, (int) pxPerTile);
+        g2.fillRect((int) px, (int) py, size, size);
+    }
+}
+ 
+private void drawTroopMarkers(Graphics2D g2, int miniX, int miniY, float centerCol, float centerRow,
+                               float viewRadiusTiles) {
+    float pxPerTile = mapSizeHalf() / viewRadiusTiles;
+ 
+    for (int i = 0; i < troops.size(); i++) {
+        entity.Troop t = troops.get(i);
+        if (t == null || t.health <= 0) continue;
+ 
+        float col = t.x / tileSize;
+        float row = t.y / tileSize;
+        float px = miniX + mapSizeHalf() + (col - centerCol) * pxPerTile;
+        float py = miniY + mapSizeHalf() + (row - centerRow) * pxPerTile;
+ 
+        g2.setColor(Color.blue);
+        int size = Math.max(3, (int) pxPerTile);
+        g2.fillRect((int) px, (int) py, size, size);
+    }
+}
+ 
+private void drawEnemyMarkers(Graphics2D g2, int miniX, int miniY, float centerCol, float centerRow,
+                               float viewRadiusTiles) {
+    float pxPerTile = mapSizeHalf() / viewRadiusTiles;
+ 
+    for (Enemy enemy : enemies) {
+        if (enemy == null || enemy.dead) continue;
+ 
+        float col = enemy.x / tileSize;
+        float row = enemy.y / tileSize;
+        float px = miniX + mapSizeHalf() + (col - centerCol) * pxPerTile;
+        float py = miniY + mapSizeHalf() + (row - centerRow) * pxPerTile;
+        int size = Math.max(3, (int) pxPerTile);
+ 
+        if (enemy.type == Enemy.Type.BOSS) {
+            // Bigger marker + yellow ring so bosses stand out at a glance
+            g2.setColor(Color.red);
+            g2.fillRect((int) px - 2, (int) py - 2, size + 4, size + 4);
+            g2.setColor(Color.yellow);
+            g2.setStroke(new BasicStroke(2f));
+            g2.drawRect((int) px - 2, (int) py - 2, size + 4, size + 4);
+            g2.setStroke(new BasicStroke(1f));
+        } else {
+            g2.setColor(Color.red);
+            g2.fillRect((int) px, (int) py, size, size);
+        }
+    }
+}
+ 
+// Draws a rectangle on the minimap showing the exact area currently visible
+// on the main game screen (i.e. the real camera viewport).
+private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol, float centerRow,
+                             float viewRadiusTiles) {
+    float pxPerTile = mapSizeHalf() / viewRadiusTiles;
+ 
+    float camColStart = cameraX / tileSize;
+    float camRowStart = cameraY / tileSize;
+    float camColEnd = (cameraX + screenWidth) / tileSize;
+    float camRowEnd = (cameraY + screenHeight) / tileSize;
+ 
+    float x1 = miniX + mapSizeHalf() + (camColStart - centerCol) * pxPerTile;
+    float y1 = miniY + mapSizeHalf() + (camRowStart - centerRow) * pxPerTile;
+    float x2 = miniX + mapSizeHalf() + (camColEnd - centerCol) * pxPerTile;
+    float y2 = miniY + mapSizeHalf() + (camRowEnd - centerRow) * pxPerTile;
+ 
+    g2.setColor(Color.white);
+    g2.setStroke(new BasicStroke(1.5f));
+    g2.drawRect((int) x1, (int) y1, (int) (x2 - x1), (int) (y2 - y1));
+    g2.setStroke(new BasicStroke(1f));
+}
+ 
 
 	private void teleportPlayerForMap(String targetMap) {
 		int targetX = (int)player.x;
@@ -933,6 +1286,9 @@ public class GamePanel extends JPanel implements Runnable{
 		} else if ("mapA.txt".equals(targetMap)) {
 			targetX = tileSize * 3;
 			targetY = tileSize * 12;
+		} else if ("forest.tmx".equals(targetMap)) {
+			targetX = tileSize * 3;
+			targetY = tileSize * 12;
 		} else if ("home.txt".equals(targetMap)) {
 			targetX = tileSize * 10;
 			targetY = tileSize * 10;
@@ -952,6 +1308,7 @@ public class GamePanel extends JPanel implements Runnable{
 			enemy.y = openPt.y;
 			enemy.setType(Enemy.Type.TROOP);
 			enemies.add(enemy);
+			enemySquad.addMember(enemy);
 		}
 		Enemy boss = new Enemy(this);
 		int bx = tileSize * 20;
@@ -964,6 +1321,8 @@ public class GamePanel extends JPanel implements Runnable{
 		boss.health = boss.maxHealth;
 		boss.goldDrop = 12;
 		enemies.add(boss);
+		enemySquad.addMember(boss);
+		enemySquad.setCommander(boss);   // only for the boss line specifically
 		waveActive = true;
 		waveMessageTimer = 0;
 	}
@@ -1181,5 +1540,6 @@ public class GamePanel extends JPanel implements Runnable{
 			g2.drawOval(screenX, screenY, size, size);
 		}
 	}
+
 }
 
