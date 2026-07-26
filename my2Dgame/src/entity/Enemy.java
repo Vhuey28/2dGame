@@ -20,15 +20,21 @@ public class Enemy extends Entity {
     public int health = maxHealth;
     public int showHealthCounter = 0;
     public int goldDrop = 2;
-    public enum Type { BASIC, ARCHER, BOSS, TROOP }
+    public enum Type { BASIC, ARCHER, COMMANDER, TROOP }
     public Type type = Type.BASIC;
     public boolean dead = false;
     public ThreatTable threatTable = new ThreatTable();
     public Morale morale = new Morale();
     public java.util.List<java.awt.Point> currentPath = null;
     public int pathIndex = 0;
+    private int pathRecomputeTimer = 0;
+    private float spawnX, spawnY; // anchor for roaming
+    // Roam behavior fields
+    private float roamTargetX = -1, roamTargetY = -1;
+    private int roamWaitTimer = 0;
+    private static final float ROAM_RADIUS = 200f; // pixels from spawn point unit will wander within
     public java.util.List<Projectile> projectiles = new ArrayList<>();
-    // Animation state for boss
+    // Animation state for commander
     public boolean isAttacking = false;
     public int attackAnimationCounter = 0;
     public int attackAnimationFrame = 1;
@@ -55,35 +61,35 @@ public class Enemy extends Entity {
     public int troopDeathAnimationFrame = 1;
     public boolean troopDeathAnimationComplete = false;
     public boolean troopDeathLootDropped = false;
-    // Boss walk animation frames (walk_128: 9 frames per direction)
-    BufferedImage[] bossWalkUp = new BufferedImage[10]; // index 1-9
-    BufferedImage[] bossWalkDown = new BufferedImage[10];
-    BufferedImage[] bossWalkLeft = new BufferedImage[10];
-    BufferedImage[] bossWalkRight = new BufferedImage[10];
+    // commander walk animation frames (walk_128: 9 frames per direction)
+    BufferedImage[] commanderWalkUp = new BufferedImage[10]; // index 1-9
+    BufferedImage[] commanderWalkDown = new BufferedImage[10];
+    BufferedImage[] commanderWalkLeft = new BufferedImage[10];
+    BufferedImage[] commanderWalkRight = new BufferedImage[10];
     // Diagonal walk frames (reuse cardinal frames)
-    BufferedImage[] bossWalkUpLeft = new BufferedImage[10];
-    BufferedImage[] bossWalkUpRight = new BufferedImage[10];
-    BufferedImage[] bossWalkDownLeft = new BufferedImage[10];
-    BufferedImage[] bossWalkDownRight = new BufferedImage[10];
-    // Boss attack animation frames (thrust_oversize: 8 frames per direction)
-    BufferedImage[] bossAttackUp = new BufferedImage[9]; // index 1-8
-    BufferedImage[] bossAttackDown = new BufferedImage[9];
-    BufferedImage[] bossAttackLeft = new BufferedImage[9];
-    BufferedImage[] bossAttackRight = new BufferedImage[9];
-    BufferedImage[] bossAttackUpLeft = new BufferedImage[9];
-    BufferedImage[] bossAttackUpRight = new BufferedImage[9];
-    BufferedImage[] bossAttackDownLeft = new BufferedImage[9];
-    BufferedImage[] bossAttackDownRight = new BufferedImage[9];
-    // Boss death/hurt animation frames (standard/hurt: 6 frames per direction)
-    BufferedImage[] bossDeathUp = new BufferedImage[7];    // index 1-6
-    BufferedImage[] bossDeathDown = new BufferedImage[7];
-    BufferedImage[] bossDeathLeft = new BufferedImage[7];
-    BufferedImage[] bossDeathRight = new BufferedImage[7];
+    BufferedImage[] commanderWalkUpLeft = new BufferedImage[10];
+    BufferedImage[] commanderWalkUpRight = new BufferedImage[10];
+    BufferedImage[] commanderWalkDownLeft = new BufferedImage[10];
+    BufferedImage[] commanderWalkDownRight = new BufferedImage[10];
+    // commander attack animation frames (thrust_oversize: 8 frames per direction)
+    BufferedImage[] commanderAttackUp = new BufferedImage[9]; // index 1-8
+    BufferedImage[] commanderAttackDown = new BufferedImage[9];
+    BufferedImage[] commanderAttackLeft = new BufferedImage[9];
+    BufferedImage[] commanderAttackRight = new BufferedImage[9];
+    BufferedImage[] commanderAttackUpLeft = new BufferedImage[9];
+    BufferedImage[] commanderAttackUpRight = new BufferedImage[9];
+    BufferedImage[] commanderAttackDownLeft = new BufferedImage[9];
+    BufferedImage[] commanderAttackDownRight = new BufferedImage[9];
+    // commander death/hurt animation frames (standard/hurt: 6 frames per direction)
+    BufferedImage[] commanderDeathUp = new BufferedImage[7];    // index 1-6
+    BufferedImage[] commanderDeathDown = new BufferedImage[7];
+    BufferedImage[] commanderDeathLeft = new BufferedImage[7];
+    BufferedImage[] commanderDeathRight = new BufferedImage[7];
     // Diagonal death frames (reuse nearest cardinal)
-    BufferedImage[] bossDeathUpLeft = new BufferedImage[7];
-    BufferedImage[] bossDeathUpRight = new BufferedImage[7];
-    BufferedImage[] bossDeathDownLeft = new BufferedImage[7];
-    BufferedImage[] bossDeathDownRight = new BufferedImage[7];
+    BufferedImage[] commanderDeathUpLeft = new BufferedImage[7];
+    BufferedImage[] commanderDeathUpRight = new BufferedImage[7];
+    BufferedImage[] commanderDeathDownLeft = new BufferedImage[7];
+    BufferedImage[] commanderDeathDownRight = new BufferedImage[7];
 
     // Archer walk animation frames (walk_128: 9 frames per direction)
     BufferedImage[] archerWalkUp = new BufferedImage[10]; // index 1-9
@@ -149,8 +155,8 @@ public class Enemy extends Entity {
     }
     public void setType(Type type) {
         this.type = type;
-        if (type == Type.BOSS) {
-            // Boss needs custom stats
+        if (type == Type.COMMANDER) {
+            // commander needs custom stats
             maxHealth = 60;
             health = maxHealth;
             goldDrop = 10;
@@ -207,81 +213,88 @@ public class Enemy extends Entity {
         y = gp.tileSize * 10f;
         speed = 2f;
         direction = "down";
+        spawnX = x;
+        spawnY = y;
     }
+
+	public void setSpawnAnchor(float x, float y) {
+		this.spawnX = x;
+		this.spawnY = y;
+	}
     public void getEnemyImage() {
         try {
-            // Load boss walk animations (walk_128: 9 frames per direction)
-            if (type == Type.BOSS) {
+            // Load commander walk animations (walk_128: 9 frames per direction)
+            if (type == Type.COMMANDER) {
                 // Walk up
                 for (int i = 1; i <= 9; i++) {
-                    bossWalkUp[i] = ImageIO.read(
-                        getClass().getResourceAsStream("/player/enemyBoss_animations/custom/walk_128/up/" + i + ".png"));
+                    commanderWalkUp[i] = ImageIO.read(
+                        getClass().getResourceAsStream("/player/enemyCommander_animations/custom/walk_128/up/" + i + ".png"));
                 }
                 // Walk down
                 for (int i = 1; i <= 9; i++) {
-                    bossWalkDown[i] = ImageIO.read(
-                        getClass().getResourceAsStream("/player/enemyBoss_animations/custom/walk_128/down/" + i + ".png"));
+                    commanderWalkDown[i] = ImageIO.read(
+                        getClass().getResourceAsStream("/player/enemyCommander_animations/custom/walk_128/down/" + i + ".png"));
                 }
                 // Walk left
                 for (int i = 1; i <= 9; i++) {
-                    bossWalkLeft[i] = ImageIO.read(
-                        getClass().getResourceAsStream("/player/enemyBoss_animations/custom/walk_128/left/" + i + ".png"));
+                    commanderWalkLeft[i] = ImageIO.read(
+                        getClass().getResourceAsStream("/player/enemyCommander_animations/custom/walk_128/left/" + i + ".png"));
                 }
                 // Walk right
                 for (int i = 1; i <= 9; i++) {
-                    bossWalkRight[i] = ImageIO.read(
-                        getClass().getResourceAsStream("/player/enemyBoss_animations/custom/walk_128/right/" + i + ".png"));
+                    commanderWalkRight[i] = ImageIO.read(
+                        getClass().getResourceAsStream("/player/enemyCommander_animations/custom/walk_128/right/" + i + ".png"));
                 }
                 // Diagonal walk frames - horizontal priority only (single copy, no overwrites)
-                copyArrayFrom1(bossWalkLeft, bossWalkUpLeft);    // upLeft uses left frames
-                copyArrayFrom1(bossWalkRight, bossWalkUpRight);  // upRight uses right frames
-                copyArrayFrom1(bossWalkLeft, bossWalkDownLeft);  // downLeft uses left frames
-                copyArrayFrom1(bossWalkRight, bossWalkDownRight); // downRight uses right frames
-                // Load boss attack animations (thrust_oversize: 8 frames per direction)
+                copyArrayFrom1(commanderWalkLeft, commanderWalkUpLeft);    // upLeft uses left frames
+                copyArrayFrom1(commanderWalkRight, commanderWalkUpRight);  // upRight uses right frames
+                copyArrayFrom1(commanderWalkLeft, commanderWalkDownLeft);  // downLeft uses left frames
+                copyArrayFrom1(commanderWalkRight, commanderWalkDownRight); // downRight uses right frames
+                // Load commander attack animations (thrust_oversize: 8 frames per direction)
                 // Attack up
                 for (int i = 0; i <= 7; i++) {
-                    bossAttackUp[i] = ImageIO.read(
-                        getClass().getResourceAsStream("/player/enemyBoss_animations/custom/thrust_oversize/up/" + (i+1) + ".png"));
+                    commanderAttackUp[i] = ImageIO.read(
+                        getClass().getResourceAsStream("/player/enemyCommander_animations/custom/thrust_oversize/up/" + (i+1) + ".png"));
                 }
                 // Attack down
                 for (int i = 0; i <= 7; i++) {
-                    bossAttackDown[i] = ImageIO.read(
-                        getClass().getResourceAsStream("/player/enemyBoss_animations/custom/thrust_oversize/down/" + (i+1) + ".png"));
+                    commanderAttackDown[i] = ImageIO.read(
+                        getClass().getResourceAsStream("/player/enemyCommander_animations/custom/thrust_oversize/down/" + (i+1) + ".png"));
                 }
                 // Attack left
                 for (int i = 0; i <= 7; i++) {
-                    bossAttackLeft[i] = ImageIO.read(
-                        getClass().getResourceAsStream("/player/enemyBoss_animations/custom/thrust_oversize/left/" + (i+1) + ".png"));
+                    commanderAttackLeft[i] = ImageIO.read(
+                        getClass().getResourceAsStream("/player/enemyCommander_animations/custom/thrust_oversize/left/" + (i+1) + ".png"));
                 }
                 // Attack right
                 for (int i = 0; i <= 7; i++) {
-                    bossAttackRight[i] = ImageIO.read(
-                        getClass().getResourceAsStream("/player/enemyBoss_animations/custom/thrust_oversize/right/" + (i+1) + ".png"));
+                    commanderAttackRight[i] = ImageIO.read(
+                        getClass().getResourceAsStream("/player/enemyCommander_animations/custom/thrust_oversize/right/" + (i+1) + ".png"));
                 }
                 // Diagonal attack frames - horizontal priority only (single copy, no overwrites)
-                copyArrayFrom1(bossAttackLeft, bossAttackUpLeft);
-                copyArrayFrom1(bossAttackRight, bossAttackUpRight);
-                copyArrayFrom1(bossAttackLeft, bossAttackDownLeft);
-                copyArrayFrom1(bossAttackRight, bossAttackDownRight);
-                // Load boss death animation (standard/hurt: 6 frames per direction)
+                copyArrayFrom1(commanderAttackLeft, commanderAttackUpLeft);
+                copyArrayFrom1(commanderAttackRight, commanderAttackUpRight);
+                copyArrayFrom1(commanderAttackLeft, commanderAttackDownLeft);
+                copyArrayFrom1(commanderAttackRight, commanderAttackDownRight);
+                // Load commander death animation (standard/hurt: 6 frames per direction)
                 // Only "up" direction files exist; copy to all other directions
                 // Death up
                 for (int i = 1; i <= 6; i++) {
-                    bossDeathUp[i] =  ImageIO.read(
-                        getClass().getResourceAsStream("/player/enemyBoss_animations/standard/hurt/up/" + i + ".png"));
+                    commanderDeathUp[i] =  ImageIO.read(
+                        getClass().getResourceAsStream("/player/enemyCommander_animations/standard/hurt/up/" + i + ".png"));
                 }
                 // Copy up to all other cardinal directions (no separate hurt files exist)
-                copyArrayFrom1(bossDeathUp, bossDeathDown);
-                copyArrayFrom1(bossDeathUp, bossDeathLeft);
-                copyArrayFrom1(bossDeathUp, bossDeathRight);
+                copyArrayFrom1(commanderDeathUp, commanderDeathDown);
+                copyArrayFrom1(commanderDeathUp, commanderDeathLeft);
+                copyArrayFrom1(commanderDeathUp, commanderDeathRight);
 
                 // Diagonal death frames - horizontal priority only (single copy, no overwrites)
-                copyArrayFrom1(bossDeathLeft, bossDeathUpLeft);
-                copyArrayFrom1(bossDeathRight, bossDeathUpRight);
-                copyArrayFrom1(bossDeathLeft, bossDeathDownLeft);
-                copyArrayFrom1(bossDeathRight, bossDeathDownRight);
+                copyArrayFrom1(commanderDeathLeft, commanderDeathUpLeft);
+                copyArrayFrom1(commanderDeathRight, commanderDeathUpRight);
+                copyArrayFrom1(commanderDeathLeft, commanderDeathDownLeft);
+                copyArrayFrom1(commanderDeathRight, commanderDeathDownRight);
                 // Set initial image
-                image = bossWalkDown[1];
+                image = commanderWalkDown[1];
             } else if (type == Type.ARCHER) {
                 // Load archer walk animations (walk_128: 9 frames per direction)
                 // Walk up
@@ -452,8 +465,8 @@ public class Enemy extends Entity {
         if (player == null) {
             return;
         }
-        // Handle death animation for boss
-        if (type == Type.BOSS && health <= 0 && !dead && !isDying) {
+        // Handle death animation for commander
+        if (type == Type.COMMANDER && health <= 0 && !dead && !isDying) {
             dead = true;
             isDying = true;
             deathAnimationCounter = 0;
@@ -465,7 +478,7 @@ public class Enemy extends Entity {
             attackCooldown = 0;
             isAttacking = false;
         }
-        if (type == Type.BOSS && isDying) {
+        if (type == Type.COMMANDER && isDying) {
             deathAnimationCounter++;
             if (deathAnimationCounter > 6) { // Death animation speed
                 deathAnimationFrame++;
@@ -548,7 +561,7 @@ public class Enemy extends Entity {
         }
         if (health <= 0 && !dead) {
             dead = true;
-            if (type != Type.BOSS) {
+            if (type != Type.COMMANDER) {
                 gp.spawnCoins((int)x + gp.tileSize/2, (int)y + gp.tileSize/2, goldDrop);
                 x = -1000; y = -1000;
             }
@@ -558,34 +571,65 @@ public class Enemy extends Entity {
         float targetX = (aggroTarget != null) ? gp.getEntityX(aggroTarget) : player.x;
         float targetY = (aggroTarget != null) ? gp.getEntityY(aggroTarget) : player.y;
 
-        if (currentPath == null || pathIndex >= currentPath.size()) {
+        // Recompute path periodically or when needed
+        pathRecomputeTimer--;
+        if (currentPath == null || pathIndex >= currentPath.size() || pathRecomputeTimer <= 0) {
             currentPath = AStarPathfinder.findPath(gp, (int)x, (int)y, (int)targetX, (int)targetY);
             pathIndex = 0;
+            pathRecomputeTimer = 45; // ~0.75s at 60fps
         }
-        float dx = player.x - x;
-        float dy = player.y - y;
-        float distance = (float)Math.sqrt(dx * dx + dy * dy);
-        if (stunTimer == 0 && distance < chaseRange && distance > 0) {
-            // Normalize direction vector for smooth diagonal movement
-            float dirX = dx / distance;
-            float dirY = dy / distance;
-            // Determine direction for sprite (8 directions)
+
+        // Movement direction toward target (for distance/animation)
+        float dx = targetX - x;
+        float dy = targetY - y;
+        float distToTarget = (float)Math.sqrt(dx * dx + dy * dy);
+
+        // Distance to player specifically gates engagement
+        float pdx = player.x - x;
+        float pdy = player.y - y;
+        float distToPlayer = (float)Math.sqrt(pdx * pdx + pdy * pdy);
+
+        // distance and dirX/dirY need to be accessible for attack logic below
+        float distance = distToTarget;
+        float dirX = 0, dirY = 0;
+        if (distance > 0) {
+            dirX = dx / distance;
+            dirY = dy / distance;
+        }
+
+        if (stunTimer == 0 && distToPlayer < chaseRange && distToTarget > 0) {
+            // Direction toward target for sprite facing (use precomputed dirX/dirY)
             if (dirY < -0.707f && dirX < -0.707f) direction = "upLeft";
             else if (dirY < -0.707f && dirX > 0.707f) direction = "upRight";
             else if (dirY > 0.707f && dirX < -0.707f) direction = "downLeft";
             else if (dirY > 0.707f && dirX > 0.707f) direction = "downRight";
             else if (Math.abs(dirX) > Math.abs(dirY)) {
-                // Horizontal is dominant
                 if (dirX < 0) direction = "left";
                 else direction = "right";
             } else {
-                // Vertical is dominant
                 if (dirY < 0) direction = "up";
                 else direction = "down";
             }
-            // Calculate movement with normalized direction
-            float moveX = dirX * speed;
-            float moveY = dirY * speed;
+
+            // Follow path waypoints
+            float moveX, moveY;
+            if (currentPath != null && pathIndex < currentPath.size()) {
+                java.awt.Point waypoint = currentPath.get(pathIndex);
+                float wpDx = waypoint.x - x;
+                float wpDy = waypoint.y - y;
+                float wpDist = (float)Math.sqrt(wpDx * wpDx + wpDy * wpDy);
+                if (wpDist < 4f) {
+                    pathIndex++;
+                    moveX = 0; moveY = 0;
+                } else {
+                    moveX = (wpDx / wpDist) * speed;
+                    moveY = (wpDy / wpDist) * speed;
+                }
+            } else {
+                // No path available — fall back to direct movement
+                moveX = dirX * speed;
+                moveY = dirY * speed;
+            }
             float nextX = x + moveX;
             float nextY = y + moveY;
             // Try to move - handle X and Y separately for better collision sliding
@@ -602,15 +646,15 @@ public class Enemy extends Entity {
                     moved = true;
                 }
             }
-            // Update walk animation for boss
-            if ((type == Type.BOSS || type == Type.ARCHER || type == Type.TROOP) && moved && !isAttacking && !isDying && !isArcherAttacking && !isArcherDying && !isTroopAttacking && !isTroopDying) {
+            // Walk animation for commander
+            if ((type == Type.COMMANDER || type == Type.ARCHER || type == Type.TROOP) && moved && !isAttacking && !isDying && !isArcherAttacking && !isArcherDying && !isTroopAttacking && !isTroopDying) {
                 spriteCounter++;
                 if (spriteCounter > 12) { // Animation speed
                     spriteNum++;
                     if (spriteNum > 9) spriteNum = 1;
                     spriteCounter = 0;
                 }
-            } else if ((type == Type.BOSS || type == Type.ARCHER || type == Type.TROOP) && !isAttacking && !isDying && !isArcherAttacking && !isArcherDying && !isTroopAttacking && !isTroopDying) {
+            } else if ((type == Type.COMMANDER || type == Type.ARCHER || type == Type.TROOP) && !isAttacking && !isDying && !isArcherAttacking && !isArcherDying && !isTroopAttacking && !isTroopDying) {
                 // Reset to first frame when idle
                 spriteNum = 1;
                 spriteCounter = 0;
@@ -651,11 +695,11 @@ public class Enemy extends Entity {
                 }
             }
         }
-        // Boss attack logic - trigger attack animation when in range
-        if (type == Type.BOSS && stunTimer == 0 && distance < gp.tileSize + 4 && attackCooldown == 0 && !isDying) {
-            // Update attack direction toward player
-            float dirX = dx / distance;
-            float dirY = dy / distance;
+        // commander attack logic - trigger attack animation when in range
+        if (type == Type.COMMANDER && stunTimer == 0 && distToTarget < gp.tileSize + 4 && attackCooldown == 0 && !isDying) {
+            // Update attack direction toward target
+            dirX = dx / distToTarget;
+            dirY = dy / distToTarget;
             if (dirY < -0.707f && dirX < -0.707f) direction = "upLeft";
             else if (dirY < -0.707f && dirX > 0.707f) direction = "upRight";
             else if (dirY > 0.707f && dirX < -0.707f) direction = "downLeft";
@@ -672,42 +716,57 @@ public class Enemy extends Entity {
             isAttacking = true;
             attackAnimationCounter = 0;
             attackAnimationFrame = 0; // Start from frame 0 (8 frames: 0-7)
-            player.health -= damage;
-            if (player.health < 0) {
-                player.health = 0;
+            // Damage the actual target (could be player or troop)
+            Object target = threatTable.getHighestThreatTarget();
+            if (target == player) {
+                player.health -= damage;
+                if (player.health < 0) player.health = 0;
+            } else if (target instanceof entity.Troop) {
+                entity.Troop troop = (entity.Troop) target;
+                troop.health -= damage;
+                if (troop.health < 0) troop.health = 0;
             }
-            attackCooldown = 40; // Boss attack cooldown
+            attackCooldown = 40; // commander attack cooldown
         }
          // Troop attack logic - trigger attack animation when in range
-        if (type == Type.TROOP && stunTimer == 0 && distance < gp.tileSize + 4 && attackCooldown == 0 && !isTroopDying) {
-            // Update attack direction toward player
-            float dirX = dx / distance;
-            float dirY = dy / distance;
-            if (dirY < -0.707f && dirX < -0.707f) direction = "upLeft";
-            else if (dirY < -0.707f && dirX > 0.707f) direction = "upRight";
-            else if (dirY > 0.707f && dirX < -0.707f) direction = "downLeft";
-            else if (dirY > 0.707f && dirX > 0.707f) direction = "downRight";
-            else if (Math.abs(dirX) > Math.abs(dirY)) {
+        if (type == Type.TROOP && stunTimer == 0 && distToTarget < gp.tileSize + 4 && attackCooldown == 0 && !isTroopDying) {
+            // Update attack direction toward target
+            float atkDirX = dx / distToTarget;
+            float atkDirY = dy / distToTarget;
+            if (atkDirY < -0.707f && atkDirX < -0.707f) direction = "upLeft";
+            else if (atkDirY < -0.707f && atkDirX > 0.707f) direction = "upRight";
+            else if (atkDirY > 0.707f && atkDirX < -0.707f) direction = "downLeft";
+            else if (atkDirY > 0.707f && atkDirX > 0.707f) direction = "downRight";
+            else if (Math.abs(atkDirX) > Math.abs(atkDirY)) {
                 // Horizontal is dominant
-                if (dirX < 0) direction = "left";
+                if (atkDirX < 0) direction = "left";
                 else direction = "right";
             } else {
                 // Vertical is dominant
-                if (dirY < 0) direction = "up";
+                if (atkDirY < 0) direction = "up";
                 else direction = "down";
             }
             isTroopAttacking = true;
             troopAttackAnimationCounter = 0;
             troopAttackAnimationFrame = 1; // Start from frame 1 (8 frames:1-8)
-            player.health -= damage;
-            if (player.health < 0) {
-                player.health = 0;
+            // Damage the actual target (could be player or troop)
+            Object target = threatTable.getHighestThreatTarget();
+            if (target == player) {
+                player.health -= damage;
+                if (player.health < 0) player.health = 0;
+            } else if (target instanceof entity.Troop) {
+                entity.Troop troop = (entity.Troop) target;
+                troop.health -= damage;
+                if (troop.health < 0) troop.health = 0;
             }
             attackCooldown = 30; // Troop attack cooldown
+        } else if (stunTimer == 0 && !isDying && !isArcherDying && !isTroopDying) {
+            // Nothing to fight — roam instead of standing still
+            roamBehavior();
         }
-        
-        // Update attack animation for boss (independent of cooldown)
-        if (type == Type.BOSS && isAttacking && !isDying) {
+
+        // Update attack animation for commander (independent of cooldown)
+        if (type == Type.COMMANDER && isAttacking && !isDying) {
             attackAnimationCounter++;
             if (attackAnimationCounter > 4) { // Attack animation speed
                 attackAnimationFrame++;
@@ -818,9 +877,9 @@ public class Enemy extends Entity {
         return !gp.isCollidingWithAnyEntity(nextX, nextY, this);
     }
     public void draw(Graphics2D g2, int cameraX, int cameraY) {
-        // Boss uses larger sprite size (2x tile size for boss)
+        // commander uses larger sprite size (2x tile size for commander)
         int drawWidth, drawHeight;
-        if (type == Type.BOSS) {
+        if (type == Type.COMMANDER) {
             drawWidth = gp.tileSize +40;  // 3x tile = 144px
             drawHeight = gp.tileSize +40;
             // Adjust size per animation state
@@ -866,7 +925,7 @@ public class Enemy extends Entity {
         int screenX = (int)x - cameraX + (gp.tileSize - drawWidth) / 2;
         int screenY = (int)y - cameraY + (gp.tileSize - drawHeight) / 2;
         BufferedImage currentFrame = getCurrentAnimationFrame();
-        if (type == Type.BOSS) {
+        if (type == Type.COMMANDER) {
             if (currentFrame != null) {
                 g2.drawImage(currentFrame, screenX, screenY, drawWidth, drawHeight, null);
             } else {
@@ -901,7 +960,7 @@ public class Enemy extends Entity {
             g2.fillRect(screenX, screenY, drawWidth, drawHeight);
             g2.setColor(java.awt.Color.black);
             g2.drawRect(screenX, screenY, drawWidth, drawHeight);
-        }
+        }/* 
         for (Projectile p : projectiles) {
             int px = (int)p.x - cameraX - p.size/2;
             int py = (int)p.y - cameraY - p.size/2;
@@ -909,8 +968,11 @@ public class Enemy extends Entity {
             int[] xs = {px, px + p.size, px + p.size/2};
             int[] ys = {py + p.size, py + p.size, py};
             g2.fillPolygon(xs, ys, 3);
+        }*/
+       for (Projectile p : projectiles) {
+            p.draw(g2, cameraX, cameraY);
         }
-        if (type != Type.BOSS || showHealthCounter > 0 || health < maxHealth) {
+        if (type != Type.COMMANDER || showHealthCounter > 0 || health < maxHealth) {
             int barWidth = drawWidth;
             int barX = screenX;
             int barY = screenY - 8;
@@ -922,7 +984,7 @@ public class Enemy extends Entity {
         }
     }
     private BufferedImage getCurrentAnimationFrame() {
-         if (type == Type.BOSS) {
+         if (type == Type.COMMANDER) {
             // Death animation takes priority
             if (isDying) {
                 return getDeathFramesForDirection(direction)[deathAnimationFrame];
@@ -987,41 +1049,41 @@ public class Enemy extends Entity {
     }
     private BufferedImage[] getDeathFramesForDirection(String dir) {
         switch (dir) {
-            case "up": return bossDeathUp;
-            case "down": return bossDeathDown;
-            case "left": return bossDeathLeft;
-            case "right": return bossDeathRight;
-            case "upLeft": return bossDeathUpLeft;
-            case "upRight": return bossDeathUpRight;
-            case "downLeft": return bossDeathDownLeft;
-            case "downRight": return bossDeathDownRight;
-            default: return bossDeathDown;
+            case "up": return commanderDeathUp;
+            case "down": return commanderDeathDown;
+            case "left": return commanderDeathLeft;
+            case "right": return commanderDeathRight;
+            case "upLeft": return commanderDeathUpLeft;
+            case "upRight": return commanderDeathUpRight;
+            case "downLeft": return commanderDeathDownLeft;
+            case "downRight": return commanderDeathDownRight;
+            default: return commanderDeathDown;
         }
     }
     private BufferedImage[] getWalkFramesForDirection(String dir) {
         switch (dir) {
-            case "up": return bossWalkUp;
-            case "down": return bossWalkDown;
-            case "left": return bossWalkLeft;
-            case "right": return bossWalkRight;
-            case "upLeft": return bossWalkUpLeft;
-            case "upRight": return bossWalkUpRight;
-            case "downLeft": return bossWalkDownLeft;
-            case "downRight": return bossWalkDownRight;
-            default: return bossWalkDown;
+            case "up": return commanderWalkUp;
+            case "down": return commanderWalkDown;
+            case "left": return commanderWalkLeft;
+            case "right": return commanderWalkRight;
+            case "upLeft": return commanderWalkUpLeft;
+            case "upRight": return commanderWalkUpRight;
+            case "downLeft": return commanderWalkDownLeft;
+            case "downRight": return commanderWalkDownRight;
+            default: return commanderWalkDown;
         }
     }
     private BufferedImage[] getAttackFramesForDirection(String dir) {
         switch (dir) {
-            case "up": return bossAttackUp;
-            case "down": return bossAttackDown;
-            case "left": return bossAttackLeft;
-            case "right": return bossAttackRight;
-            case "upLeft": return bossAttackUpLeft;
-            case "upRight": return bossAttackUpRight;
-            case "downLeft": return bossAttackDownLeft;
-            case "downRight": return bossAttackDownRight;
-            default: return bossAttackDown;
+            case "up": return commanderAttackUp;
+            case "down": return commanderAttackDown;
+            case "left": return commanderAttackLeft;
+            case "right": return commanderAttackRight;
+            case "upLeft": return commanderAttackUpLeft;
+            case "upRight": return commanderAttackUpRight;
+            case "downLeft": return commanderAttackDownLeft;
+            case "downRight": return commanderAttackDownRight;
+            default: return commanderAttackDown;
         }
     }
      private BufferedImage[] getArcherWalkFramesForDirection(String dir) {
@@ -1100,6 +1162,60 @@ public class Enemy extends Entity {
             case "downLeft": return troopDeathDownLeft;
             case "downRight": return troopDeathDownRight;
             default: return troopDeathDown;
+        }
+    }
+
+    // Roam behavior when not in combat
+    private void roamBehavior() {
+        roamWaitTimer--;
+        boolean needNewTarget = roamTargetX < 0 || roamWaitTimer <= 0;
+
+        if (!needNewTarget) {
+            float rdx = roamTargetX - x;
+            float rdy = roamTargetY - y;
+            float rdist = (float) Math.sqrt(rdx * rdx + rdy * rdy);
+            if (rdist < 4f) needNewTarget = true; // reached it
+        }
+
+        if (needNewTarget) {
+            double angle = gp.random.nextDouble() * Math.PI * 2;
+            float candidateX = spawnX + (float)(Math.cos(angle) * ROAM_RADIUS * gp.random.nextDouble());
+            float candidateY = spawnY + (float)(Math.sin(angle) * ROAM_RADIUS * gp.random.nextDouble());
+            roamTargetX = candidateX;
+            roamTargetY = candidateY;
+            currentPath = AStarPathfinder.findPath(gp, (int)x, (int)y, (int)roamTargetX, (int)roamTargetY);
+            pathIndex = 0;
+            roamWaitTimer = 120 + gp.random.nextInt(120); // pause 2-4s at each stop before picking a new spot
+            return; // don't move this tick, just picked a destination
+        }
+
+        if (currentPath != null && pathIndex < currentPath.size()) {
+            java.awt.Point waypoint = currentPath.get(pathIndex);
+            float wpDx = waypoint.x - x;
+            float wpDy = waypoint.y - y;
+            float wpDist = (float) Math.sqrt(wpDx * wpDx + wpDy * wpDy);
+            if (wpDist < 4f) {
+                pathIndex++;
+                return;
+            }
+            float roamSpeed = speed * 0.5f; // roam slower than chase, reads as idle wandering not alertness
+            float moveX = (wpDx / wpDist) * roamSpeed;
+            float moveY = (wpDy / wpDist) * roamSpeed;
+            float nextX = x + moveX;
+            float nextY = y + moveY;
+            if (moveX != 0f && canMoveTo(nextX, y)) x = nextX;
+            if (moveY != 0f && canMoveTo(x, nextY)) y = nextY;
+
+            // reuse existing 8-direction facing logic for the walk animation
+            if (Math.abs(moveX) > Math.abs(moveY)) direction = moveX < 0 ? "left" : "right";
+            else direction = moveY < 0 ? "up" : "down";
+
+            spriteCounter++;
+            if (spriteCounter > 12) {
+                spriteNum++;
+                if (spriteNum > 9) spriteNum = 1;
+                spriteCounter = 0;
+            }
         }
     }
 }

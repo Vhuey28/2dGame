@@ -33,6 +33,10 @@ public class Player extends Entity{
 	public int staminaRegenTimer = 0;
 	public int manaRegenTimer = 0;
 	public int attackCooldown = 0;
+	public int attackCooldownBase = 16; // base cooldown, can be reduced by Attack Speed Up power-up
+	public int meleeDamage = 12; // base melee damage, can be increased by Damage Up power-up
+	public int projectileDamage = 8; // base projectile damage
+	public int dodgeRange = 24; // base dodge distance (tileSize/2 = 24)
 
 	// Attack animation state
 	public boolean isAttacking = false;
@@ -48,6 +52,10 @@ public class Player extends Entity{
 	public BufferedImage[] attackUpRight = new BufferedImage[6];
 	public BufferedImage[] attackDownLeft = new BufferedImage[6];
 	public BufferedImage[] attackDownRight = new BufferedImage[6];
+	//Player effect animations
+	public BufferedImage[] conqurs = new BufferedImage[4]; // index 1-4 used, matching your existing 1-based convention
+	public BufferedImage[] heals = new BufferedImage[3]; 
+	public BufferedImage[] fireball = new BufferedImage[2]; 
 
 	public java.util.List<Projectile> projectiles = new ArrayList<>();
 	public java.util.List<AreaEffect> areas = new ArrayList<>();
@@ -165,6 +173,30 @@ public class Player extends Entity{
 			downLeft1= loadImage("/player/sword_animations/standard/walk/left/4.png");
 			downLeft2= loadImage("/player/sword_animations/standard/walk/left/8.png");
 
+			//conqurs effects
+            conqurs[0] = loadImage("/effects/fire_effect_sliced_tiles/tiles/group4/r05_c14.png");
+			 conqurs[1] = loadImage("/effects/fire_effect_sliced_tiles/tiles/group4/r05_c15.png");
+			  conqurs[2] = loadImage("/effects/fire_effect_sliced_tiles/tiles/group4/r05_c16.png");
+			   conqurs[3] = loadImage("/effects/fire_effect_sliced_tiles/tiles/group4/r05_c17.png");
+				
+			//healings effects
+			heals[0] = loadImage("/effects/green_effect_sliced_tiles/tiles/group3/r06_c10.png");
+			heals[1] = loadImage("/effects/green_effect_sliced_tiles/tiles/group3/r06_c11.png");
+			heals[2] = loadImage("/effects/green_effect_sliced_tiles/tiles/group3/r06_c12.png");
+			
+			//fireball effects
+			fireball[0] = loadImage("/effects/fire_effect_sliced_tiles/tiles/group2/r04_c07.png");
+			fireball[1] = loadImage("/effects/fire_effect_sliced_tiles/tiles/group2/r04_c08.png");
+
+				
+
+				for (int i = 0; i < conqurs.length; i++) {
+					System.out.println("conqurs[" + i + "] = " + (conqurs[i] != null ? "loaded" : "NULL - check this path"));
+				}
+				for (int i = 0; i < heals.length; i++) {
+					System.out.println("heals[" + i + "] = " + (heals[i] != null ? "loaded" : "NULL - check this path"));
+				}
+
 			// Load attack animations (8 frames per direction)
 			// Attack up
 			 attackUp[0] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/1.png"));
@@ -175,12 +207,12 @@ public class Player extends Entity{
      		 attackUp[5] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/6.png"));		
 			 attackUp[6] = cropTransparentBorders(loadImage("/player/sword_animations/standard/walk/up/4.png"));				//Users/vaughnhuey/Homework/code/2dGame/my2Dgame/bin/player/sword_animations/slash_oversize/up/1.png
 			// Attack down
-			 attackDown[0] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/1.png"));
+			attackDown[0] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/1.png"));
      		attackDown[1] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/2.png"));
       		attackDown[2] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/3.png"));
       		attackDown[3] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/4.png"));
-     		 attackDown[4] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/5.png"));
-     		 attackDown[5] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/6.png"));
+     		attackDown[4] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/5.png"));
+     		attackDown[5] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/6.png"));
 			// Attack left
 			attackLeft[0] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/left/1.png"));
       		attackLeft[1] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/left/2.png"));
@@ -312,7 +344,7 @@ public class Player extends Entity{
 		}
 		if (keyH.spacePressed && attackCooldown == 0 && stamina >= 10) {
 			stamina -= 10;
-			attackCooldown = 16;
+			attackCooldown = attackCooldownBase;
 			isAttacking = true;
 			attackAnimationCounter = 0;
 			attackAnimationFrame = 0; // Start attack animation from first frame
@@ -332,7 +364,7 @@ public class Player extends Entity{
 				case "downLeft": dirX = -1; dirY = 1; break;
 				case "left": dirX = -1; break;
 				case "upLeft": dirX = -1; dirY = -1; break;
-			}
+			}/* 
 			if (dirX != 0 || dirY != 0) {
 				// Normalize diagonal for projectile
 				if (dirX != 0 && dirY != 0) {
@@ -341,15 +373,23 @@ public class Player extends Entity{
 				} else {
 					projectiles.add(new Projectile(x + gp.tileSize/2f, y + gp.tileSize/2f, dirX, dirY, 6, 8, java.awt.Color.RED));
 				}
+			}*/
+			if (dirX != 0 || dirY != 0) {
+				if (dirX != 0 && dirY != 0) {
+					float invSqrt2 = 0.70710678f;
+					projectiles.add(new Projectile(x + gp.tileSize/2f, y + gp.tileSize/2f, dirX * invSqrt2, dirY * invSqrt2, 6, 8, java.awt.Color.RED, fireball));
+				} else {
+					projectiles.add(new Projectile(x + gp.tileSize/2f, y + gp.tileSize/2f, dirX, dirY, 6, 8, java.awt.Color.RED, fireball));
+				}
 			}
 		}
 		if (keyH.num2Pressed && mana >= 25) {
 			mana -= 25;
-			areas.add(new AreaEffect(x + gp.tileSize/2f, y + gp.tileSize/2f, gp.tileSize*3, 120, AreaEffect.Type.STUN_AND_DAMAGE, true, this));
+			areas.add(new AreaEffect(x + gp.tileSize/2f, y + gp.tileSize/2f, gp.tileSize*3, 120, AreaEffect.Type.STUN_AND_DAMAGE, true, this, conqurs));
 		}
 		if (keyH.num3Pressed && mana >= 20) {
 			mana -= 20;
-			areas.add(new AreaEffect(x + gp.tileSize/2f, y + gp.tileSize/2f, gp.tileSize*3, 180, AreaEffect.Type.HEAL));
+			areas.add(new AreaEffect(x + gp.tileSize/2f, y + gp.tileSize/2f, gp.tileSize*3, 180, AreaEffect.Type.HEAL,false, this, heals));
 		}
 
 		// dodge
@@ -358,14 +398,14 @@ public class Player extends Entity{
 			// quick move in facing direction
 			float dx = 0, dy = 0;
 			switch (direction) {
-				case "up": dy = -gp.tileSize/2f; break;
-				case "upRight": dx = gp.tileSize/2f * 0.70710678f; dy = -gp.tileSize/2f * 0.70710678f; break;
-				case "right": dx = gp.tileSize/2f; break;
-				case "downRight": dx = gp.tileSize/2f * 0.70710678f; dy = gp.tileSize/2f * 0.70710678f; break;
-				case "down": dy = gp.tileSize/2f; break;
-				case "downLeft": dx = -gp.tileSize/2f * 0.70710678f; dy = gp.tileSize/2f * 0.70710678f; break;
-				case "left": dx = -gp.tileSize/2f; break;
-				case "upLeft": dx = -gp.tileSize/2f * 0.70710678f; dy = -gp.tileSize/2f * 0.70710678f; break;
+				case "up": dy = -dodgeRange; break;
+				case "upRight": dx = dodgeRange * 0.70710678f; dy = -dodgeRange * 0.70710678f; break;
+				case "right": dx = dodgeRange; break;
+				case "downRight": dx = dodgeRange * 0.70710678f; dy = dodgeRange * 0.70710678f; break;
+				case "down": dy = dodgeRange; break;
+				case "downLeft": dx = -dodgeRange * 0.70710678f; dy = dodgeRange * 0.70710678f; break;
+				case "left": dx = -dodgeRange; break;
+				case "upLeft": dx = -dodgeRange * 0.70710678f; dy = -dodgeRange * 0.70710678f; break;
 			}
 			float nextX = x + dx;
 			float nextY = y + dy;
@@ -464,9 +504,9 @@ public class Player extends Entity{
 			int ew = gp.tileSize;
 			int eh = gp.tileSize;
 			if (ex + ew > attackX && ex < attackX + attackW && ey + eh > attackY && ey < attackY + attackH) {
-				enemy.health -= 12;
+				enemy.health -= meleeDamage;
 				enemy.showHealthCounter = 60;
-				enemy.threatTable.addThreat(this, 12);
+				enemy.threatTable.addThreat(this, meleeDamage);
 				if (enemy.health < 0) enemy.health = 0;
 			}
 		}
@@ -492,10 +532,11 @@ public class Player extends Entity{
 
 	public void draw(Graphics2D g2, int cameraX, int cameraY) {
 		// Draw attack animation if attacking
+		int drawWidth = gp.tileSize ,drawHeight = gp.tileSize;
 		if (isAttacking) {
 			BufferedImage attackImage = getAttackFrameForDirection(direction);
 			if (attackImage != null) {
-				g2.drawImage(attackImage, (int)x - cameraX, (int)y - cameraY, gp.tileSize, gp.tileSize, null);
+				g2.drawImage(attackImage, (int)x - cameraX, (int)y - cameraY, drawWidth, drawHeight, null);
 			} else {
 				// Fallback to idle sprite if attack frame not loaded
 				BufferedImage image = getIdleFrameForDirection(direction);

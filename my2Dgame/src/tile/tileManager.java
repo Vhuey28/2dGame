@@ -48,10 +48,24 @@ public class tileManager {
 		loadMap("map1.txt");
 	}
 
+	private void clearTileImages() {
+		for (int i = 0; i < tile.length; i++) {
+			tile[i] = null;
+		}
+	}
+
 	public void loadMap(String filename) {
 		// Reset layers
 		mapLayers.clear();
 		isTmxMap = false;
+
+		// Fully reset the tile grid so no data from a previous map can bleed through
+		for (int col = 0; col < gp.maxWorldCol; col++) {
+			for (int row = 0; row < gp.maxWorldRow; row++) {
+				mapTileNum[col][row] = 0;
+			}
+		}
+
 
 		// Check if it's a TMX file
 		if (filename.toLowerCase().endsWith(".tmx")) {
@@ -90,6 +104,7 @@ public class tileManager {
 	}
 
 	private void loadTmxMap(String filename) {
+		clearTileImages();
 		try {
 			// Load the TMX file content
 			String tmxContent = loadTmxResource("/res/maps/" + filename, "res/maps/" + filename);
@@ -330,6 +345,7 @@ public class tileManager {
 	}
 
 	private void loadTileImages(String filename) {
+		clearTileImages();
 		if ("mapA.txt".equals(filename)) {
 			// Load mapA spritesheet (128x32 = 8 cols x 2 rows = 16 tiles of 16x16)
 			loadSpriteSheet("maps/mapA/spritesheet.png", 16);
@@ -528,13 +544,13 @@ public class tileManager {
 
 			// Check decoration layer (trees/rocks) for blocking tiles
 			if (mapLayers.size() >= 2) {
-				int decoTile = mapLayers.get(42)[col][row];
+				int decoTile = mapLayers.get(1)[col][row];
 				if (blockedDecorationTiles.contains(decoTile)) return true;
 			}
 
 			return false;
 	}
-
+	/* 
 	public void draw(Graphics2D g2, int cameraX, int cameraY) {
 	//		g2.drawImage(tile[0].image, 0, 0, gp.tileSize, gp.tileSize, null);
 	//		g2.drawImage(tile[1].image, 100, 0, gp.tileSize, gp.tileSize, null);
@@ -549,13 +565,60 @@ public class tileManager {
 			// Single layer (old .txt format)
 			drawLayer(g2, cameraX, cameraY, mapTileNum);
 		}
+	}*/
+	public void draw(Graphics2D g2, int cameraX, int cameraY) {
+		if (isTmxMap && !mapLayers.isEmpty()) {
+			for (int[][] layer : mapLayers) {
+				drawLayer(g2, cameraX, cameraY, layer, true);  // skipZero = true, TMX decoration layers can be legitimately empty
+			}
+		} else {
+			drawLayer(g2, cameraX, cameraY, mapTileNum, false); // skipZero = false, tile 0 is real grass here
+		}
 	}
 
-	private void drawLayer(Graphics2D g2, int cameraX, int cameraY, int[][] layerData) {
+// Renders only decoration-layer tiles whose row is at or above the given world Y —
+// i.e., tiles that should appear BEHIND something standing at worldY.
+// Call this before drawing entities.
+public void drawDecorationBehind(Graphics2D g2, int cameraX, int cameraY, float beforeWorldY) {
+    if (mapLayers.size() < 2) return;
+    int[][] decoLayer = mapLayers.get(1);
+    for (int row = 0; row < gp.maxWorldRow; row++) {
+        int tileWorldY = row * gp.tileSize;
+        if (tileWorldY + gp.tileSize > beforeWorldY) continue; // this row draws in the "front" pass instead
+        drawDecorationRow(g2, cameraX, cameraY, decoLayer, row);
+    }
+}
+
+public void drawDecorationFront(Graphics2D g2, int cameraX, int cameraY, float afterWorldY) {
+    if (mapLayers.size() < 2) return;
+    int[][] decoLayer = mapLayers.get(1);
+    for (int row = 0; row < gp.maxWorldRow; row++) {
+        int tileWorldY = row * gp.tileSize;
+        if (tileWorldY + gp.tileSize <= afterWorldY) continue;
+        drawDecorationRow(g2, cameraX, cameraY, decoLayer, row);
+    }
+}
+
+private void drawDecorationRow(Graphics2D g2, int cameraX, int cameraY, int[][] layerData, int row) {
+    for (int col = 0; col < gp.maxWorldCol; col++) {
+        int tileNum = layerData[col][row];
+        if (tileNum == 0) continue;
+        int screenX = col * gp.tileSize - cameraX;
+        int screenY = row * gp.tileSize - cameraY;
+        if (screenX + gp.tileSize > 0 && screenX < gp.screenWidth &&
+            screenY + gp.tileSize > 0 && screenY < gp.screenHeight) {
+            if (tileNum < tile.length && tile[tileNum] != null && tile[tileNum].image != null) {
+                g2.drawImage(tile[tileNum].image, screenX, screenY, gp.tileSize, gp.tileSize, null);
+            }
+        }
+    }
+}
+
+	private void drawLayer(Graphics2D g2, int cameraX, int cameraY, int[][] layerData, boolean skipZero) {
 		for (int row = 0; row < gp.maxWorldRow; row++) {
 			for (int col = 0; col < gp.maxWorldCol; col++) {
 				int tileNum = layerData[col][row];
-				if (tileNum == 0) continue; // Skip empty tiles
+				if (skipZero && tileNum == 0) continue;
 
 				int worldX = col * gp.tileSize;
 				int worldY = row * gp.tileSize;

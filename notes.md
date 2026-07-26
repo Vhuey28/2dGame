@@ -13,7 +13,6 @@
   - character customizations
   - ship battles?
   - Kingdom systems(diplomaci, court, alliances, rebelions, traitors)
-  - inproved ai
   - more player abilites
   - ally commanders
   - enemy diversity
@@ -21,9 +20,6 @@
 
 
 ## Current Issues Found
-
-  - ally/enemy path finding
-  - enemy/ally targeting
   - player gets stuck between allies when surrounded by them
   - home map doesnt apear correctly
   - freezes after a  lot of enemies are spawned

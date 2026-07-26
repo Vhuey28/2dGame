@@ -21,7 +21,7 @@ import my2Dgame.GamePanel;
  */
 public class AStarPathfinder {
 
-    private static final int MAX_SEARCH_RADIUS_TILES = 40; // tiles in each direction from the start
+    private static final int MAX_SEARCH_RADIUS_TILES = 80; // tiles in each direction from the start (was 40)
 
     private static class Node {
         int col, row;
@@ -62,7 +62,7 @@ public class AStarPathfinder {
         };
 
         int iterations = 0;
-        int maxIterations = 4000; // hard safety cap regardless of radius
+        int maxIterations = 8000; // hard safety cap regardless of radius (was 4000)
 
         while (!openSet.isEmpty() && iterations++ < maxIterations) {
             Node current = openSet.poll();

@@ -8,11 +8,17 @@ public class KeyHandler implements KeyListener{
 	public boolean upPressed, downPressed, leftPressed, rightPressed;
 	public boolean spacePressed;
 	public boolean num1Pressed, num2Pressed, num3Pressed;
+	public boolean num4Pressed, num5Pressed, num6Pressed; // for hero abilities
 	public boolean ePressed;
 	public boolean shiftPressed;
 	public boolean cPressed, vPressed;
 	public boolean bPressed;
 	public boolean mPressed;
+	public boolean xPressed;
+	public boolean fPressed; // interact with hero
+	public boolean qPressed; // switch active hero
+	public boolean fPressedLastFrame = false;
+	public boolean qPressedLastFrame = false;
 
 	@Override
 	public void keyTyped(KeyEvent e) {
@@ -69,7 +75,24 @@ public class KeyHandler implements KeyListener{
 		if(code == KeyEvent.VK_T) {
 			mPressed = true;
 		}
-
+		if(code == KeyEvent.VK_X) {
+			xPressed = true;
+		}
+		if(code == KeyEvent.VK_F) {
+			fPressed = true;
+		}
+		if(code == KeyEvent.VK_Q) {
+			qPressed = true;
+		}
+		if(code == KeyEvent.VK_4) {
+			num4Pressed = true;
+		}
+		if(code == KeyEvent.VK_5) {
+			num5Pressed = true;
+		}
+		if(code == KeyEvent.VK_6) {
+			num6Pressed = true;
+		}
 	}
 
 	@Override
@@ -122,7 +145,24 @@ public class KeyHandler implements KeyListener{
 		if(code == KeyEvent.VK_T) {
 			mPressed = false;
 		}
-
+		if(code == KeyEvent.VK_X) {
+			xPressed = false;
+		}
+		if(code == KeyEvent.VK_F) {
+			fPressed = false;
+		}
+		if(code == KeyEvent.VK_Q) {
+			qPressed = false;
+		}
+		if(code == KeyEvent.VK_4) {
+			num4Pressed = false;
+		}
+		if(code == KeyEvent.VK_5) {
+			num5Pressed = false;
+		}
+		if(code == KeyEvent.VK_6) {
+			num6Pressed = false;
+		}
 
 	}
 

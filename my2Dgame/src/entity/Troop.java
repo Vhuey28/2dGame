@@ -15,8 +15,8 @@ import entity.Player;
 public class Troop extends Entity {
     public enum Role { MELEE, ARCHER }
     public Role role = Role.MELEE;
-    public enum Mode { FOLLOW, CHARGE, DEFEND }
-    public Mode mode = Mode.FOLLOW;
+    public enum Mode { FOLLOW, CHARGE, DEFEND, ROAM }
+    public Mode mode = Mode.ROAM; // was Mode.FOLLOW — roam is now the default idle state
     public float targetX = 0, targetY = 0;
     public Squad squad;
     public int maxHealth = 30;
@@ -26,7 +26,14 @@ public class Troop extends Entity {
     public Morale morale = new Morale();
     public java.util.List<java.awt.Point> currentPath = null;
     public int pathIndex = 0;
+    public int pathRecomputeTimer = 0;
     public java.util.List<Projectile> projectiles = new ArrayList<>();
+
+    // Roam behavior fields
+    private float roamTargetX = -1, roamTargetY = -1;
+    private int roamWaitTimer = 0;
+    private static final float ROAM_RADIUS = 150f;
+    private float spawnX, spawnY;
 
     // Animation state for archer
     public boolean isArcherAttacking = false;
@@ -110,10 +117,17 @@ public class Troop extends Entity {
         this.gp = gp;
         this.x = x;
         this.y = y;
+        this.spawnX = x;  // anchor for roaming
+        this.spawnY = y;
         this.role = role;
         this.speed = 3f;
         direction = "down";
         loadTroopImages();
+    }
+
+    public void setSpawnAnchor(float x, float y) {
+        this.spawnX = x;
+        this.spawnY = y;
     }
 
     GamePanel gp;
@@ -194,18 +208,63 @@ public class Troop extends Entity {
                 dy = player.y - y;
             }
         } else if (mode == Mode.CHARGE) {
-            if (currentPath == null || pathIndex >= currentPath.size()) {
-                currentPath = AStarPathfinder.findPath(gp, (int)x, (int)y, (int)targetX, (int)targetY);
-                pathIndex = 0;
+            // Periodic path recompute for moving targets
+            // pathRecomputeTimer--;
+            // if (currentPath == null || pathIndex >= currentPath.size() || pathRecomputeTimer <= 0) {
+            //     currentPath = AStarPathfinder.findPath(gp, (int)x, (int)y, (int)targetX, (int)targetY);
+            //     pathIndex = 0;
+            //     pathRecomputeTimer = 45; // ~0.75s at 60fps
+            // }
+            // if (currentPath != null && pathIndex < currentPath.size()) {
+            //     java.awt.Point waypoint = currentPath.get(pathIndex);
+            //     dx = waypoint.x - x;
+            //     dy = waypoint.y - y;
+            //     if (Math.abs(dx) < 4 && Math.abs(dy) < 4) pathIndex++;
+            // } else {
+            //     dx = targetX - x;
+            //     dy = targetY - y;
+            // }
+                        pathRecomputeTimer--;
+                boolean needsRecompute = currentPath == null
+                    || pathIndex >= currentPath.size()
+                    || pathRecomputeTimer <= 0;
+
+                if (needsRecompute) {
+                    currentPath = AStarPathfinder.findPath(gp, (int)x, (int)y,
+            (int)targetX, (int)targetY);
+                    pathIndex = 0;
+                    pathRecomputeTimer = 45;
+                }
+
+                if (currentPath != null && pathIndex < currentPath.size()) {
+                    java.awt.Point waypoint = currentPath.get(pathIndex);
+                    dx = waypoint.x - x;
+                    dy = waypoint.y - y;
+                    if (Math.abs(dx) < 4 && Math.abs(dy) < 4) pathIndex++;
+                } else {
+                    dx = targetX - x;
+                    dy = targetY - y;
+                }
+  
+        } else if (mode == Mode.ROAM) {
+            roamWaitTimer--;
+            boolean needNewTarget = roamTargetX < 0 || roamWaitTimer <= 0;
+            if (!needNewTarget) {
+                float rdx = roamTargetX - x, rdy = roamTargetY - y;
+                if (Math.sqrt(rdx * rdx + rdy * rdy) < 4f) needNewTarget = true;
             }
-            if (currentPath != null && pathIndex < currentPath.size()) {
+            if (needNewTarget) {
+                double angle = gp.random.nextDouble() * Math.PI * 2;
+                roamTargetX = spawnX + (float)(Math.cos(angle) * ROAM_RADIUS * gp.random.nextDouble());
+                roamTargetY = spawnY + (float)(Math.sin(angle) * ROAM_RADIUS * gp.random.nextDouble());
+                currentPath = AStarPathfinder.findPath(gp, (int)x, (int)y, (int)roamTargetX, (int)roamTargetY);
+                pathIndex = 0;
+                roamWaitTimer = 120 + gp.random.nextInt(120); // pause 2-4s at each stop
+            } else if (currentPath != null && pathIndex < currentPath.size()) {
                 java.awt.Point waypoint = currentPath.get(pathIndex);
                 dx = waypoint.x - x;
                 dy = waypoint.y - y;
                 if (Math.abs(dx) < 4 && Math.abs(dy) < 4) pathIndex++;
-            } else {
-                dx = targetX - x;
-                dy = targetY - y;
             }
         }
         
@@ -545,6 +604,8 @@ public class Troop extends Entity {
             e.printStackTrace();
         }
     }
+
+    
 
     // Copy array starting from index 1 (since all animation arrays use 1-based indexing)
     private void copyArrayFrom1(BufferedImage[] src, BufferedImage[] dest) {

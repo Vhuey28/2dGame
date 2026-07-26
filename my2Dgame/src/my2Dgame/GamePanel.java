@@ -21,6 +21,7 @@ import javax.swing.JPanel;
 
 import entity.Enemy;
 //import entity.NPC;
+import entity.Hero;
 import entity.Player;
 import entity.Projectile;
 import entity.Squad;
@@ -58,8 +59,19 @@ public class GamePanel extends JPanel implements Runnable{
 	// Camera fields — replace with your actual camera tracking if named differently
 	private float cameraX, cameraY;
 	
+	// Game State
+	public enum GameState {
+		PLAYING, PAUSED, INVENTORY, KINGDOM_AFFAIRS
+	}
+	GameState gameState = GameState.PLAYING;
+
+	public void setGameState(GameState state) {
+		gameState = state;
+	}
+
 	//FPS
 	int FPS = 60;
+	
 	
 	tileManager tileM = new tileManager(this);
 	KeyHandler keyH = new KeyHandler();
@@ -67,7 +79,10 @@ public class GamePanel extends JPanel implements Runnable{
 	public Player player = new Player(this,keyH);
 	public java.util.List<Enemy> enemies = new java.util.ArrayList<>();
     public java.util.List<entity.Troop> troops = new java.util.ArrayList<>();
-	public java.util.List<entity.NPC> npcs = new java.util.ArrayList<>();
+	// public java.util.List<entity.NPC> npcs = new java.util.ArrayList<>();
+	public java.util.List<Hero> heroes = new java.util.ArrayList<>();
+	public Hero activeHero = null;
+	public java.util.List<Hero> recruitedHeroes = new java.util.ArrayList<>(); // persists across maps
     java.util.List<CoinItem> coins = new java.util.ArrayList<>();
 	public Squad enemySquad = new Squad();
 	public Squad allySquad = new Squad(); 
@@ -81,17 +96,69 @@ public class GamePanel extends JPanel implements Runnable{
 	int selectedInventoryIndex = -1;
 	RedBoxItem redBox;
     entity.DefendBox defendBox;
-	Random random = new Random();
+	public Random random = new Random();
 	boolean gameStarted = false;
 	boolean gamePaused = false;
 	boolean gameCrashed = false;
+	boolean xWasPressedLastFrame = false;
 	boolean bWasPressedLastFrame = false;
 	boolean mWasPressedLastFrame = false;
+	boolean qWasPressedLastFrame = false;
 	boolean miniMapVisible = false;
 	int portalCooldown = 0;
 	boolean waveActive = false;
 	int waveMessageTimer = 0;
 	String crashError = null;
+// Defensive copies — update() runs on a separate thread and can mutate these
+		// lists mid-paint otherwise, causing ConcurrentModificationException.
+		// java.util.List<Enemy> enemiesSnapshot = new java.util.ArrayList<>(enemies);
+		// java.util.List<entity.Troop> troopsSnapshot = new java.util.ArrayList<>(troops);
+		// java.util.List<Hero> heroesSnapshot = new java.util.ArrayList<>(heroes);
+		// java.util.List<CoinItem> coinsSnapshot = new java.util.ArrayList<>(coins);
+		// java.util.List<MapLink> mapLinksSnapshot = new java.util.ArrayList<>(mapLinks);
+		// java.util.List<entity.Projectile> playerProjectilesSnapshot = new java.util.ArrayList<>(player.projectiles);
+		// java.util.List<entity.AreaEffect> playerAreasSnapshot = new java.util.ArrayList<>(player.areas);
+
+	// Survival mode state
+	public enum GameMode { SANDBOX, SURVIVAL }
+	public GameMode gameMode = GameMode.SANDBOX;
+
+	public enum MenuStage { MODE_SELECT, ALLY_YES_NO, ALLY_TYPE, READY }
+	public MenuStage menuStage = MenuStage.MODE_SELECT;
+
+	public enum AllyChoice { NONE, MELEE_ONLY, ARCHER_ONLY, BOTH }
+	public AllyChoice survivalAllyChoice = AllyChoice.NONE;
+
+	// Survival session state
+	public int survivalWaveNumber = 0;
+	public int survivalEnemyCountForWave = 10; // first wave; +15 each wave after
+	public boolean survivalWaveTransition = false; // true while power-up menu/portal-wait is showing
+	public boolean survivalPowerUpMenuOpen = false;
+	public java.util.List<String> availablePowerUps = new java.util.ArrayList<>(
+	    java.util.Arrays.asList("Damage Up", "Speed Up", "Max Health Up", "Faster Regen", "Extra Dodge Range", "Attack Speed Up")
+	);
+	public java.util.List<String> activePowerUps = new java.util.ArrayList<>(); // stacked for the whole session
+	private String[] currentPowerUpChoices = new String[3];
+
+	// Survival portal — a single-use MapLink-like object spawned after a cleared wave
+	private MapLink survivalPortal = null;
+	private final String[] survivalMapPool = {"map1.txt", "mapA.txt", "forest.tmx", "home.txt"}; // extend as you add maps
+
+	// Menu button rects (only used before gameStarted)
+	private Rectangle sandboxModeButton = new Rectangle(screenWidth/2 - 160, screenHeight/2, 140, 44);
+	private Rectangle survivalModeButton = new Rectangle(screenWidth/2 + 20, screenHeight/2, 140, 44);
+	private Rectangle allyYesButton = new Rectangle(screenWidth/2 - 160, screenHeight/2, 140, 44);
+	private Rectangle allyNoButton = new Rectangle(screenWidth/2 + 20, screenHeight/2, 140, 44);
+	private Rectangle allyMeleeButton = new Rectangle(screenWidth/2 - 220, screenHeight/2, 130, 44);
+	private Rectangle allyArcherButton = new Rectangle(screenWidth/2 - 65, screenHeight/2, 130, 44);
+	private Rectangle allyBothButton = new Rectangle(screenWidth/2 + 90, screenHeight/2, 130, 44);
+
+	// Power-up menu buttons
+	private Rectangle[] powerUpButtons = {
+	    new Rectangle(screenWidth/2 - 330, screenHeight/2, 200, 60),
+	    new Rectangle(screenWidth/2 - 100, screenHeight/2, 200, 60),
+	    new Rectangle(screenWidth/2 + 130, screenHeight/2, 200, 60)
+	};
 	public int getCurrentMapWidthTiles() { return tileM.currentMapWidth; }
 	public int getCurrentMapHeightTiles() { return tileM.currentMapHeight; }
 
@@ -106,9 +173,12 @@ public class GamePanel extends JPanel implements Runnable{
 			@Override
 			public void keyPressed(KeyEvent e) {
 				int code = e.getKeyCode();
-				if (!gameStarted && code == KeyEvent.VK_ENTER) {
+				if (!gameStarted && code == KeyEvent.VK_ENTER && menuStage == MenuStage.READY) {
 					gameStarted = true;
 					gamePaused = false;
+					if (gameMode == GameMode.SURVIVAL) {
+						startSurvivalMode();
+					}
 					repaint();
 					return;
 				}
@@ -143,13 +213,29 @@ public class GamePanel extends JPanel implements Runnable{
 			@Override
 			public void mouseClicked(MouseEvent e) {
 
+				if (!gameStarted) {
+					handleStartMenuClick(e.getPoint());
+					return;
+				}
 				if (gamePaused) {
 					if (getRestartButtonRect().contains(e.getPoint())) {
 						restartGame();
 						return;
 					}
+					// Handle power-up menu clicks in survival mode
+					if (gameMode == GameMode.SURVIVAL && survivalPowerUpMenuOpen && powerUpButtons != null) {
+						for (int i = 0; i < powerUpButtons.length; i++) {
+							if (powerUpButtons[i] != null && powerUpButtons[i].contains(e.getPoint()) && i < currentPowerUpChoices.length && currentPowerUpChoices[i] != null) {
+								applyPowerUp(currentPowerUpChoices[i]);
+								survivalPowerUpMenuOpen = false;
+								gamePaused = false;
+								repaint();
+								return;
+							}
+						}
+					}
 				}
-				if (inventoryButton.contains(e.getPoint())) {
+				if (gameMode != GameMode.SURVIVAL && inventoryButton.contains(e.getPoint())) {
 					inventoryOpen = !inventoryOpen;
 					selectedInventoryIndex = -1;
 					repaint();
@@ -169,9 +255,10 @@ public class GamePanel extends JPanel implements Runnable{
 			
 		});
 		this.setFocusable(true);
-		setupMap("forest.tmx");
+		setupMap("map1.txt");
 	}
 
+	
 	public Rectangle getRestartButtonRect() {
 		int width = 450;
 		int height = 240;
@@ -203,6 +290,133 @@ public class GamePanel extends JPanel implements Runnable{
 		repaint();
 	}
 
+	// ===== Survival Mode Methods =====
+
+	private void handleStartMenuClick(java.awt.Point p) {
+		switch (menuStage) {
+			case MODE_SELECT:
+				if (sandboxModeButton.contains(p)) {
+					gameMode = GameMode.SANDBOX;
+					menuStage = MenuStage.READY;
+				} else if (survivalModeButton.contains(p)) {
+					gameMode = GameMode.SURVIVAL;
+					menuStage = MenuStage.ALLY_YES_NO;
+				}
+				break;
+			case ALLY_YES_NO:
+				if (allyYesButton.contains(p)) {
+					menuStage = MenuStage.ALLY_TYPE;
+				} else if (allyNoButton.contains(p)) {
+					survivalAllyChoice = AllyChoice.NONE;
+					menuStage = MenuStage.READY;
+				}
+				break;
+			case ALLY_TYPE:
+				if (allyMeleeButton.contains(p)) {
+					survivalAllyChoice = AllyChoice.MELEE_ONLY;
+					menuStage = MenuStage.READY;
+				} else if (allyArcherButton.contains(p)) {
+					survivalAllyChoice = AllyChoice.ARCHER_ONLY;
+					menuStage = MenuStage.READY;
+				} else if (allyBothButton.contains(p)) {
+					survivalAllyChoice = AllyChoice.BOTH;
+					menuStage = MenuStage.READY;
+				}
+				break;
+			case READY:
+				break; // ENTER key starts the game from here, no click needed
+		}
+	}
+
+	private void startSurvivalMode() {
+		survivalWaveNumber = 1;
+		survivalEnemyCountForWave = 10;
+		activePowerUps.clear();
+		setupMap("map1.txt");
+		teleportPlayerForMap("map1.txt");
+		spawnSurvivalWave(survivalEnemyCountForWave);
+	}
+
+	private void spawnSurvivalWave(int enemyCount) {
+		enemies.clear();
+		enemySquad.members.clear();
+		enemySquad.commander = null;
+
+		for (int i = 0; i < enemyCount; i++) {
+			Enemy enemy = new Enemy(this);
+			int angle = random.nextInt(360);
+			int dist = tileSize * 8 + random.nextInt(tileSize * 6); // 8-14 tiles away
+			int sx = (int)player.x + (int)(Math.cos(Math.toRadians(angle)) * dist);
+			int sy = (int)player.y + (int)(Math.sin(Math.toRadians(angle)) * dist);
+			int[] clamped = clampToCurrentMapBounds(sx, sy);   // <-- add this
+			java.awt.Point openPt = findOpenSpawnSpace(clamped[0], clamped[1], enemy);   // <-- use clamped values			enemy.x = openPt.x;
+			enemy.y = openPt.y;
+			enemy.setSpawnAnchor(openPt.x, openPt.y);
+			enemy.setType(i % 5 == 0 ? Enemy.Type.ARCHER : Enemy.Type.TROOP); // every 5th enemy is an archer
+			enemies.add(enemy);
+			enemySquad.addMember(enemy);
+		}
+
+		// commander every wave, scaling with wave number
+		Enemy commander = new Enemy(this);
+		int[] clampedCommander = clampToCurrentMapBounds((int)player.x + tileSize * 6, (int)player.y);
+		java.awt.Point commanderPt = findOpenSpawnSpace(clampedCommander[0], clampedCommander[1], commander);		commander.x = commanderPt.x;
+		commander.y = commanderPt.y;
+		commander.setSpawnAnchor(commanderPt.x, commanderPt.y);
+		commander.setType(Enemy.Type.COMMANDER);
+		commander.maxHealth = 60 + (survivalWaveNumber * 10);
+		commander.health = commander.maxHealth;
+		commander.goldDrop = 0; // coin spawns disabled in survival
+		enemies.add(commander);
+		enemySquad.addMember(commander);
+		enemySquad.setCommander(commander);
+
+		spawnSurvivalAllies(enemyCount);
+
+		waveActive = true;
+		waveMessageTimer = 60;
+		survivalWaveTransition = false;
+	}
+
+	private void spawnSurvivalAllies(int enemyCount) {
+		if (survivalAllyChoice == AllyChoice.NONE) return;
+
+		int allyCount = enemyCount / 2; // "always half of how many enemies there are in each wave"
+		for (int i = 0; i < allyCount; i++) {
+			entity.Troop.Role role;
+			if (survivalAllyChoice == AllyChoice.MELEE_ONLY) {
+				role = entity.Troop.Role.MELEE;
+			} else if (survivalAllyChoice == AllyChoice.ARCHER_ONLY) {
+				role = entity.Troop.Role.ARCHER;
+			} else { // BOTH — alternate
+				role = (i % 2 == 0) ? entity.Troop.Role.MELEE : entity.Troop.Role.ARCHER;
+			}
+			entity.Troop ally = new entity.Troop(this, (int)player.x, (int)player.y, role);
+			int[] clampedAlly = clampToCurrentMapBounds((int)player.x + tileSize * (i % 4), (int)player.y + tileSize);
+			java.awt.Point openPt = findOpenSpawnSpace(clampedAlly[0], clampedAlly[1], ally);			ally.x = openPt.x;
+			ally.y = openPt.y;
+			ally.setSpawnAnchor(openPt.x, openPt.y);
+			troops.add(ally);
+			allySquad.addMember(ally);
+		}
+	}
+
+	private void onSurvivalWaveCleared() {
+		waveActive = false;
+		survivalWaveTransition = true;
+		rollPowerUpChoices();
+		survivalPowerUpMenuOpen = true;
+		gamePaused = true; // reuse existing pause gate so normal update logic halts during the choice
+	}
+
+	private void rollPowerUpChoices() {
+		java.util.List<String> pool = new java.util.ArrayList<>(availablePowerUps);
+		java.util.Collections.shuffle(pool, random);
+		for (int i = 0; i < 3 && i < pool.size(); i++) {
+			currentPowerUpChoices[i] = pool.get(i);
+		}
+	}
+
 	public void startGameThread() {
 		if (gameThread == null) {
 			gameThread = new Thread(this);
@@ -223,10 +437,15 @@ public class GamePanel extends JPanel implements Runnable{
 		defendBox = new entity.DefendBox(tileSize * 30, tileSize * 10, tileSize * 3);
 		spawnEnemiesForMap(mapFile);
 		initializePortals();
+		initializeHeroes();
 	}
 
 	private void initializePortals() {
 		mapLinks.clear();
+		// In survival mode, we only use the survival portal (spawned after each wave)
+		if (gameMode == GameMode.SURVIVAL) {
+			return;
+		}
 		if ("map1.txt".equals(currentMap)) {
 			mapLinks.add(new MapLink(new Rectangle(tileSize * 7, tileSize - 4, tileSize, 8), "map2.txt", "Forest"));
 			mapLinks.add(new MapLink(new Rectangle(tileSize * 7, worldHeight - tileSize + 4, tileSize, 8), "map3.txt", "Cave"));
@@ -248,6 +467,57 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 	}
 
+	private void initializeHeroes() {
+		//heroes.clear();
+		heroes.removeIf(h -> !h.isRecruited);
+
+		if ("map1.txt".equals(currentMap)) {
+			// Recruitable heroes in the starting area
+			Hero warrior = new Hero(this, "vince", Hero.HeroClass.WARRIOR, tileSize * 4, tileSize * 10);
+			warrior.recruitmentLines = new String[]{
+				"vince: \"The road ahead is perilous. My shield is yours.\"",
+				"vince: \"I've fought bandits on these roads. Let me join you.\""
+			};
+			heroes.add(warrior);
+
+			Hero mage = new Hero(this, "triss", Hero.HeroClass.MAGE, tileSize * 12, tileSize * 10);
+			mage.recruitmentLines = new String[]{
+				"Elara: \"The arcane arts are at your disposal.\"",
+				"Elara: \"Fire and ice at your command. Shall we?\""
+			};
+			heroes.add(mage);
+
+		} else if ("home.txt".equals(currentMap)) {
+			// More heroes available at home base
+			Hero archer = new Hero(this, "Sylas", Hero.HeroClass.ARCHER, tileSize * 15, tileSize * 15);
+			archer.recruitmentLines = new String[]{
+				"Sylas: \"My arrows find their mark. You'll not be disappointed.\"",
+				"Sylas: \"The forest has eyes, and I've got the bow.\""
+			};
+			heroes.add(archer);
+
+			Hero cleric = new Hero(this, "Sister Mara", Hero.HeroClass.CLERIC, tileSize * 17, tileSize * 15);
+			cleric.recruitmentLines = new String[]{
+				"Sister Mara: \"The light guides my path, and yours.\"",
+				"Sister Mara: \"Healing hands and holy fire. I'm with you.\""
+			};
+			heroes.add(cleric);
+
+			Hero rogue = new Hero(this, "Kira", Hero.HeroClass.ROGUE, tileSize * 19, tileSize * 15);
+			rogue.recruitmentLines = new String[]{
+				"Kira: \"Secrets are my trade. What's yours?\"",
+				"Kira: \"Behind every enemy... there's a back.\""
+			};
+			heroes.add(rogue);
+		}
+
+		// Re-apply recruitment status for already recruited heroes
+		for (Hero hero : heroes) {
+			hero.activePlayerReference = player;
+			hero.update();
+		}
+	}
+
 	private void spawnEnemiesForMap(String mapFile) {
 		enemies.clear();
 		int baseY = worldHeight - tileSize * 3;
@@ -258,6 +528,7 @@ public class GamePanel extends JPanel implements Runnable{
 				java.awt.Point openPt = findOpenSpawnSpace(sx, baseY, enemy);
 				enemy.x = openPt.x;
 				enemy.y = openPt.y;
+				enemy.setSpawnAnchor(openPt.x, openPt.y);
 				enemy.setType(i == 1 ? Enemy.Type.ARCHER : Enemy.Type.TROOP);
 				enemies.add(enemy);
 				enemySquad.addMember(enemy);
@@ -269,21 +540,23 @@ public class GamePanel extends JPanel implements Runnable{
 				java.awt.Point openPt = findOpenSpawnSpace(sx, tileSize * 15, enemy);
 				enemy.x = openPt.x;
 				enemy.y = openPt.y;
+				enemy.setSpawnAnchor(openPt.x, openPt.y);
 				enemy.setType(Enemy.Type.TROOP);
 				enemies.add(enemy);
 				enemySquad.addMember(enemy);
 			}
-			Enemy boss = new Enemy(this);
-			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 18, tileSize * 10, boss);
-			boss.x = openPt.x;
-			boss.y = openPt.y;
-			boss.setType(Enemy.Type.BOSS);
-			boss.maxHealth = 70;
-			boss.health = boss.maxHealth;
-			boss.goldDrop = 15;
-			enemies.add(boss);
-			enemySquad.addMember(boss);
-			enemySquad.setCommander(boss);   // only for the boss line specifically
+			Enemy commander = new Enemy(this);
+			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 18, tileSize * 10, commander);
+			commander.x = openPt.x;
+			commander.y = openPt.y;
+			commander.setSpawnAnchor(openPt.x, openPt.y);
+			commander.setType(Enemy.Type.COMMANDER);
+			commander.maxHealth = 70;
+			commander.health = commander.maxHealth;
+			commander.goldDrop = 15;
+			enemies.add(commander);
+			enemySquad.addMember(commander);
+			enemySquad.setCommander(commander);   // only for the commander line specifically
 		} else if ("forest.tmx".equals(mapFile)) {
 			int mapW = getCurrentMapWidthTiles();
     		int mapH = getCurrentMapHeightTiles();
@@ -295,21 +568,23 @@ public class GamePanel extends JPanel implements Runnable{
 				java.awt.Point openPt = findOpenSpawnSpace(sx, sy, enemy);
 				enemy.x = openPt.x;
 				enemy.y = openPt.y;
+				enemy.setSpawnAnchor(openPt.x, openPt.y);
 				enemy.setType(i % 2 == 0 ? Enemy.Type.TROOP : Enemy.Type.ARCHER);
 				enemies.add(enemy);
 				enemySquad.addMember(enemy);
 			}
-			Enemy boss = new Enemy(this);
-			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 40, tileSize * 15, boss);
-			boss.x = openPt.x;
-			boss.y = openPt.y;
-			boss.setType(Enemy.Type.BOSS);
-			boss.maxHealth = 80;
-			boss.health = boss.maxHealth;
-			boss.goldDrop = 20;
-			enemies.add(boss);
-			enemySquad.addMember(boss);
-			enemySquad.setCommander(boss);   // only for the boss line specifically
+			Enemy commander = new Enemy(this);
+			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 40, tileSize * 15, commander);
+			commander.x = openPt.x;
+			commander.y = openPt.y;
+			commander.setSpawnAnchor(openPt.x, openPt.y);
+			commander.setType(Enemy.Type.COMMANDER);
+			commander.maxHealth = 80;
+			commander.health = commander.maxHealth;
+			commander.goldDrop = 20;
+			enemies.add(commander);
+			enemySquad.addMember(commander);
+			enemySquad.setCommander(commander);   // only for the commander line specifically
 		} else if ("home.txt".equals(mapFile)) {
 			// Home map - spawn some enemies for testing
 			for (int i = 0; i < 8; i++) {
@@ -318,21 +593,23 @@ public class GamePanel extends JPanel implements Runnable{
 				java.awt.Point openPt = findOpenSpawnSpace(sx, tileSize * 100, enemy);
 				enemy.x = openPt.x;
 				enemy.y = openPt.y;
+				enemy.setSpawnAnchor(openPt.x, openPt.y);
 				enemy.setType(Enemy.Type.TROOP);
 				enemies.add(enemy);
 				enemySquad.addMember(enemy);
 			}
-			Enemy boss = new Enemy(this);
-			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 150, tileSize * 80, boss);
-			boss.x = openPt.x;
-			boss.y = openPt.y;
-			boss.setType(Enemy.Type.BOSS);
-			boss.maxHealth = 100;
-			boss.health = boss.maxHealth;
-			boss.goldDrop = 25;
-			enemies.add(boss);
-			enemySquad.addMember(boss);
-			enemySquad.setCommander(boss);   // only for the boss line specifically
+			Enemy commander = new Enemy(this);
+			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 150, tileSize * 80, commander);
+			commander.x = openPt.x;
+			commander.y = openPt.y;
+			commander.setSpawnAnchor(openPt.x, openPt.y);
+			commander.setType(Enemy.Type.COMMANDER);
+			commander.maxHealth = 100;
+			commander.health = commander.maxHealth;
+			commander.goldDrop = 25;
+			enemies.add(commander);
+			enemySquad.addMember(commander);
+			enemySquad.setCommander(commander);   // only for the commander line specifically
 		} else {
 			for (int i = 0; i < 3; i++) {
 				Enemy enemy = new Enemy(this);
@@ -340,21 +617,22 @@ public class GamePanel extends JPanel implements Runnable{
 				java.awt.Point openPt = findOpenSpawnSpace(sx, baseY, enemy);
 				enemy.x = openPt.x;
 				enemy.y = openPt.y;
+				enemy.setSpawnAnchor(openPt.x, openPt.y);
 				enemy.setType(Enemy.Type.TROOP);
 				enemies.add(enemy);
 				enemySquad.addMember(enemy);
 			}
-			Enemy boss = new Enemy(this);
-			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 20, baseY, boss);
-			boss.x = openPt.x;
-			boss.y = openPt.y;
-			boss.setType(Enemy.Type.BOSS);
-			boss.maxHealth = 60;
-			boss.health = boss.maxHealth;
-			boss.goldDrop = 10;
-			enemies.add(boss);
-			enemySquad.addMember(boss);
-			enemySquad.setCommander(boss);   // only for the boss line specifically
+			Enemy commander = new Enemy(this);
+			java.awt.Point openPt = findOpenSpawnSpace(tileSize * 20, baseY, commander);
+			commander.x = openPt.x;
+			commander.y = openPt.y;
+			commander.setType(Enemy.Type.COMMANDER);
+			commander.maxHealth = 60;
+			commander.health = commander.maxHealth;
+			commander.goldDrop = 10;
+			enemies.add(commander);
+			enemySquad.addMember(commander);
+			enemySquad.setCommander(commander);   // only for the commander line specifically
 		}
 	}
 
@@ -510,8 +788,29 @@ public class GamePanel extends JPanel implements Runnable{
 				cit.remove();
 			}
 		}
-		for (Enemy enemy : enemies) {
+		// Update enemies - iterate over a copy to avoid ConcurrentModificationException if enemy.update() modifies the list
+		java.util.List<Enemy> enemiesCopy = new java.util.ArrayList<>(enemies);
+		java.util.List<Enemy> deadEnemies = new java.util.ArrayList<>();
+		for (Enemy enemy : enemiesCopy) {
 			enemy.update(player);
+			// Collect dead enemies that have completed death animation
+			if (enemy.dead && (enemy.deathAnimationComplete || enemy.archerDeathAnimationComplete || enemy.troopDeathAnimationComplete)) {
+				deadEnemies.add(enemy);
+			}
+		}
+		for (Enemy deadEnemy : deadEnemies) {
+			enemies.remove(deadEnemy);
+			enemySquad.removeMember(deadEnemy);
+		}
+		// Survival mode wave-clear detection
+		if (gameMode == GameMode.SURVIVAL && waveActive && !survivalWaveTransition) {
+			boolean allDead = true;
+			for (Enemy e : enemies) {
+				if (!e.dead) { allDead = false; break; }
+			}
+			if (allDead) {
+				onSurvivalWaveCleared();
+			}
 		}
 		for (Enemy enemy : enemies) {
 			Iterator<Projectile> projIterator = enemy.projectiles.iterator();
@@ -573,6 +872,28 @@ public class GamePanel extends JPanel implements Runnable{
 			miniMapVisible = !miniMapVisible;
 		}
 		mWasPressedLastFrame = keyH.mPressed;
+		// Toggle ally roam/follow with X key (edge-triggered)
+		if (keyH.xPressed && !xWasPressedLastFrame) {
+			for (entity.Troop t : troops) {
+				t.mode = (t.mode == entity.Troop.Mode.ROAM) ? entity.Troop.Mode.FOLLOW : entity.Troop.Mode.ROAM;
+			}
+		}
+		xWasPressedLastFrame = keyH.xPressed;
+
+		// Hero interaction (F key)
+		if (keyH.fPressed) {
+			interactWithNearbyHero();
+			keyH.fPressed = false; // Consume press
+		}
+
+		// Switch active hero (Q key)
+		if (keyH.qPressed && !qWasPressedLastFrame) {
+			switchActiveHero();
+		}
+		qWasPressedLastFrame = keyH.qPressed;
+
+		// Hero abilities (4,5,6 keys)
+		handleHeroAbilities();
 
 		if (portalCooldown > 0) {
 			portalCooldown--;
@@ -590,16 +911,24 @@ public class GamePanel extends JPanel implements Runnable{
 			}
 		}
 
+		// Survival portal collision
+		if (gameMode == GameMode.SURVIVAL && survivalPortal != null && portalCooldown == 0) {
+			if (playerRect.intersects(survivalPortal.area)) {
+				advanceSurvivalWave(survivalPortal.targetMap);
+				portalCooldown = 30;
+			}
+		}
+
 		// troop commands
 		if (keyH.cPressed) {
-			for (entity.Troop t : troops) {
-				t.mode = entity.Troop.Mode.CHARGE;
+			for (entity.Troop t1 : troops) {
+				t1.mode = entity.Troop.Mode.CHARGE;
 				Enemy nearest = null;
 				float shortestDist = Float.MAX_VALUE;
 				for (Enemy e : enemies) {
 					if (e.dead) continue;
-					float dx = e.x - t.x;
-					float dy = e.y - t.y;
+					float dx = e.x - t1.x;
+					float dy = e.y - t1.y;
 					float dist = (float) Math.sqrt(dx * dx + dy * dy);
 					if (dist < shortestDist) {
 						shortestDist = dist;
@@ -607,29 +936,47 @@ public class GamePanel extends JPanel implements Runnable{
 					}
 				}
 				if (nearest != null) {
-					t.targetX = (int) nearest.x;
-					t.targetY = (int) nearest.y;
+					t1.targetX = (int) nearest.x;
+					t1.targetY = (int) nearest.y;
 				}
 			}
 		}
 		if (keyH.vPressed) {
-			for (entity.Troop t : troops) {
-				t.mode = entity.Troop.Mode.DEFEND;
+			for (entity.Troop t1 : troops) {
+				t1.mode = entity.Troop.Mode.DEFEND;
 			}
 		}
 
+		// Hero interaction - F key to interact with nearby hero
+		if (keyH.fPressed && !keyH.fPressedLastFrame) {
+			interactWithNearbyHero();
+		}
+		// Track F key state for edge detection
+		keyH.fPressedLastFrame = keyH.fPressed;
+
+		// Hero switching - Q key to cycle through recruited heroes
+		if (keyH.qPressed && !keyH.qPressedLastFrame) {
+			switchActiveHero();
+		}
+		keyH.qPressedLastFrame = keyH.qPressed;
+
+		// Hero ability keys (4,5,6) for active hero
+		if (activeHero != null && activeHero.isActivePlayer) {
+			handleHeroAbilities();
+		}
+
 		for (Iterator<entity.Troop> tit = troops.iterator(); tit.hasNext();) {
-			entity.Troop t = tit.next();
-			t.update();
-			if (t.health <= 0) {
-				allySquad.removeMember(t);   // <-- add this
+			entity.Troop t1 = tit.next();
+			t1.update();
+			if (t1.health <= 0) {
+				allySquad.removeMember(t1);   // <-- add this
 				tit.remove();
 			}
 		}
 
 		// troop archer projectile collision with enemies
-		for (entity.Troop t : troops) {
-			Iterator<entity.Projectile> pit = t.projectiles.iterator();
+		for (entity.Troop t1 : troops) {
+			Iterator<entity.Projectile> pit = t1.projectiles.iterator();
 			while (pit.hasNext()) {
 				entity.Projectile p = pit.next();
 				boolean hit = false;
@@ -640,7 +987,7 @@ public class GamePanel extends JPanel implements Runnable{
 					if (px > enemy.x && px < enemy.x + tileSize && py > enemy.y && py < enemy.y + tileSize) {
 						enemy.health -= 8;
 						enemy.showHealthCounter = 60;
-						enemy.threatTable.addThreat(t, 8); 
+						enemy.threatTable.addThreat(t1, 8); 
 						p.life = 0;
 						if (enemy.health < 0) enemy.health = 0;
 						hit = true;
@@ -653,17 +1000,29 @@ public class GamePanel extends JPanel implements Runnable{
 			}
 		}
 		for (Iterator<entity.Troop> tit = troops.iterator(); tit.hasNext();) {
-   			 entity.Troop t = tit.next();
-   			 t.update();
-  			  if (t.health <= 0) {
+   			 entity.Troop t1 = tit.next();
+   			 t1.update();
+  			  if (t1.health <= 0) {
        			 tit.remove();
    				 }
 		}
 
 		enemySquad.updateCommanderAI(this);   // <-- add this line here
 
+		// Update hero companions
+		for (Hero hero : heroes) {
+			if (hero.isRecruited && !hero.isActivePlayer) {
+				hero.activePlayerReference = player;
+				hero.update();
+			} else if (!hero.isRecruited) {
+				// Unrecruited heroes still update for idle animations
+				hero.update();
+			}
+		}
+
 		updateMinimapZoom(1f / FPS);   // FPS = 60, so this advances zoom by a 60th of a second each tick
 		updateCamera();
+		
 	}
 
 	public boolean isTileBlocked(int worldX, int worldY) {
@@ -777,21 +1136,34 @@ public class GamePanel extends JPanel implements Runnable{
 			g2.dispose();
 			return;
 		}
+
+		// Defensive copies — update() runs on a separate thread and can mutate these
+    // lists mid-paint otherwise, causing ConcurrentModificationException.
+    java.util.List<Enemy> enemiesSnapshot = new java.util.ArrayList<>(enemies);
+    java.util.List<entity.Troop> troopsSnapshot = new java.util.ArrayList<>(troops);
+    java.util.List<Hero> heroesSnapshot = new java.util.ArrayList<>(heroes);
+    java.util.List<CoinItem> coinsSnapshot = new java.util.ArrayList<>(coins);
+    java.util.List<MapLink> mapLinksSnapshot = new java.util.ArrayList<>(mapLinks);
+    java.util.List<entity.Projectile> playerProjectilesSnapshot = new java.util.ArrayList<>(player.projectiles);
+    java.util.List<entity.AreaEffect> playerAreasSnapshot = new java.util.ArrayList<>(player.areas);
+
 		
-		tileM.draw(g2, (int)cameraX,(int) cameraY);
+		 tileM.draw(g2, (int)cameraX, (int)cameraY); // ground layer only now
+		tileM.drawDecorationBehind(g2, (int)cameraX, (int)cameraY, player.y); // trees above player draw first (behind)
 		if (redBox != null) {
 			redBox.draw(g2, (int)cameraX,(int) cameraY);
 		}
-		for (CoinItem coin : coins) {
+		for (CoinItem coin : coinsSnapshot) {
 			coin.draw(g2, (int)cameraX, (int)cameraY);
 		}
 		if (defendBox != null) defendBox.draw(g2, (int)cameraX, (int)cameraY);
-		for (Enemy enemy : enemies) {
+		for (Enemy enemy : enemiesSnapshot) {
 			if (!enemy.dead || enemy.isDying || enemy.isArcherDying || enemy.isTroopDying) {
 				enemy.draw(g2, (int)cameraX, (int)cameraY);
 			}
 		}
 		// draw player projectiles
+		/* 
 		for (entity.Projectile p : player.projectiles) {
 			int sx = (int)p.x - (int)cameraX - p.size/2;
 			int sy = (int)p.y - (int)cameraY - p.size/2;
@@ -799,8 +1171,12 @@ public class GamePanel extends JPanel implements Runnable{
 			int[] xs = {sx, sx + p.size, sx + p.size/2};
 			int[] ys = {sy + p.size, sy + p.size, sy};
 			g2.fillPolygon(xs, ys, 3);
-		}
+		}*/
+		// for (entity.Projectile p : player.projectiles) {
+		// 	p.draw(g2, (int)cameraX, (int)cameraY);
+		// }
 		// draw areas
+		/* 
 		for (entity.AreaEffect a : player.areas) {
 			int sx = (int)a.x - (int)cameraX - a.radius;
 			int sy = (int)a.y - (int)cameraY - a.radius;
@@ -815,6 +1191,18 @@ public class GamePanel extends JPanel implements Runnable{
 				g2.setColor(new java.awt.Color(200, 200, 0, 100));
 			}
 			g2.fillOval(sx, sy, a.radius*2, a.radius*2);
+		}*/
+		// for (entity.AreaEffect a : player.areas) {
+		// 	a.draw(g2, (int)cameraX, (int)cameraY);
+		// }
+
+		
+
+		for (entity.Projectile p : playerProjectilesSnapshot) {
+			p.draw(g2, (int)cameraX, (int)cameraY);
+		}
+		for (entity.AreaEffect a : playerAreasSnapshot) {
+			a.draw(g2, (int)cameraX, (int)cameraY);
 		}
 
 		// draw shop green box
@@ -827,16 +1215,42 @@ public class GamePanel extends JPanel implements Runnable{
 		g2.drawString("Shop: B=melee, Shift+B=archer", shopX + 8, shopY + 16);
 
 		// draw troops
-		for (entity.Troop t : troops) {
+		// for (entity.Troop t : troops) {
+		// 	t.draw(g2, (int)cameraX, (int)cameraY);
+		// }
+		 for (entity.Troop t : troopsSnapshot) {
 			t.draw(g2, (int)cameraX, (int)cameraY);
 		}
+		// draw hero companions
+		for (Hero hero : heroesSnapshot) {
+			if (hero.isRecruited) {
+					hero.draw(g2, (int)cameraX, (int)cameraY);
+				
+			} else {
+				// Unrecruited heroes appear as NPCs to interact with
+				hero.draw(g2, (int)cameraX, (int)cameraY);
+				// Draw interaction prompt
+				int heroScreenX = (int)hero.x - (int)cameraX;
+				int heroScreenY = (int)hero.y - (int)cameraY - tileSize / 2;
+				g2.setColor(Color.YELLOW);
+				g2.setFont(new Font("Arial", Font.PLAIN, 12));
+				String prompt = "[F] Recruit " + hero.name;
+				int promptWidth = g2.getFontMetrics().stringWidth(prompt);
+				g2.drawString(prompt, heroScreenX - promptWidth / 2, heroScreenY);
+			}
+		}
 		player.draw(g2, (int)cameraX,(int) cameraY);
+		tileM.drawDecorationFront(g2, (int)cameraX, (int)cameraY, player.y); // trees below player draw last (in front)
 		drawWaveSpawnArea(g2);
 		drawMapLinks(g2);
 		drawMiniMap(g2);
 		drawPlayerStats(g2);
 		if (gamePaused) {
+			if (survivalPowerUpMenuOpen) {
+				drawPowerUpMenu(g2);
+			} else {
 			drawPauseMenu(g2);
+			}
 		}
 		if (gameCrashed) {
 			drawCrashMenu(g2);
@@ -855,17 +1269,51 @@ public class GamePanel extends JPanel implements Runnable{
 		g2.drawString(title, (screenWidth - titleWidth) / 2, screenHeight / 3);
 
 		g2.setFont(new Font("Arial", Font.PLAIN, 20));
+
+		switch (menuStage) {
+			case MODE_SELECT:
+				drawMenuPrompt(g2, "Choose a game mode");
+				drawMenuButton(g2, sandboxModeButton, "Sandbox");
+				drawMenuButton(g2, survivalModeButton, "Survival");
+				break;
+			case ALLY_YES_NO:
+				drawMenuPrompt(g2, "Start with allies?");
+				drawMenuButton(g2, allyYesButton, "Yes");
+				drawMenuButton(g2, allyNoButton, "No");
+				break;
+			case ALLY_TYPE:
+				drawMenuPrompt(g2, "Choose ally type");
+				drawMenuButton(g2, allyMeleeButton, "Melee Only");
+				drawMenuButton(g2, allyArcherButton, "Archer Only");
+				drawMenuButton(g2, allyBothButton, "Both");
+				break;
+			case READY:
 		String prompt = "Press ENTER to start";
 		int promptWidth = g2.getFontMetrics().stringWidth(prompt);
 		g2.drawString(prompt, (screenWidth - promptWidth) / 2, screenHeight / 2);
+				break;
+		}
 
 		String controls1 = "WASD to move";
 		String controls2 = "P to pause / resume";
 		String controls3 = "Click Inventory to open";
-		int controlsY = screenHeight / 2 + 40;
+		int controlsY = screenHeight / 2 + 90;
 		g2.drawString(controls1, (screenWidth - g2.getFontMetrics().stringWidth(controls1)) / 2, controlsY);
 		g2.drawString(controls2, (screenWidth - g2.getFontMetrics().stringWidth(controls2)) / 2, controlsY + 26);
-		g2.drawString(controls3, (screenWidth - g2.getFontMetrics().stringWidth(controls3)) / 2, controlsY + 52);
+	}
+
+	private void drawMenuPrompt(Graphics2D g2, String text) {
+		int w = g2.getFontMetrics().stringWidth(text);
+		g2.drawString(text, (screenWidth - w) / 2, screenHeight / 2 - 40);
+	}
+
+	private void drawMenuButton(Graphics2D g2, Rectangle btn, String label) {
+		g2.setColor(new Color(64, 64, 64, 220));
+		g2.fillRoundRect(btn.x, btn.y, btn.width, btn.height, 10, 10);
+		g2.setColor(Color.white);
+		g2.drawRoundRect(btn.x, btn.y, btn.width, btn.height, 10, 10);
+		int textW = g2.getFontMetrics().stringWidth(label);
+		g2.drawString(label, btn.x + (btn.width - textW) / 2, btn.y + 28);
 	}
 
 	private void drawPauseMenu(Graphics2D g2) {
@@ -902,6 +1350,28 @@ public class GamePanel extends JPanel implements Runnable{
 		String controls = "Controls: WASD Move, SPACE Melee, 1/2/3 Magic, E Dodge";
 		int cw = g2.getFontMetrics().stringWidth(controls);
 		g2.drawString(controls, x + (width - cw) / 2, y + 200);
+	}
+
+	private void drawPowerUpMenu(Graphics2D g2) {
+		g2.setColor(new Color(0, 0, 0, 200));
+		g2.fillRect(0, 0, screenWidth, screenHeight);
+		g2.setColor(Color.white);
+		g2.setFont(new Font("Arial", Font.BOLD, 30));
+		String title = "Choose a Power-Up";
+		int tw = g2.getFontMetrics().stringWidth(title);
+		g2.drawString(title, (screenWidth - tw) / 2, screenHeight / 2 - 60);
+
+		g2.setFont(new Font("Arial", Font.PLAIN, 16));
+		for (int i = 0; i < powerUpButtons.length; i++) {
+			if (currentPowerUpChoices[i] == null) continue;
+			Rectangle btn = powerUpButtons[i];
+			g2.setColor(new Color(64, 64, 64, 220));
+			g2.fillRoundRect(btn.x, btn.y, btn.width, btn.height, 12, 12);
+			g2.setColor(Color.white);
+			g2.drawRoundRect(btn.x, btn.y, btn.width, btn.height, 12, 12);
+			int textW = g2.getFontMetrics().stringWidth(currentPowerUpChoices[i]);
+			g2.drawString(currentPowerUpChoices[i], btn.x + (btn.width - textW) / 2, btn.y + 36);
+		}
 	}
 
 	private void drawCrashMenu(Graphics2D g2) {
@@ -948,6 +1418,89 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 	}
 
+	private void applyPowerUp(String powerUp) {
+		activePowerUps.add(powerUp);
+		switch (powerUp) {
+			case "Damage Up":
+				player.meleeDamage += 5;
+				player.projectileDamage += 2;
+				break;
+			case "Speed Up":
+				player.speed += 0.5f;
+				break;
+			case "Max Health Up":
+				player.maxHealth += 20;
+				player.health += 20;
+				break;
+			case "Faster Regen":
+				player.staminaRegenTimer = Math.max(3, player.staminaRegenTimer - 2);
+				player.manaRegenTimer = Math.max(10, player.manaRegenTimer - 5);
+				break;
+			case "Extra Dodge Range":
+				player.dodgeRange += tileSize / 4;
+				break;
+			case "Attack Speed Up":
+				player.attackCooldownBase = Math.max(4, player.attackCooldownBase - 2);
+				break;
+		}
+		// Spawn survival portal near player after power-up selection
+		if (gameMode == GameMode.SURVIVAL) {
+			spawnSurvivalPortal();
+		}
+	}
+
+	private void spawnSurvivalPortal() {
+		// Pick a random map from the pool
+		String targetMap = survivalMapPool[random.nextInt(survivalMapPool.length)];
+		// Place portal near player (5-8 tiles away)
+		int angle = random.nextInt(360);
+		int dist = tileSize * 5 + random.nextInt(tileSize * 3);
+		int px = (int)player.x + (int)(Math.cos(Math.toRadians(angle)) * dist);
+		int py = (int)player.y + (int)(Math.sin(Math.toRadians(angle)) * dist);
+		// Find open space for portal
+		int[] clampedPortal = clampToCurrentMapBounds(px,py);
+		java.awt.Point openPt = findOpenSpawnSpace(clampedPortal[0], clampedPortal[1], null);		Rectangle portalArea = new Rectangle(openPt.x - tileSize / 2, openPt.y - tileSize / 2, tileSize, tileSize);
+		survivalPortal = new MapLink(portalArea, targetMap, "Next Wave: " + targetMap);
+	}
+
+	private void advanceSurvivalWave(String targetMap) {
+		survivalWaveNumber++;
+		survivalEnemyCountForWave += 15; // +15 enemies per wave
+		survivalPortal = null; // remove portal
+
+		// Switch map
+		currentMap = targetMap;
+		tileM.loadMap(targetMap);
+
+		// Clear all map links (disable regular portals in survival)
+		mapLinks.clear();
+
+		// Clear enemies, coins, allies, and projectiles
+		enemies.clear();
+		coins.clear();
+		troops.clear();
+		allySquad.members.clear();
+		player.projectiles.clear();
+		player.areas.clear();
+
+		// Teleport player to open spawn space
+		teleportPlayerForMap(targetMap);
+
+		// Spawn next wave
+		spawnSurvivalWave(survivalEnemyCountForWave);
+	}
+
+	private int[] clampToCurrentMapBounds(int x, int y) {
+		int mapW = getCurrentMapWidthTiles();
+		int mapH = getCurrentMapHeightTiles();
+		// Fall back to the global grid if the current map didn't report real dimensions for some reason
+		int maxPixelX = (mapW > 0 ? mapW : maxWorldCol) * tileSize - tileSize;
+		int maxPixelY = (mapH > 0 ? mapH : maxWorldRow) * tileSize - tileSize;
+		int clampedX = Math.max(0, Math.min(x, maxPixelX));
+		int clampedY = Math.max(0, Math.min(y, maxPixelY));
+		return new int[]{clampedX, clampedY};
+	}
+
 	private void drawWaveSpawnArea(Graphics2D g2) {
 		Rectangle waveArea = getWaveSpawnArea();
 		int x = waveArea.x - (int)cameraX;
@@ -967,7 +1520,7 @@ public class GamePanel extends JPanel implements Runnable{
 	}
 
 	private void drawMapLinks(Graphics2D g2) {
-		for (MapLink link : mapLinks) {
+		for (MapLink link : new java.util.ArrayList<>(mapLinks)) {
 			int x = link.area.x - (int)cameraX;
 			int y = link.area.y - (int)cameraY;
 			int w = link.area.width;
@@ -979,6 +1532,21 @@ public class GamePanel extends JPanel implements Runnable{
 			g2.setFont(new Font("Arial", Font.PLAIN, 12));
 			if (w > 12 && h > 12) {
 				g2.drawString(link.label, x + 2, y + 12);
+			}
+		}
+		// Draw survival portal if active
+		if (gameMode == GameMode.SURVIVAL && survivalPortal != null) {
+			int x = survivalPortal.area.x - (int)cameraX;
+			int y = survivalPortal.area.y - (int)cameraY;
+			int w = survivalPortal.area.width;
+			int h = survivalPortal.area.height;
+			g2.setColor(new Color(255, 215, 0, 150)); // gold
+			g2.fillRect(x, y, w, h);
+			g2.setColor(Color.yellow);
+			g2.drawRect(x, y, w, h);
+			g2.setFont(new Font("Arial", Font.BOLD, 14));
+			if (w > 12 && h > 12) {
+				g2.drawString("Next Wave", x + 2, y + 16);
 			}
 		}
 	}
@@ -1025,7 +1593,7 @@ public class GamePanel extends JPanel implements Runnable{
 			if (enemy != null && !enemy.dead) {
 				int enemyPx = miniX + (int)enemy.x * cellW / tileSize;
 				int enemyPy = miniY + (int)enemy.y * cellH / tileSize;
-				if (enemy.type == Enemy.Type.BOSS) {
+				if (enemy.type == Enemy.Type.COMMANDER) {
 					g2.setColor(Color.red);
 					g2.fillRect(enemyPx - 1, enemyPy - 1, Math.max(2, cellW) + 2, Math.max(2, cellH) + 2);
 					g2.setColor(Color.yellow);
@@ -1179,28 +1747,29 @@ private void drawTeleporterMarkers(Graphics2D g2, int miniX, int miniY, float ce
  
 private void drawNpcMarkers(Graphics2D g2, int miniX, int miniY, float centerCol, float centerRow,
                              float viewRadiusTiles, Rectangle npc) {
-	if (npcs == null|| npc.isEmpty()) return; // remove this guard once npcs is a guaranteed field
-    float pxPerTile = mapSizeHalf() / viewRadiusTiles;
- 
-    for (entity.NPC npcs : npcs) {
-        if (npc == null) continue;
-        float col = npc.x / tileSize;
-        float row = npc.y / tileSize;
-        float px = miniX + mapSizeHalf() + (col - centerCol) * pxPerTile;
-        float py = miniY + mapSizeHalf() + (row - centerRow) * pxPerTile;
- 
-        g2.setColor(Color.green);
-        int size = Math.max(3, (int) pxPerTile);
-        g2.fillRect((int) px, (int) py, size, size);
-    }
+	// NPC class doesn't exist - commented out
+	// if (npcs == null|| npc.isEmpty()) return; // remove this guard once npcs is a guaranteed field
+	// float pxPerTile = mapSizeHalf() / viewRadiusTiles;
+	//
+	// for (entity.NPC npcs : npcs) {
+	//     if (npc == null) continue;
+	//     float col = npc.x / tileSize;
+	//     float row = npc.y / tileSize;
+	//     float px = miniX + mapSizeHalf() + (col - centerCol) * pxPerTile;
+	//     float py = miniY + mapSizeHalf() + (row - centerRow) * pxPerTile;
+	//
+	//     g2.setColor(Color.green);
+	//     int size = Math.max(3, (int) pxPerTile);
+	//     g2.fillRect((int) px, (int) py, size, size);
+	// }
 }
  
 private void drawTroopMarkers(Graphics2D g2, int miniX, int miniY, float centerCol, float centerRow,
                                float viewRadiusTiles) {
     float pxPerTile = mapSizeHalf() / viewRadiusTiles;
- 
+  for (entity.Troop t : new java.util.ArrayList<>(troops)) {
     for (int i = 0; i < troops.size(); i++) {
-        entity.Troop t = troops.get(i);
+        /*entity.Troop*/ t = troops.get(i);
         if (t == null || t.health <= 0) continue;
  
         float col = t.x / tileSize;
@@ -1212,6 +1781,7 @@ private void drawTroopMarkers(Graphics2D g2, int miniX, int miniY, float centerC
         int size = Math.max(3, (int) pxPerTile);
         g2.fillRect((int) px, (int) py, size, size);
     }
+}
 }
  
 private void drawEnemyMarkers(Graphics2D g2, int miniX, int miniY, float centerCol, float centerRow,
@@ -1227,8 +1797,8 @@ private void drawEnemyMarkers(Graphics2D g2, int miniX, int miniY, float centerC
         float py = miniY + mapSizeHalf() + (row - centerRow) * pxPerTile;
         int size = Math.max(3, (int) pxPerTile);
  
-        if (enemy.type == Enemy.Type.BOSS) {
-            // Bigger marker + yellow ring so bosses stand out at a glance
+        if (enemy.type == Enemy.Type.COMMANDER) {
+            // Bigger marker + yellow ring so commanderes stand out at a glance
             g2.setColor(Color.red);
             g2.fillRect((int) px - 2, (int) py - 2, size + 4, size + 4);
             g2.setColor(Color.yellow);
@@ -1266,36 +1836,177 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
  
 
 	private void teleportPlayerForMap(String targetMap) {
-		int targetX = (int)player.x;
-		int targetY = (int)player.y;
-		if ("map1.txt".equals(targetMap)) {
-			targetX = tileSize * 4;
-			targetY = tileSize * 7;
-		} else if ("map2.txt".equals(targetMap)) {
-			targetX = tileSize * 7;
-			targetY = tileSize * 2;
-		} else if ("map3.txt".equals(targetMap)) {
-			targetX = tileSize * 7;
-			targetY = tileSize * 2;
-		} else if ("map4.txt".equals(targetMap)) {
-			targetX = tileSize * 1;
-			targetY = tileSize * 2;
-		} else if ("map5.txt".equals(targetMap)) {
-			targetX = tileSize * 2;
-			targetY = tileSize * 0;
-		} else if ("mapA.txt".equals(targetMap)) {
-			targetX = tileSize * 3;
-			targetY = tileSize * 12;
-		} else if ("forest.tmx".equals(targetMap)) {
-			targetX = tileSize * 3;
-			targetY = tileSize * 12;
-		} else if ("home.txt".equals(targetMap)) {
-			targetX = tileSize * 10;
-			targetY = tileSize * 10;
+		int targetX = 0;
+		int targetY = 0;
+		if (gameMode != GameMode.SURVIVAL){
+			if ("map1.txt".equals(targetMap)) {
+				targetX = tileSize * 4;
+				targetY = tileSize * 7;
+			} else if ("map2.txt".equals(targetMap)) {
+				targetX = tileSize * 7;
+				targetY = tileSize * 2;
+			} else if ("map3.txt".equals(targetMap)) {
+				targetX = tileSize * 7;
+				targetY = tileSize * 2;
+			} else if ("map4.txt".equals(targetMap)) {
+				targetX = tileSize * 1;
+				targetY = tileSize * 2;
+			} else if ("map5.txt".equals(targetMap)) {
+				targetX = tileSize * 2;
+				targetY = tileSize * 0;
+			} else if ("mapA.txt".equals(targetMap)) {
+				targetX = tileSize * 3;
+				targetY = tileSize * 12;
+			} else if ("forest.tmx".equals(targetMap)) {
+				targetX = tileSize * 3;
+				targetY = tileSize * 12;
+			} else if ("home.txt".equals(targetMap)) {
+				targetX = tileSize * 10;
+				targetY = tileSize * 10;
+			} }else {
+				// Default to center of map for unknown maps (survival mode random maps)
+				targetX = tileM.currentMapWidth * tileSize / 2;
+				targetY = tileM.currentMapHeight * tileSize / 2;
+			}
+			java.awt.Point openPt = findOpenSpawnSpace(targetX, targetY, player);
+			player.x = openPt.x;
+			player.y = openPt.y;
+	}
+
+	// ===== HERO INTERACTION METHODS =====
+
+	private void interactWithNearbyHero() {
+		for (Hero hero : heroes) {
+			if (hero.isRecruited) continue; // Already recruited
+
+			float dx = hero.x - player.x;
+			float dy = hero.y - player.y;
+			float dist = (float) Math.sqrt(dx * dx + dy * dy);
+
+			if (dist < tileSize * 2) { // Within 2 tiles
+				hero.openDialogue();
+				// Auto-recruit for now (in future, could open dialogue UI)
+				if (!hero.isRecruited) {
+					recruitHero(hero);
+				}
+				return;
+			}
 		}
-		java.awt.Point openPt = findOpenSpawnSpace(targetX, targetY, player);
-		player.x = openPt.x;
-		player.y = openPt.y;
+
+		// Also check for interaction with already recruited heroes (for switching, etc.)
+		for (Hero hero : heroes) {
+			if (!hero.isRecruited) continue;
+
+			float dx = hero.x - player.x;
+			float dy = hero.y - player.y;
+			float dist = (float) Math.sqrt(dx * dx + dy * dy);
+
+			if (dist < tileSize * 2) {
+				hero.openDialogue();
+				// Could open a UI for switching, dismissing, etc.
+				return;
+			}
+		}
+	}
+
+	private void recruitHero(Hero hero) {
+		hero.isRecruited = true;
+		hero.onRecruited(this);
+		hero.companionRole = Hero.CompanionRole.HYBRID;
+		hero.activePlayerReference = player;
+		if (!recruitedHeroes.contains(hero)) recruitedHeroes.add(hero);
+		if (activeHero == null) setActiveHero(hero);
+	}
+
+	private void setActiveHero(Hero hero) {
+		if (activeHero != null) {
+			activeHero.isActivePlayer = false;
+		}
+		activeHero = hero;
+		if (hero != null) {
+			hero.isActivePlayer = true;
+			hero.activePlayerReference = player;
+		}
+	}
+
+	private void switchActiveHero() {
+		// Get list of recruited heroes
+		java.util.List<Hero> recruited = new java.util.ArrayList<>();
+		for (Hero h : heroes) {
+			if (h.isRecruited) recruited.add(h);
+		}
+
+		if (recruited.isEmpty()) return;
+
+		// Find current active hero index
+		int currentIndex = -1;
+		if (activeHero != null) {
+			currentIndex = recruited.indexOf(activeHero);
+		}
+
+		// Switch to next
+		int nextIndex = (currentIndex + 1) % recruited.size();
+		setActiveHero(recruited.get(nextIndex));
+
+		System.out.println("Switched to " + activeHero.name);
+	}
+
+	private void handleHeroAbilities() {
+		if (activeHero == null) return;
+
+		Hero hero = activeHero;
+
+		// Key 4 - first unlocked ability
+		if (keyH.num4Pressed) {
+			if (!hero.unlockedAbilities.isEmpty()) {
+				Hero.Ability ability = hero.unlockedAbilities.get(0);
+				Enemy target = findNearestEnemyToHero(hero);
+				if (target != null && hero.mana >= ability.manaCost && ability.cooldown == 0) {
+					hero.useAbility(ability, target);
+				}
+			}
+			keyH.num4Pressed = false; // Consume press
+		}
+
+		// Key 5 - second unlocked ability
+		if (keyH.num5Pressed) {
+			if (hero.unlockedAbilities.size() > 1) {
+				Hero.Ability ability = hero.unlockedAbilities.get(1);
+				Enemy target = findNearestEnemyToHero(hero);
+				if (target != null && hero.mana >= ability.manaCost && ability.cooldown == 0) {
+					hero.useAbility(ability, target);
+				}
+			}
+			keyH.num5Pressed = false; // Consume press
+		}
+
+		// Key 6 - third unlocked ability
+		if (keyH.num6Pressed) {
+			if (hero.unlockedAbilities.size() > 2) {
+				Hero.Ability ability = hero.unlockedAbilities.get(2);
+				Enemy target = findNearestEnemyToHero(hero);
+				if (target != null && hero.mana >= ability.manaCost && ability.cooldown == 0) {
+					hero.useAbility(ability, target);
+				}
+			}
+			keyH.num6Pressed = false; // Consume press
+		}
+	}
+
+	private Enemy findNearestEnemyToHero(Hero hero) {
+		Enemy nearest = null;
+		float shortestDist = Float.MAX_VALUE;
+		for (Enemy enemy : enemies) {
+			if (enemy.dead) continue;
+			float dx = enemy.x - hero.x;
+			float dy = enemy.y - hero.y;
+			float dist = dx * dx + dy * dy;
+			if (dist < shortestDist) {
+				shortestDist = dist;
+				nearest = enemy;
+			}
+		}
+		return nearest;
 	}
 
 	private void spawnWaveEnemies() {
@@ -1310,19 +2021,19 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 			enemies.add(enemy);
 			enemySquad.addMember(enemy);
 		}
-		Enemy boss = new Enemy(this);
+		Enemy commander = new Enemy(this);
 		int bx = tileSize * 20;
 		int by = worldHeight - tileSize * 3;
-		java.awt.Point openPt = findOpenSpawnSpace(bx, by, boss);
-		boss.x = openPt.x;
-		boss.y = openPt.y;
-		boss.setType(Enemy.Type.BOSS);
-		boss.maxHealth = 80;
-		boss.health = boss.maxHealth;
-		boss.goldDrop = 12;
-		enemies.add(boss);
-		enemySquad.addMember(boss);
-		enemySquad.setCommander(boss);   // only for the boss line specifically
+		java.awt.Point openPt = findOpenSpawnSpace(bx, by, commander);
+		commander.x = openPt.x;
+		commander.y = openPt.y;
+		commander.setType(Enemy.Type.COMMANDER);
+		commander.maxHealth = 80;
+		commander.health = commander.maxHealth;
+		commander.goldDrop = 12;
+		enemies.add(commander);
+		enemySquad.addMember(commander);
+		enemySquad.setCommander(commander);   // only for the commander line specifically
 		waveActive = true;
 		waveMessageTimer = 0;
 	}
@@ -1376,7 +2087,8 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 		y += spacing;
 		g2.drawString("Gold: " + gold, x + 6, y + height - 4);
 
-		// Inventory button
+		// Inventory button - hide in survival mode
+		if (gameMode != GameMode.SURVIVAL) {
 		g2.setColor(new Color(64, 64, 64, 200));
 		g2.fillRoundRect(inventoryButton.x, inventoryButton.y, inventoryButton.width, inventoryButton.height, 10, 10);
 		g2.setColor(Color.white);
@@ -1385,6 +2097,7 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 
 		if (inventoryOpen) {
 			drawInventoryPanel(g2);
+			}
 		}
 	}
 
@@ -1441,6 +2154,9 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 	}
 
 	public void spawnCoins(int startX, int startY, int count) {
+		// No coins in survival mode
+		if (gameMode == GameMode.SURVIVAL) return;
+
 		for (int i = 0; i < count; i++) {
 			int offsetX = random.nextInt(tileSize) - tileSize / 2;
 			int offsetY = random.nextInt(tileSize) - tileSize / 2;
