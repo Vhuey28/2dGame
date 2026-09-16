@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Chronicle Conquest</title>
+    <script src="https://cjrtnc.leaningtech.com/4.3/loader.js"></script>
+</head>
+<body style="margin:0; overflow:hidden;">
+    <script>
+        (async () => {
+            await cheerpjInit();
+            cheerpjCreateDisplay(800, 600); // match your game's resolution
+            await cheerpjRunJar("/target/my2Dgame-1.0.0.jar");
+        })();
+    </script>
+</body>
+</html>

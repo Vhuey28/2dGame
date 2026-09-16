@@ -1,32 +1,18 @@
 #!/bin/bash
+set -e
 
-# Run script for my2Dgame
-# This script copies the project to /tmp, builds it, and runs it
-# This is necessary due to filesystem issues with the external drive
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
-ORIGINAL_DIR="$(cd "$(dirname "$0")" && pwd)/my2Dgame"
-WORK_DIR="/tmp/my2Dgame_work"
+OS_NAME="$(uname -s)"
+case "$OS_NAME" in
+    Darwin*) NATIVES_DIR="natives/macos" ;;
+    Linux*)  NATIVES_DIR="natives/linux" ;;
+    *)       echo "Unsupported OS for run.sh: $OS_NAME (use run.ps1 on Windows)"; exit 1 ;;
+esac
 
-echo "Setting up game in temporary directory..."
-rm -rf "$WORK_DIR"
-cp -r "$ORIGINAL_DIR" "$WORK_DIR"
+echo "Building with Maven..."
+mvn -q clean package
 
-cd "$WORK_DIR"
-
-echo "Cleaning bin directory..."
-rm -rf bin
-mkdir -p bin
-
-echo "Compiling Java source files..."
-# Compile all Java sources under src so new files are included
-find src -name "*.java" ! -name "._*" > /tmp/sources_list.txt
-javac -d bin @/tmp/sources_list.txt
-
-echo "Copying resource files..."
-cp -r res/* bin/
-
-echo "Build complete! Starting game..."
-echo ""
-
-# Run the game
-java -cp bin my2Dgame.Main
+echo "Starting game (natives: $NATIVES_DIR)..."
+java -Djava.library.path="$NATIVES_DIR" -jar target/my2Dgame-1.0.0.jar
