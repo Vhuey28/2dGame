@@ -10,6 +10,7 @@ entity/Hero$KingdomAffairs.class
 entity/AreaEffect$Type.class
 my2Dgame/GamePanel$3.class
 tile/TmxMapLoader$TmxTileset.class
+my2Dgame/GameConfig.class
 kingdom/Scheme$Type.class
 my2Dgame/package-info.class
 entity/Troop.class

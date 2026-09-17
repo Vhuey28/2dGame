@@ -2,8 +2,6 @@ package tile;
 
 import java.awt.Graphics2D;
 import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -209,21 +207,8 @@ public class tileManager {
 			return new String(is.readAllBytes());
 		}
 
-		String[] fallbackPaths = {
-			fallbackPath,
-			"my2Dgame/" + fallbackPath,
-			"src/" + fallbackPath,
-			"my2Dgame/src/" + fallbackPath
-		};
-
-		for (String candidate : fallbackPaths) {
-			File fallback = new File(candidate);
-			if (fallback.exists()) {
-				return new String(java.nio.file.Files.readAllBytes(fallback.toPath()));
-			}
-		}
-
-		throw new IOException("TMX resource not found: " + classpathPath + " or fallback paths");
+		// Classpath-only — no desktop filesystem fallbacks (web build)
+		throw new IOException("TMX resource not found on classpath: " + classpathPath);
 	}
 
 	private void loadTmxTileset(String path, int tileWidth, int tileHeight, int columns, int spacing, int margin) {
@@ -462,20 +447,6 @@ public class tileManager {
 			return is;
 		}
 
-		String[] fallbackPaths = {
-			"src/" + path,
-			"my2Dgame/src/" + path,
-			"res/" + path,
-			"my2Dgame/res/" + path
-		};
-
-		for (String fallbackPath : fallbackPaths) {
-			File fallback = new File(fallbackPath);
-			if (fallback.exists()) {
-				return new FileInputStream(fallback);
-			}
-		}
-
 		throw new IOException("Tile resource not found: " + path);
 	}
 	
@@ -514,21 +485,8 @@ public class tileManager {
 			return is;
 		}
 
-		String[] fallbackPaths = {
-			fallbackPath,
-			"my2Dgame/" + fallbackPath,
-			"src/" + fallbackPath,
-			"my2Dgame/src/" + fallbackPath
-		};
-
-		for (String candidate : fallbackPaths) {
-			File fallback = new File(candidate);
-			if (fallback.exists()) {
-				return new FileInputStream(fallback);
-			}
-		}
-
-		throw new IOException("Map resource not found: " + classpathPath + " or fallback paths");
+		// Classpath-only — no desktop filesystem fallbacks (web build)
+		throw new IOException("Map resource not found on classpath: " + classpathPath);
 	}
 
 	public boolean isBlocked(int worldX, int worldY) {

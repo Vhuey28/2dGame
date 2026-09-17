@@ -34,9 +34,9 @@ jobs:
       - name: Prepare Pages site folder
         run: |
           mkdir -p site
-          cp web/my2Dgame-1.0.0.jar site/         # adjust filename to match your pom.xml's <artifactId>-<version>.jar
+          cp target/my2Dgame-1.0.0.jar site/
           ls -la site/
-          cp web/index.html site/                    # see note below on where index.html should live in the repo
+          cp web/index.html site/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

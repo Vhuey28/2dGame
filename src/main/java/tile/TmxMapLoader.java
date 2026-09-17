@@ -60,20 +60,10 @@ public class TmxMapLoader {
     }
 
     public static TmxMap load(String filename) throws Exception {
-        // Try classpath first, then filesystem
+        // Classpath-only — no desktop filesystem fallbacks (web build)
         InputStream is = TmxMapLoader.class.getResourceAsStream("/res/maps/" + filename);
         if (is == null) {
-            File file = new File("res/maps/" + filename);
-            if (file.exists()) {
-                is = new FileInputStream(file);
-            } else {
-                file = new File("my2Dgame/res/maps/" + filename);
-                if (file.exists()) {
-                    is = new FileInputStream(file);
-                } else {
-                    throw new FileNotFoundException("TMX file not found: " + filename);
-                }
-            }
+            throw new FileNotFoundException("TMX file not found on classpath: /res/maps/" + filename);
         }
 
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -233,20 +223,8 @@ public class TmxMapLoader {
         String basePath = tmxFilename.substring(0, tmxFilename.lastIndexOf('/') + 1);
         String imagePath = basePath + ts.imageSource;
 
-        // Try classpath first
+        // Classpath-only — no desktop filesystem fallbacks (web build)
         InputStream is = TmxMapLoader.class.getResourceAsStream("/res/maps/" + imagePath);
-        if (is == null) {
-            // Try filesystem
-            File file = new File("res/maps/" + imagePath);
-            if (file.exists()) {
-                is = new FileInputStream(file);
-            } else {
-                file = new File("my2Dgame/res/maps/" + imagePath);
-                if (file.exists()) {
-                    is = new FileInputStream(file);
-                }
-            }
-        }
 
         if (is != null) {
             ts.image = ImageIO.read(is);

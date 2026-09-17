@@ -25,7 +25,9 @@ public class BindingManager {
 
     public BindingManager() {
         setDefaults();
-        load(); // overrides defaults with saved bindings, if a config file exists
+        if (!GameConfig.WEB_BUILD) {
+            load(); // overrides defaults with saved bindings, if a config file exists
+        }
     }
 
     private void setDefaults() {
@@ -102,6 +104,9 @@ public class BindingManager {
     }
 
     private void save() {
+        if (GameConfig.WEB_BUILD) {
+            return;
+        }
         Properties props = new Properties();
         for (Map.Entry<Action, Integer> e : keyboardBindings.entrySet()) {
             props.setProperty("kb." + e.getKey().name(), String.valueOf(e.getValue()));
@@ -121,6 +126,9 @@ public class BindingManager {
     }
 
     private void load() {
+        if (GameConfig.WEB_BUILD) {
+            return;
+        }
         File f = new File(CONFIG_PATH);
         if (!f.exists()) return; // no saved config yet — defaults stand
         Properties props = new Properties();

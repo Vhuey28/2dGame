@@ -20,7 +20,6 @@ import java.util.Random;
 import javax.swing.JPanel;
 
 import entity.Enemy;
-//import entity.NPC;
 import entity.Hero;
 import entity.Player;
 import entity.Projectile;
@@ -61,7 +60,7 @@ public class GamePanel extends JPanel implements Runnable{
 
 	//Controller
 	BindingManager bindings = new BindingManager();
-	ControllerHandler controllerH = new ControllerHandler(bindings);
+	ControllerHandler controllerH = GameConfig.WEB_BUILD ? null : new ControllerHandler(bindings);
 	boolean prevCtrlUp, prevCtrlDown, prevCtrlLeft, prevCtrlRight, prevCtrlSpace;
 	boolean prevCtrlNum1, prevCtrlNum2, prevCtrlNum3, prevCtrlE, prevCtrlB;
 	boolean prevCtrlC, prevCtrlV, prevCtrlX, prevCtrlM, prevCtrlShift;
@@ -1074,16 +1073,18 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 		// Poll controller and merge its state into keyH — every existing keyH.xPressed
 		// check throughout Player/Troop/Enemy now also responds to the gamepad automatically.
-		controllerH.poll();
-		if (awaitingRebindAction != null && awaitingRebindIsController) {
-			Integer pressed = controllerH.consumeLastButtonPressedForRebind();
-			if (pressed != null) {
-				bindings.setControllerBinding(awaitingRebindAction, pressed);
-				awaitingRebindAction = null;
+		if (controllerH != null) {
+			controllerH.poll();
+			if (awaitingRebindAction != null && awaitingRebindIsController) {
+				Integer pressed = controllerH.consumeLastButtonPressedForRebind();
+				if (pressed != null) {
+					bindings.setControllerBinding(awaitingRebindAction, pressed);
+					awaitingRebindAction = null;
+				}
+				return; // skip normal gameplay update while capturing a rebind
 			}
-			return; // skip normal gameplay update while capturing a rebind
 		}
-		if (controllerH.isConnected()) {
+		if (controllerH != null && controllerH.isConnected()) {
 			// "&& !prevCtrlX" clears exactly what the controller set last frame before re-checking its
 			// current state — so a released stick/button actually goes back to false instead of sticking.
 			keyH.upPressed = (keyH.upPressed && !prevCtrlUp) || controllerH.upPressed;
@@ -1945,7 +1946,7 @@ public class GamePanel extends JPanel implements Runnable{
 			g2.setColor(Color.white);
 			int ctrlBinding = bindings.getControllerBinding(action);
 			String ctrlLabel = awaitingThisCtrl ? "Press a button..."
-				: (ctrlBinding >= 0 ? controllerH.getButtonLabel(ctrlBinding) : "—");
+				: (ctrlBinding >= 0 && controllerH != null ? controllerH.getButtonLabel(ctrlBinding) : "—");
 			g2.drawString(ctrlLabel, ctrlRect.x + 8, ctrlRect.y + 18);
 
 			y += rowHeight;
