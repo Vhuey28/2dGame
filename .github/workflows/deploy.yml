@@ -35,8 +35,8 @@ jobs:
         run: |
           mkdir -p site
           cp target/my2Dgame-1.0.0.jar site/
-          ls -la site/
           cp web/index.html site/
+          ls -la site/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
