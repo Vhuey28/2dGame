@@ -9,6 +9,7 @@
     <script>
         (async () => {
             await cheerpjInit();
+            await cheerpjInit({ version: 17 });
             cheerpjCreateDisplay(768, 576); // match the Java game's logical resolution
             await cheerpjRunJar("/app/2dGame/my2Dgame-1.0.0.jar");
         })();
