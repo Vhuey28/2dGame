@@ -1,18 +1,17 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="utf-8">
-    <title>Chronicle Conquest</title>
-    <script src="https://cjrtnc.leaningtech.com/4.3/loader.js"></script>
+<meta charset="utf-8">
+<title>Chronicle Conquest</title>
+<script src="https://cjrtnc.leaningtech.com/4.3/loader.js"></script>
 </head>
 <body style="margin:0; overflow:hidden;">
-    <script>
+<script>
         (async () => {
-            await cheerpjInit();
-            await cheerpjInit({ version: 17 });
-            cheerpjCreateDisplay(768, 576); // match the Java game's logical resolution
-            await cheerpjRunJar("/app/2dGame/my2Dgame-1.0.0.jar");
-        })();
-    </script>
+    await cheerpjInit({ version: 17 });
+    cheerpjCreateDisplay(768, 576);
+    await cheerpjRunJar("/app/2dGame/my2Dgame-1.0.0.jar");
+            })();
+</script>
 </body>
 </html>
