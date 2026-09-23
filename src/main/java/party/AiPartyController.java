@@ -25,10 +25,18 @@ public class AiPartyController {
         updateState(distToPlayer, playerParty);
 
         switch (party.state) {
-            case FLEEING -> moveAwayFrom(playerParty, gp);
-            case PURSUING -> moveToward(playerParty, gp);
-            case ROAMING -> roam(gp);
-            default -> roam(gp);
+            case FLEEING:
+                 moveAwayFrom(playerParty, gp);
+                 break;
+            case PURSUING:
+                 moveToward(playerParty, gp);
+                 break;
+            case ROAMING:
+                 roam(gp);
+                 break;
+            default:
+                 roam(gp);
+                 break;
         }
     }
 

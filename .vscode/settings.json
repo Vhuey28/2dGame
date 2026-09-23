@@ -4,5 +4,6 @@
     ],
     "java.project.referencedLibraries": [
         "jinput-2.0.10.jar"
-    ]
+    ],
+    "liveServer.settings.multiRootWorkspaceName": "2dGame"
 }

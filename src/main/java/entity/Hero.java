@@ -159,56 +159,60 @@ public class Hero extends Entity {
 
     private void initializeAbilities() {
         abilities.add(new Ability("Basic Attack", "Standard melee/ranged attack", 0, 0, Ability.AbilityType.BASIC_ATTACK));
-
+        
         switch (heroClass) {
-            case WARRIOR -> {
+            case WARRIOR : 
                 abilities.add(new Ability("Shield Bash", "Stuns enemy", 15, 30, Ability.AbilityType.STUN));
                 abilities.add(new Ability("Whirlwind", "AoE damage around self", 25, 45, Ability.AbilityType.AOE_DAMAGE));
                 abilities.add(new Ability("Taunt", "Forces enemies to target you", 10, 60, Ability.AbilityType.TAUNT));
                 abilities.add(new Ability("Last Stand", "Immune to death for 5s", 40, 120, Ability.AbilityType.BUFF));
-            }
-            case MAGE -> {
+               break;
+
+            case MAGE : 
                 abilities.add(new Ability("Fireball", "Exploding projectile", 20, 15, Ability.AbilityType.PROJECTILE));
                 abilities.add(new Ability("Ice Spike", "Piercing projectile that slows", 15, 20, Ability.AbilityType.PROJECTILE));
                 abilities.add(new Ability("Meteor", "Large AoE damage", 40, 60, Ability.AbilityType.AOE_DAMAGE));
                 abilities.add(new Ability("Teleport", "Blink to target location", 30, 40, Ability.AbilityType.MOBILITY));
-            }
-            case ARCHER -> {
+                break;
+
+            case ARCHER : 
                 abilities.add(new Ability("Multi-Shot", "Fires 3 arrows in spread", 15, 25, Ability.AbilityType.PROJECTILE));
                 abilities.add(new Ability("Piercing Arrow", "Passes through enemies", 20, 30, Ability.AbilityType.PROJECTILE));
                 abilities.add(new Ability("Rain of Arrows", "AoE arrow barrage", 35, 50, Ability.AbilityType.AOE_DAMAGE));
                 abilities.add(new Ability("Evasive Roll", "Dash with iframe", 10, 20, Ability.AbilityType.MOBILITY));
-            }
-            case CLERIC -> {
+               break;
+
+            case CLERIC : 
                 abilities.add(new Ability("Heal", "Restores health to ally", 20, 30, Ability.AbilityType.HEAL));
                 abilities.add(new Ability("Blessing", "Increases ally attack/defense", 25, 45, Ability.AbilityType.BUFF));
                 abilities.add(new Ability("Sanctuary", "AoE heal over time", 35, 60, Ability.AbilityType.AOE_HEAL));
                 abilities.add(new Ability("Smite", "Holy damage to undead", 20, 25, Ability.AbilityType.PROJECTILE));
-            }
-            case ROGUE -> {
+                 break;
+
+            case ROGUE : 
                 abilities.add(new Ability("Backstab", "High damage from behind", 15, 20, Ability.AbilityType.CRIT));
                 abilities.add(new Ability("Smoke Bomb", "Blind enemies in area", 20, 40, Ability.AbilityType.DEBUFF));
                 abilities.add(new Ability("Shadow Step", "Teleport behind target", 15, 30, Ability.AbilityType.MOBILITY));
                 abilities.add(new Ability("Poison Blade", "Applies DoT", 10, 15, Ability.AbilityType.DOT));
-            }
-            case PALADIN -> {
+               break;
+            case PALADIN : 
                 abilities.add(new Ability("Holy Strike", "Bonus damage to evil", 20, 25, Ability.AbilityType.CRIT));
                 abilities.add(new Ability("Divine Shield", "Block next 3 hits", 25, 50, Ability.AbilityType.BUFF));
                 abilities.add(new Ability("Consecration", "AoE damage + ally heal", 30, 60, Ability.AbilityType.AOE_DAMAGE));
                 abilities.add(new Ability("Judgment", "Execute low-health enemies", 35, 80, Ability.AbilityType.EXECUTE));
-            }
-            case NECROMANCER -> {
+               break;
+            case NECROMANCER : 
                 abilities.add(new Ability("Raise Skeleton", "Summons minion", 30, 60, Ability.AbilityType.SUMMON));
                 abilities.add(new Ability("Life Drain", "Heal self, damage enemy", 20, 30, Ability.AbilityType.DRAIN));
                 abilities.add(new Ability("Bone Prison", "Roots enemies", 25, 45, Ability.AbilityType.CC));
                 abilities.add(new Ability("Death Nova", "AoE on minion death", 15, 20, Ability.AbilityType.PASSIVE));
-            }
-            case DRUID -> {
+               break;
+            case DRUID : 
                 abilities.add(new Ability("Shape: Bear", "Become tank form", 20, 40, Ability.AbilityType.TRANSFORM));
                 abilities.add(new Ability("Shape: Cat", "Become DPS form", 15, 30, Ability.AbilityType.TRANSFORM));
                 abilities.add(new Ability("Entangling Roots", "Root enemies", 20, 35, Ability.AbilityType.CC));
                 abilities.add(new Ability("Wild Growth", "Heal over time AoE", 30, 50, Ability.AbilityType.AOE_HEAL));
-            }
+               break;
         }
 
         if (abilities.size() > 1) unlockedAbilities.add(abilities.get(0));
@@ -337,38 +341,94 @@ private void buildFallbackSquare() {
 // You need to tell me the ACTUAL folder name for each hero class's assets —
 // I don't have that information, so this is a placeholder mapping to fill in:
 private String getAssetFolderForClass() {
-    return switch (heroClass) {
-        case WARRIOR -> "/player/vince/"; // <-- fill in your real warrior asset folder
-        case MAGE -> "/player/triss/";
-        case ARCHER -> "/player/???/";
-        case CLERIC -> "/player/???/";
-        case ROGUE -> "/player/???/";
-        case PALADIN -> "/player/???/";
-        case NECROMANCER -> "/player/???/";
-        case DRUID -> "/player/???/";
+    String s= "";
+    switch (heroClass) {
+        case WARRIOR: 
+            s ="/player/vince/"; // <-- fill in your real warrior asset folder
+            break;
+
+        case MAGE : 
+            s ="/player/triss/";
+            break;
+
+        case ARCHER : 
+            s = "/player/???/";
+            break;
+
+        case CLERIC :
+            s = "/player/???/";
+            break;
+        case ROGUE :
+            s = "/player/???/";
+            break;
+
+        case PALADIN : 
+            s =  "/player/???/";
+            break;
+
+        case NECROMANCER :
+            s=  "/player/???/";
+            break;
+
+        case DRUID :
+            s = "/player/???/";
+            break;
     };
+    return s;
 }
 
 private String getAssetDirection(){
-    return switch (direction) {
-            case "up" -> "up";
-            case "down" -> "down";
-            case "left" -> "left";
-            case "right" -> "right";
-        default-> "up";};
+    String s= "";
+    switch (direction) {
+            case "up" : 
+                s ="up";
+                break;
+            case "down" :
+                s=  "down";
+                break;
+            case "left" :
+                s=  "left";
+                break;
+            case "right" : 
+                s= "right";
+                break;
+            default: 
+                s="up";
+            };
+        return s;
 }
 
     private Color getClassColor() {
-        return switch (heroClass) {
-            case WARRIOR -> Color.RED;
-            case MAGE -> Color.BLUE;
-            case ARCHER -> Color.GREEN;
-            case CLERIC -> Color.YELLOW;
-            case ROGUE -> Color.MAGENTA;
-            case PALADIN -> Color.ORANGE;
-            case NECROMANCER -> new Color(128, 0, 128);
-            case DRUID -> new Color(34, 139, 34);
+         Color C=new Color(0, 0, 255);
+        switch (heroClass) {
+            case WARRIOR : 
+                C=new Color(0, 0, 255);
+                break;
+
+            case MAGE : 
+               C = new Color(255, 0, 0);
+                break;
+
+            case ARCHER :
+                C= new Color(34, 139, 34);
+                break;
+
+            case CLERIC :  
+                C= new Color(255, 255, 0);
+                break;
+
+            case ROGUE : 
+                C = new Color(255, 0, 255);
+                break;
+
+            case PALADIN :
+                C = new Color(255, 165, 0);
+                break;
+            case NECROMANCER :
+                C= new Color(128, 0, 128);
+            case DRUID :C= new Color(34, 139, 34);
         };
+        return C;
     }
 
     // ===== MOVEMENT/COLLISION =====
@@ -464,7 +524,8 @@ private String getAssetDirection(){
     private void maybeUsePlayerAbility(Entity player) {
         if (gp.random.nextInt(100) < 5) {
             // Only use abilities if player is a Hero
-            if (player instanceof Hero hero) {
+            if (player instanceof Hero) {
+                Hero hero = (Hero) player;
                 if (!hero.unlockedAbilities.isEmpty()) {
                     Ability ability = hero.unlockedAbilities.get(gp.random.nextInt(hero.unlockedAbilities.size()));
                     Enemy target = findNearestEnemy();
@@ -509,19 +570,24 @@ private String getAssetDirection(){
         }
 
         switch (ability.type) {
-            case BASIC_ATTACK, PROJECTILE, CRIT -> performAttack(target, ability);
-            case AOE_DAMAGE -> performAoE(ability);
-            case HEAL, AOE_HEAL -> performHeal(target, ability);
-            case BUFF -> applyBuff(target, ability);
-            case DEBUFF, CC, STUN -> applyDebuff(target, ability);
-            case MOBILITY -> performMobility(ability);
-            case SUMMON -> performSummon(ability);
-            case DRAIN -> performDrain(target, ability);
-            case DOT -> applyDot(target, ability);
-            case TRANSFORM -> performTransform(ability);
-            case TAUNT -> performTaunt(ability);
-            case EXECUTE -> performExecute(target, ability);
-            case PASSIVE -> {}
+            case BASIC_ATTACK:  performAttack(target, ability);break;
+            case PROJECTILE:  performAttack(target, ability);break;
+            case CRIT : performAttack(target, ability);break;
+            case AOE_DAMAGE : performAoE(ability);break;
+            case HEAL: performHeal(target, ability);break;
+            case AOE_HEAL : performHeal(target, ability);break;
+            case BUFF : applyBuff(target, ability);break;
+            case DEBUFF:applyDebuff(target, ability);break;
+            case CC: applyDebuff(target, ability);break;
+            case STUN : applyDebuff(target, ability);break;
+            case MOBILITY : performMobility(ability);break;
+            case SUMMON : performSummon(ability);break;
+            case DRAIN : performDrain(target, ability);break;
+            case DOT : applyDot(target, ability);break;
+            case TRANSFORM : performTransform(ability);break;
+            case TAUNT : performTaunt(ability);break;
+            case EXECUTE : performExecute(target, ability);break;
+            case PASSIVE : {};break;
         }
     }
 
@@ -538,11 +604,13 @@ private String getAssetDirection(){
 
     private void performAttack(Entity target, Ability ability) {
         int dmg = calculateDamage(ability);
-        if (target instanceof Enemy enemy) {
+        if (target instanceof Enemy) {
+            Enemy enemy = (Enemy) target;
             enemy.health -= dmg;
             enemy.showHealthCounter = 60;
             spawnDamageNumber(enemy.x, enemy.y, dmg);
-        } else if (target instanceof Hero hero) {
+        } else if (target instanceof Hero) {
+            Hero hero =(Hero) target;
             hero.health = Math.max(0, hero.health - dmg);
         }
     }
@@ -563,36 +631,51 @@ private String getAssetDirection(){
         int heal = ability.power + (level * 2);
         int maxHp = 0;
         int curHp = 0;
-        if (target instanceof Hero hero) {
+        if (target instanceof Hero) {
+            Hero hero =(Hero) target;
             maxHp = hero.maxHealth;
             curHp = hero.health;
-        } else if (target instanceof Player player) {
+        } else if (target instanceof Player) {
+            Player player =(Player) target;
             maxHp = player.maxHealth;
             curHp = player.health;
-        } else if (target instanceof entity.Troop troop) {
+        } else if (target instanceof entity.Troop) {
+            Troop troop = (Troop) target;
             maxHp = troop.maxHealth;
             curHp = troop.health;
-        } else if (target instanceof Enemy enemy) {
+        } else if (target instanceof Enemy) {
+            Enemy enemy = (Enemy) target;
             maxHp = enemy.maxHealth;
             curHp = enemy.health;
         }
         if (maxHp > 0) {
-            if (target instanceof Hero h) h.health = Math.min(h.maxHealth, h.health + heal);
-            else if (target instanceof Player p) p.health = Math.min(p.maxHealth, p.health + heal);
-            else if (target instanceof entity.Troop t) t.health = Math.min(t.maxHealth, t.health + heal);
-            else if (target instanceof Enemy e) e.health = Math.min(e.maxHealth, e.health + heal);
+            if (target instanceof Hero) {
+                Hero h =(Hero) target;
+                h.health = Math.min(h.maxHealth, h.health + heal);
+            }else if (target instanceof Player){
+                Player p = (Player)target;
+             p.health = Math.min(p.maxHealth, p.health + heal);
+            }else if (target instanceof entity.Troop){
+                Troop t = (Troop)target;
+                 t.health = Math.min(t.maxHealth, t.health + heal);
+            }else if (target instanceof Enemy){
+                Enemy e=(Enemy)target;
+                 e.health = Math.min(e.maxHealth, e.health + heal);
+            }
             spawnDamageNumber(target.x, target.y, -heal, Color.GREEN);
         }
     }
 
     private void applyBuff(Entity target, Ability ability) {
-        if (target instanceof Hero hero) {
+        if (target instanceof Hero) {
+            Hero hero =(Hero) target;
             hero.attack += ability.power;
         }
     }
 
     private void applyDebuff(Entity target, Ability ability) {
-        if (target instanceof Enemy enemy) {
+        if (target instanceof Enemy) {
+            Enemy enemy = (Enemy) target;
             enemy.stunTimer = ability.duration;
         }
     }
@@ -601,10 +684,10 @@ private String getAssetDirection(){
         float dashDist = gp.tileSize * 4;
         float dx = 0, dy = 0;
         switch (direction) {
-            case "up" -> dy = -dashDist;
-            case "down" -> dy = dashDist;
-            case "left" -> dx = -dashDist;
-            case "right" -> dx = dashDist;
+            case "up" : dy = -dashDist;
+            case "down" : dy = dashDist;
+            case "left" : dx = -dashDist;
+            case "right" : dx = dashDist;
         }
         if (canMoveTo(x + dx, y + dy)) {
             x += dx;
@@ -618,7 +701,8 @@ private String getAssetDirection(){
 
     private void performDrain(Entity target, Ability ability) {
         int dmg = calculateDamage(ability);
-        if (target instanceof Enemy enemy) {
+        if (target instanceof Enemy) {
+            Enemy enemy = (Enemy) target;
             enemy.health -= dmg;
             health = Math.min(maxHealth, health + dmg / 2);
         }
@@ -639,7 +723,8 @@ private String getAssetDirection(){
     }
 
     private void performExecute(Entity target, Ability ability) {
-        if (target instanceof Enemy enemy && enemy.health < enemy.maxHealth * 0.3) {
+       Enemy enemy = (Enemy) target;
+        if (target instanceof Enemy && enemy.health < enemy.maxHealth * 0.3) {
             enemy.health = 0;
         }
     }
@@ -765,9 +850,9 @@ private String getAssetDirection(){
 
     public void equip(Equipment equipment) {
         switch (equipment.slot) {
-            case WEAPON -> weapon = equipment;
-            case ARMOR -> armor = equipment;
-            case ACCESSORY -> accessory = equipment;
+            case WEAPON : weapon = equipment;
+            case ARMOR : armor = equipment;
+            case ACCESSORY : accessory = equipment;
         }
         recalculateStats();
     }
@@ -803,11 +888,23 @@ private String getAssetDirection(){
     }
 
     private float getAttackDrawScale() {
-        return switch (heroClass) {
-            case WARRIOR, PALADIN -> 2.2f;   // melee classes read bigger during their swing
-            case MAGE, CLERIC -> 1.5f;        // casters stay closer to idle size, effect carries the visual weight
-            default -> 1.8f;
+      float s=1.8f;
+        switch (heroClass) {
+            case WARRIOR:
+                s= 2.2f;   // melee classes read bigger during their swing
+                break;    
+            case PALADIN :
+                s= 2.2f;   // melee classes read bigger during their swing
+                break;
+            case MAGE:
+                s= 1.5f;        // casters stay closer to idle size, effect carries the visual weight
+                break;    
+            case CLERIC :
+                s= 1.5f;        // casters stay closer to idle size, effect carries the visual weight
+                break;
+            default : s= 1.8f;
         };
+        return s;
     }
     private BufferedImage getCurrentSpriteFrame() {
         if (isAttacking) {

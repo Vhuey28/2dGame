@@ -152,17 +152,11 @@ public class GamePanel extends JPanel implements Runnable{
 	private static final int MAX_ENEMIES_PER_WAVE = 40; // cap to prevent unbounded spawn bursts
 	public boolean survivalWaveTransition = false; // true while power-up menu/portal-wait is showing
 	public boolean survivalPowerUpMenuOpen = false;
-	public boolean survivalLeaveOption = false;
 	public java.util.List<String> availablePowerUps = new java.util.ArrayList<>(
 	    java.util.Arrays.asList("Damage Up", "Speed Up", "Max Health Up", "Faster Regen", "Extra Dodge Range", "Attack Speed Up")
 	);
 	public java.util.List<String> activePowerUps = new java.util.ArrayList<>(); // stacked for the whole session
 	private String[] currentPowerUpChoices = new String[3];
-	
-	public java.util.List<String> YN = new java.util.ArrayList<>(
-	    java.util.Arrays.asList("Yes", "No")
-	);
-	private String[] leaveSurvivalOptions = new String[2];
 
 	// Survival portal — a single-use MapLink-like object spawned after a cleared wave
 	private MapLink survivalPortal = null;
@@ -312,7 +306,7 @@ public class GamePanel extends JPanel implements Runnable{
 					}
 					return;
 				}
-
+				
 				if (!gameStarted) {
 					handleStartMenuClick(e.getPoint());
 					return;
@@ -353,24 +347,13 @@ public class GamePanel extends JPanel implements Runnable{
 								return;
 							}
 						}
+						
 					}
-					// Handle leave menu clicks in survival mode
-					if (gameMode == GameMode.SURVIVAL && survivalLeaveOption && leaveButtons != null) {
-						for (int i = 0; i < powerUpButtons.length; i++) {
-							if (leaveButtons[i] != null && leaveButtons[i].contains(e.getPoint()) && i < currentPowerUpChoices.length && leaveSurvivalOptions[i] != null && leaveSurvivalOptions[i].equalsIgnoreCase("Yes")) {
-								survivalLeaveOption = false;
-								survivalPowerUpMenuOpen = true; //drawPowerUpMenu(g2);
-								gamePaused = true;
-								repaint();
-								return;
-							}else if (leaveButtons[i] != null && leaveButtons[i].contains(e.getPoint()) && i < currentPowerUpChoices.length && leaveSurvivalOptions[i] != null && leaveSurvivalOptions[i].equalsIgnoreCase("No")) {
-								gamePaused = true;
-								repaint();
-								return;
-							}
-
-						}
+					if(getQuitButtonRect().contains(e.getPoint())){
+						quitSurvival();
+						return;
 					}
+					
 				}
 				if (gameMode != GameMode.SURVIVAL && inventoryButton.contains(e.getPoint())) {
 					inventoryOpen = !inventoryOpen;
@@ -394,7 +377,34 @@ public class GamePanel extends JPanel implements Runnable{
 		this.setFocusable(true);
 		setupMap("map1.txt");
 	}
+	public void handleLeaveButtonClick(MouseEvent e) {
+		// Find the leave button based on its position
+		for (Rectangle btn : leaveButtons) {
+			if (btn.contains(e.getPoint())) {
+				// Set the game state to PLAYING
+				setGameState(GameState.PLAYING);
+				// Exit the loop since we found the button
+				break;
+			}
+		}
+	}
 
+	public Rectangle getQuitButtonRect(){
+		return new Rectangle(100, screenHeight - 100, 200, 50);
+	}
+
+	public void quitSurvival(){
+		gameMode = GameMode.SANDBOX;
+		gameStarted = false;
+		gamePaused = false;
+		menuStage = MenuStage.MODE_SELECT;
+		survivalWaveNumber = 0;
+		survivalEnemyCountForWave = 10;
+		survivalPowerUpMenuOpen = false;
+		activePowerUps.clear();
+		setupMap("map1.txt");
+		teleportPlayerForMap("map1.txt");
+	}
 	
 	public Rectangle getRestartButtonRect() {
 		int width = 450;
@@ -416,12 +426,12 @@ public class GamePanel extends JPanel implements Runnable{
 		player.projectiles.clear();
 		player.areas.clear();
 		player.inventory.clear();
-		
+		gameMode = GameMode.SANDBOX;
+		gameStarted = false;
+		gamePaused = false;
+		menuStage = MenuStage.MODE_SELECT;
 		setupMap("map1.txt");
 		teleportPlayerForMap("map1.txt");
-		
-		gamePaused = false;
-		gameCrashed = false;
 		waveActive = false;
 		waveMessageTimer = 0;
 		repaint();
@@ -592,8 +602,8 @@ public class GamePanel extends JPanel implements Runnable{
 		survivalWaveNumber = 1;
 		survivalEnemyCountForWave = 10;
 		activePowerUps.clear();
-		setupMap("map1.txt");
-		teleportPlayerForMap("map1.txt");
+		setupMap("forest.tmx");
+		teleportPlayerForMap("forest.tmx");
 		spawnSurvivalWave(survivalEnemyCountForWave);
 	}
 
@@ -667,8 +677,7 @@ public class GamePanel extends JPanel implements Runnable{
 		waveActive = false;
 		survivalWaveTransition = true;
 		rollPowerUpChoices();
-		loadLeaveChoices();
-		survivalLeaveOption = true;
+		survivalPowerUpMenuOpen = true;
 		gamePaused = true; // reuse existing pause gate so normal update logic halts during the choice
 	}
 
@@ -680,13 +689,7 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 	}
 
-	private void loadLeaveChoices() {
-		java.util.List<String> pool = new java.util.ArrayList<>(YN);
-		for (int i = 0; i < 3 && i < pool.size(); i++) {
-			leaveSurvivalOptions[i] = pool.get(i);
-		}
-	}
-
+	
 	public void startGameThread() {
 		if (gameThread == null) {
 			gameThread = new Thread(this);
@@ -1582,7 +1585,7 @@ public class GamePanel extends JPanel implements Runnable{
 		// }
 
 		
-
+		
 		for (entity.Projectile p : playerProjectilesSnapshot) {
 			p.draw(g2, (int)cameraX, (int)cameraY);
 		}
@@ -1633,9 +1636,7 @@ public class GamePanel extends JPanel implements Runnable{
 		if (currentLayer == GameLayer.DEPLOYMENT) {
 			drawDeploymentScreen(g2);
 		} else if (gamePaused) {
-			if (survivalLeaveOption) {
-				drawLeaveSurvivalMenu(g2);
-			} else if(survivalPowerUpMenuOpen) {
+			if(survivalPowerUpMenuOpen) {
 				drawPowerUpMenu(g2);
 			}else if (settingsMenuOpen) {
 				drawSettingsMenu(g2);
@@ -1956,30 +1957,7 @@ public class GamePanel extends JPanel implements Runnable{
 		g2.drawString("Click a binding, then press the new key/button. ESC to go back.", 60, y + 30);
 	}
 
-	private void drawLeaveSurvivalMenu(Graphics2D g2){
-		g2.setColor(new Color(0,0,0,200));
-		g2.fillRect(0,0,screenWidth, screenHeight);
-		g2.setColor(new Color(0, 0, 0, 200));
-		g2.fillRect(0, 0, screenWidth, screenHeight);
-		g2.setColor(Color.white);
-		g2.setFont(new Font("Arial", Font.BOLD, 30));
-		String title1 = "Do you want to continue survival?";
-		int tw1 = g2.getFontMetrics().stringWidth(title1);
-		g2.drawString(title1, (screenWidth - tw1) / 2, screenHeight / 2 - 60);
-
-		g2.setFont(new Font("Arial", Font.PLAIN, 16));
-		for (int i = 0; i < leaveButtons.length; i++) {
-			if (leaveSurvivalOptions[i] == null) continue;
-			Rectangle btn = leaveButtons[i];
-			int textW = g2.getFontMetrics().stringWidth(leaveSurvivalOptions[i]);
-			int centerX = btn.x + (btn.width - textW) / 2;
-			g2.setColor(new Color(64, 64, 64, 220));
-			g2.fillRoundRect(btn.x, btn.y, btn.width, btn.height, 12, 12);
-			g2.setColor(Color.white);
-			g2.drawRoundRect(btn.x, btn.y, btn.width, btn.height, 12, 12);
-			g2.drawString(leaveSurvivalOptions[i], centerX, btn.y + 36);
-		}
-	}
+	
 
 	private void drawPowerUpMenu(Graphics2D g2) {
 
@@ -2003,7 +1981,7 @@ public class GamePanel extends JPanel implements Runnable{
 			g2.drawString(currentPowerUpChoices[i], btn.x + (btn.width - textW) / 2, btn.y + 36);
 		}
 		// Quit Survival Mode button
-		Rectangle quitBtn = new Rectangle(100, screenHeight - 100, 200, 50);
+		Rectangle quitBtn = getQuitButtonRect();
 		g2.setColor(new Color(128, 0, 0, 220));
 		g2.fillRoundRect(quitBtn.x, quitBtn.y, quitBtn.width, quitBtn.height, 12, 12);
 		g2.setColor(Color.white);
@@ -2269,23 +2247,7 @@ public void adjustMinimapZoom(float delta) {
     targetMinimapZoom = Math.max(minZoom, Math.min(maxZoom, targetMinimapZoom + delta));
 }
  
-// ---- Converts a world pixel position into a minimap screen position ----
-// centerWorldCol/Row = the tile column/row the minimap is centered on (player's position)
-// viewRadiusTiles     = how many tiles are visible from center to edge at current zoom
-private float[] worldToMiniMap(float worldX, float worldY, int miniX, int miniY,
-                                float centerWorldCol, float centerWorldRow,
-                                float viewRadiusTiles, int tileSize) {
-    float col = worldX / tileSize;
-    float row = worldY / tileSize;
- 
-    float halfSize = minimapScreenSize / 2f;
-    float pxPerTile = halfSize / viewRadiusTiles;
- 
-    float screenX = miniX + halfSize + (col - centerWorldCol) * pxPerTile;
-    float screenY = miniY + halfSize + (row - centerWorldRow) * pxPerTile;
- 
-    return new float[]{screenX, screenY, pxPerTile};
-}
+
  
 private void drawMiniMap(Graphics2D g2) {
     if (!miniMapVisible) return;

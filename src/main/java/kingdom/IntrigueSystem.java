@@ -73,13 +73,13 @@ public class IntrigueSystem {
         if (!success) return;
 
         switch (s.type) {
-            case FABRICATE_CLAIM -> {
+            case FABRICATE_CLAIM :
                 if (!s.schemer.claims.contains(s.targetKingdom)) {
                     s.schemer.claims.add(s.targetKingdom);
                 }
                 onEvent.accept(s.schemer.name + " fabricated a claim on " + s.targetKingdom.name);
-            }
-            case ASSASSINATE -> {
+            break;
+            case ASSASSINATE:
                 if (s.target != null) {
                     s.target.alive = false;
                     if (s.target.rulesKingdom != null) {
@@ -87,21 +87,22 @@ public class IntrigueSystem {
                     }
                     onEvent.accept(s.target.name + " was assassinated by " + s.schemer.name);
                 }
-            }
-            case SPY_NETWORK -> {
+            break;
+            case SPY_NETWORK:
                 if (s.schemer.rulesKingdom != null && s.targetKingdom != null) {
                     s.schemer.rulesKingdom.espionageAdvantage.merge(s.targetKingdom, 15, Integer::sum);
                     onEvent.accept(s.schemer.rulesKingdom.name + " expanded its spy network against " + s.targetKingdom.name);
                 }
-            }
+            break;
         }
     }
 
     private double computeSuccessChance(Scheme s) {
-        double base = switch (s.type) {
-            case FABRICATE_CLAIM -> 0.7;
-            case ASSASSINATE -> 0.4;
-            case SPY_NETWORK -> 0.8;
+        double base = 0;
+        switch (s.type) {
+            case FABRICATE_CLAIM :base= 0.7; break;
+            case ASSASSINATE :base= 0.4;break;
+            case SPY_NETWORK :base = 0.8;break;
         };
         base += s.schemer.intrigue / 100.0;
         if (s.target != null) base -= s.target.intrigue / 150.0;

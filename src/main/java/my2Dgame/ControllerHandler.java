@@ -26,20 +26,66 @@ public class ControllerHandler {
     }
 
     public String getButtonLabel(int buttonIndex) {
+        String b="";
         if (brand == ControllerBrand.PLAYSTATION) {
-            return switch (buttonIndex) {
-                case 0 -> "Cross"; case 1 -> "Circle"; case 2 -> "Square"; case 3 -> "Triangle";
-                case 4 -> "L1"; case 5 -> "R1"; case 6 -> "Share"; case 7 -> "Options";
-                default -> "Button " + buttonIndex;
+            switch (buttonIndex) {
+                case 0 :
+                    b= "Cross";
+                    break; 
+                case 1:
+                    b= "Circle";
+                    break;
+                case 2: 
+                    b="Square";
+                    break;
+                case 3:
+                    b="Triangle";
+                    break;
+                case 4:
+                    b= "L1";
+                    break;
+                case 5:
+                    b= "R1";
+                    break; 
+                case 6:
+                    b= "Share";
+                    break;
+                case 7:
+                    b= "Options";
+                    break;
+                default:
+                    b= "Button " + buttonIndex;
             };
         } else if (brand == ControllerBrand.XBOX) {
-            return switch (buttonIndex) {
-                case 0 -> "A"; case 1 -> "B"; case 2 -> "X"; case 3 -> "Y";
-                case 4 -> "LB"; case 5 -> "RB"; case 6 -> "Back"; case 7 -> "Start";
-                default -> "Button " + buttonIndex;
+            switch (buttonIndex) {
+                case 0:
+                    b= "A";
+                    break; 
+                case 1:
+                    b= "B"; 
+                    break;
+                case 2:
+                    b= "X";
+                    break; 
+                case 3:
+                     b= "Y";
+                    break;
+                case 4:
+                    b= "LB";
+                    break;
+                case 5:
+                    b= "RB";
+                    break;
+                case 6:
+                    b= "Back";
+                    break;
+                case 7:
+                    b= "Start";
+                default:
+                    b= "Button " + buttonIndex;
             };
         }
-        return "Button " + buttonIndex;
+        return b;
     }
 
     private Controller gamepad;
@@ -161,21 +207,47 @@ public class ControllerHandler {
 
     private void applyControllerAction(BindingManager.Action action, boolean pressed) {
         switch (action) {
-            case MELEE -> spacePressed = pressed;
-            case SPELL_1 -> num1Pressed = pressed;
-            case SPELL_2 -> num2Pressed = pressed;
-            case SPELL_3 -> num3Pressed = pressed;
-            case DODGE -> ePressed = pressed;
-            case ARCHER_MODIFIER -> shiftPressed = pressed;
-            case BUY_TROOP -> bPressed = pressed;
-            case MINIMAP_TOGGLE -> mPressed = pressed;
-            case TROOP_CHARGE -> cPressed = pressed;
-            case TROOP_DEFEND -> vPressed = pressed;
-            case TROOP_ROAM_TOGGLE -> xPressed = pressed;
-            case INTERACT -> { } // Not mapped to a boolean field in keyH yet, handled elsewhere if needed
-            case SWITCH_HERO -> { }
+            case MELEE :
+                 spacePressed = pressed;
+                 break;
+            case SPELL_1:
+                 num1Pressed = pressed;
+                 break;
+            case SPELL_2:
+                 num2Pressed = pressed;
+                 break;
+            case SPELL_3:
+                 num3Pressed = pressed;
+                 break;
+            case DODGE:
+                 ePressed = pressed;
+                 break;
+            case ARCHER_MODIFIER:
+                 shiftPressed = pressed;
+                 break;
+            case BUY_TROOP:
+                 bPressed = pressed;
+                 break;
+            case MINIMAP_TOGGLE:
+                 mPressed = pressed;
+                 break;
+            case TROOP_CHARGE:
+                 cPressed = pressed;
+                 break;
+            case TROOP_DEFEND:
+                 vPressed = pressed;
+                 break;
+            case TROOP_ROAM_TOGGLE:
+                 xPressed = pressed;
+                 break;
+            case INTERACT: 
+                { }; // Not mapped to a boolean field in keyH yet, handled elsewhere if needed
+                break;
+            case SWITCH_HERO:
+                 { };
+                 break;
             // Movement actions are handled by the stick/POV code separately, not button lookup
-            default -> {}
+            default: {};
         }
     }
 }

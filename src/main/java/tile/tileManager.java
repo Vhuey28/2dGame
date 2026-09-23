@@ -229,7 +229,10 @@ public class tileManager {
 				String[] forestPaths = {
 					"maps/forest/spritesheet.png",
 					"maps/spritesheet.png",
-					"/tiles/forest_spritesheet.png"
+					"/tiles/forest_spritesheet.png",
+					"/resources/maps/spritesheet.png",
+					"/maps/forest/spritesheet.png"
+
 				};
 				for (String p : forestPaths) {
 					try {

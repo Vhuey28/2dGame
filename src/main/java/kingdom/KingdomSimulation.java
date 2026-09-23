@@ -300,10 +300,17 @@ public class KingdomSimulation {
     }
 
     public boolean playerStartScheme(Scheme.Type type, Character target, Kingdom targetKingdom) {
-        int durationTicks = switch (type) {
-            case FABRICATE_CLAIM -> 8;
-            case ASSASSINATE -> 6;
-            case SPY_NETWORK -> 10;
+        int durationTicks = 0;
+        switch (type) {
+            case FABRICATE_CLAIM :
+                durationTicks= 8;
+                break;
+            case ASSASSINATE:
+                durationTicks= 6;
+                break;
+            case SPY_NETWORK :
+                durationTicks= 10;
+                break;
         };
         Scheme scheme = new Scheme(type, playerKingdom.ruler, target, targetKingdom, durationTicks);
         return intrigueSystem.startScheme(scheme);

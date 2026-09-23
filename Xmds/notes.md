@@ -29,9 +29,11 @@
   - vince animations are not the same size
   - triss freezes on mapA
   - crases at the start of survial mode 
-  - need to change it so that it is able to run on both windows and mac and not foucing on directories with my name
+  - need to change it so that it is able to run on both windows and mac and not foucing on directories without my name
   - game randomly crashes in survial mode
-  - survial mode should go on forever but should give the option to leave(add a option to the after the wave is done then ask to select power ups)
+  - In survival with melee troop selected the game mode people stops spawning after wave 3 
+  - the middle powerup button exits survival
+  - the powerupp buttons cause the game to crash because a rect is null
 
  ## changes(maybe)
   - enemy health bar appear only when hit for better visablitiy
