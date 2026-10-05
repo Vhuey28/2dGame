@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
+import world.politics.Government;
+
 class CampaignSessionTest {
 
     @Test
@@ -48,12 +50,12 @@ class CampaignSessionTest {
         assertEquals("MERCENARY", session.getSnapshot().player.kingdomRole);
         assertFalse(session.getSnapshot().player.canManageKingdom);
         assertFalse(session.adjustKingdomLaw(
-                world.politics.Government.LawType.TAXATION, 1).accepted);
+                Government.LawType.TAXATION, 1).accepted);
 
         assertTrue(session.appointPlayerAsKing(realm.id).accepted);
         int before = session.getSnapshot().findRealm(realm.id).laws.get("TAXATION");
         assertTrue(session.adjustKingdomLaw(
-                world.politics.Government.LawType.TAXATION, 1).accepted);
+                Government.LawType.TAXATION, 1).accepted);
         assertTrue(session.getSnapshot().player.canManageKingdom);
         assertEquals(Math.min(3, before + 1),
                 session.getSnapshot().findRealm(realm.id).laws.get("TAXATION"));

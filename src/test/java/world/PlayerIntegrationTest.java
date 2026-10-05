@@ -8,6 +8,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import world.politics.Government;
+
 import world.command.CommandResult;
 import world.economy.GoodType;
 
@@ -88,7 +90,7 @@ class PlayerIntegrationTest {
         Realm realm = session.getWorld().realms.values().stream().findFirst().orElseThrow();
         assertTrue(session.appointPlayerAsKing(realm.id).accepted);
         assertTrue(session.adjustKingdomLaw(
-                world.politics.Government.LawType.TAXATION, 1).accepted);
+                Government.LawType.TAXATION, 1).accepted);
         int savedTaxation = session.getSnapshot().findRealm(realm.id).laws.get("TAXATION");
 
         Path directory = Files.createTempDirectory("campaign-save-test");

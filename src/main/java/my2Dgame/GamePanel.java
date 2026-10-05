@@ -33,6 +33,7 @@ import world.military.BattleContext;
 import world.military.BattleResult;
 import world.WorldConfig;
 import world.economy.GoodType;
+import world.politics.Government;
 
 public class GamePanel extends JPanel implements Runnable{
 	//Screen Settings
@@ -2605,7 +2606,7 @@ System.nanoTime();
 					if (!entry.getValue().contains(point)) continue;
 					String[] command = entry.getKey().split(":");
 					campaignSession.adjustKingdomLaw(
-							world.politics.Government.LawType.valueOf(command[0]), Integer.parseInt(command[1]));
+							Government.LawType.valueOf(command[0]), Integer.parseInt(command[1]));
 					campaignSnapshot = campaignSession.getSnapshot();
 					repaint();
 					return;
