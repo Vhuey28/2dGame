@@ -2385,6 +2385,8 @@ Target-continent budget certification remains measurement-dependent: run the opt
 - Campaign-map settlement hover cards show population, treasury, market, security, unrest, food, and crime information.
 - Bottom campaign tabs expose overview, inventory, party, contracts, people, and crime views.
 - Fullscreen uses a reliable F11 borderless/exclusive toggle, restores window bounds, retains keyboard focus, and maps scaled mouse input back to virtual coordinates.
+- Contracts expose plain-language objectives, named issuer/destination settlements, live cargo/location progress, deadlines, rewards, and penalties; active destinations are highlighted on the campaign map.
+- F1 opens a campaign cheat/test menu with explicit controls for resources, cargo, healing, armies, troops, caravans, rulers, lords, settlement ownership, wars, crime, contracts, and time advancement.
 
 ---
 

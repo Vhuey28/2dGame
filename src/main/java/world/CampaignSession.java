@@ -18,6 +18,7 @@ public final class CampaignSession {
     private final WorldSimulation simulation;
     private final PlayerCampaignState playerState;
     private final ContractSystem contractSystem;
+    private final CheatService cheatService;
     private world.local.LocalSceneSimulation localScene;
     private volatile CampaignSnapshot snapshot;
     private long lastSnapshotMinute = Long.MIN_VALUE;
@@ -28,6 +29,7 @@ public final class CampaignSession {
         this.clock = new WorldClock(0L);
         this.simulation = new WorldSimulation(clock, world);
         this.contractSystem = new ContractSystem(simulation.getContext());
+        this.cheatService = new CheatService(simulation);
         configureRandomStreams(seed);
 
         WorldGenerator generator = new WorldGenerator(simulation.getContext());
@@ -249,6 +251,16 @@ public final class CampaignSession {
         return playerState;
     }
 
+    public CheatService getCheats() {
+        return cheatService;
+    }
+
+    public void refreshAfterCheat() {
+        world.indexes.rebuild(world, clock.getWorldMinute());
+        world.geography.getSpatialIndex().rebuildDynamic(world);
+        refreshSnapshot();
+    }
+
     public void setSpeed(int speed) {
         clock.setSpeed(speed);
         refreshSnapshot();
@@ -265,9 +277,14 @@ public final class CampaignSession {
     }
 
     public void advanceOneDayForTesting() {
+        advanceDaysForTesting(1);
+    }
+
+    public void advanceDaysForTesting(int days) {
+        if (days <= 0) return;
         boolean wasPaused = clock.isPaused();
         clock.setPaused(false);
-        simulation.advanceMinutes(WorldConfig.MINUTES_PER_DAY);
+        simulation.advanceMinutes((long) days * WorldConfig.MINUTES_PER_DAY);
         contractSystem.processDeadlines(playerState, clock.getWorldMinute());
         clock.setPaused(wasPaused);
         refreshSnapshot();

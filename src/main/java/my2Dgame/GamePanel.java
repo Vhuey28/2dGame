@@ -89,6 +89,17 @@ public class GamePanel extends JPanel implements Runnable{
 	GameState gameState = GameState.PLAYING;
 	public GameLayer currentLayer = GameLayer.OVERWORLD;
 	private boolean debugOverlayVisible = false;
+	private boolean cheatMenuOpen;
+	private int cheatRealmIndex;
+	private int cheatPersonIndex;
+	private String cheatStatus = "F1 opens/closes developer cheats";
+	private enum CheatAction {
+		NEXT_REALM, NEXT_PERSON, ADD_FOOD, ADD_GOLD, ADD_CARGO, HEAL_PLAYER,
+		SPAWN_ARMY, ADD_TROOPS, SPAWN_CARAVAN, PLAYER_KING, SET_KING,
+		CHANGE_OWNER, APPOINT_LORD, TOGGLE_WAR, TRIGGER_CRIME,
+		COMPLETE_CONTRACTS, ADVANCE_DAY, ADVANCE_MONTH
+	}
+	private final java.util.Map<CheatAction, Rectangle> cheatButtonHitboxes = new java.util.EnumMap<>(CheatAction.class);
 
 	public void setGameState(GameState state) {
 		gameState = state;
@@ -233,6 +244,13 @@ public class GamePanel extends JPanel implements Runnable{
 			@Override
 			public void keyPressed(KeyEvent e) {
 				int code = e.getKeyCode();
+				if (code == KeyEvent.VK_F1 && gameStarted && gameMode == GameMode.CAMPAIGN) {
+					cheatMenuOpen = !cheatMenuOpen;
+					cheatStatus = cheatMenuOpen ? "Cheat menu enabled" : "Cheat menu closed";
+					repaint();
+					return;
+				}
+				if (cheatMenuOpen) return;
 				if (!gameStarted && code == KeyEvent.VK_ENTER && menuStage == MenuStage.READY) {
 					gameStarted = true;
 					gamePaused = false;
@@ -399,6 +417,10 @@ public class GamePanel extends JPanel implements Runnable{
 			@Override
 			public void mouseClicked(MouseEvent e) {
 				java.awt.Point point = toGamePoint(e.getPoint());
+				if (cheatMenuOpen) {
+					handleCheatMenuClick(point);
+					return;
+				}
 				if (currentLayer == GameLayer.DEPLOYMENT) {
 					if (formationLineButton.contains(point)) {
 						selectedFormation = entity.Formation.Type.LINE;
@@ -807,7 +829,11 @@ public class GamePanel extends JPanel implements Runnable{
 				else {
 					world.command.CommandResult result = campaignSession.acceptContract(offers.get(0).id);
 					campaignSnapshot = campaignSession.getSnapshot();
-					localInteractionMessage = result.accepted ? "Contract accepted" : result.message;
+					CampaignSnapshot.ContractView accepted = campaignSnapshot.contracts.stream()
+						.filter(contract -> contract.id == offers.get(0).id).findFirst().orElse(null);
+					localInteractionMessage = result.accepted && accepted != null
+						? "Accepted: " + accepted.objective + " (" + accepted.remainingDays() + " days)"
+						: result.message;
 				}
 			} else {
 				localInteractionMessage = nearest.label + ": " + nearest.interactionText;
@@ -1498,7 +1524,7 @@ System.nanoTime();
 	
 	public void update() {
 
-			if (!gameStarted || gamePaused) {
+			if (!gameStarted || gamePaused || cheatMenuOpen) {
 				return;
 			}
 			if (gameMode == GameMode.CAMPAIGN && campaignSession != null) {
@@ -1978,6 +2004,7 @@ System.nanoTime();
 			drawCampaignWorld(g2);
 			if (gamePaused) drawPauseMenu(g2);
 			if (gameCrashed) drawCrashMenu(g2);
+			drawCheatMenu(g2);
 			g2.setTransform(oldTransform);
 			g2.dispose();
 			return;
@@ -2115,9 +2142,175 @@ System.nanoTime();
 			drawCrashMenu(g2);
 		}
 		drawDebugOverlay(g2);
+		drawCheatMenu(g2);
 
 		g2.setTransform(oldTransform); // restore before g2.dispose()
 		g2.dispose();
+	}
+
+	private void drawCheatMenu(Graphics2D g2) {
+		if (!cheatMenuOpen || campaignSession == null || campaignSnapshot == null) return;
+		g2.setColor(new Color(0, 0, 0, 205));
+		g2.fillRect(0, 0, screenWidth, screenHeight);
+		int x = 40, y = 35, width = screenWidth - 80, height = screenHeight - 70;
+		g2.setColor(new Color(24, 30, 38));
+		g2.fillRoundRect(x, y, width, height, 16, 16);
+		g2.setColor(new Color(230, 178, 65));
+		g2.drawRoundRect(x, y, width, height, 16, 16);
+		g2.setFont(new Font("Serif", Font.BOLD, 24));
+		g2.drawString("CHEAT & TEST MENU", x + 18, y + 30);
+		g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+		g2.setColor(Color.WHITE);
+		world.geography.Settlement settlement = cheatSettlement();
+		world.Realm realm = cheatRealm();
+		world.Person person = cheatPerson();
+		g2.drawString("Settlement: " + (settlement == null ? "none (select one on map)" : settlement.name), x + 18, y + 50);
+		g2.drawString("Realm: " + (realm == null ? "none" : realm.name) + "   Person: "
+			+ (person == null ? "none" : person.givenName + " " + person.familyName), x + 18, y + 66);
+		g2.setColor(new Color(170, 220, 170));
+		g2.drawString(cheatStatus, x + 18, y + 84);
+
+		CheatAction[] actions = CheatAction.values();
+		cheatButtonHitboxes.clear();
+		int columns = 3, buttonW = 205, buttonH = 42, gapX = 10, gapY = 9;
+		int startY = y + 100;
+		for (int i = 0; i < actions.length; i++) {
+			int col = i % columns, row = i / columns;
+			Rectangle rect = new Rectangle(x + 18 + col * (buttonW + gapX), startY + row * (buttonH + gapY), buttonW, buttonH);
+			cheatButtonHitboxes.put(actions[i], rect);
+			g2.setColor(new Color(58, 72, 86));
+			g2.fillRoundRect(rect.x, rect.y, rect.width, rect.height, 8, 8);
+			g2.setColor(new Color(125, 153, 174));
+			g2.drawRoundRect(rect.x, rect.y, rect.width, rect.height, 8, 8);
+			g2.setColor(Color.WHITE);
+			g2.setFont(new Font("SansSerif", Font.BOLD, 11));
+			String label = cheatLabel(actions[i]);
+			g2.drawString(label, rect.x + (rect.width - g2.getFontMetrics().stringWidth(label)) / 2, rect.y + 25);
+		}
+		g2.setColor(Color.LIGHT_GRAY);
+		g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
+		g2.drawString("F1 closes this menu. Changes are immediate and intentionally bypass normal costs and laws.", x + 18, y + height - 12);
+	}
+
+	private String cheatLabel(CheatAction action) {
+		return switch (action) {
+			case NEXT_REALM -> "Next target kingdom";
+			case NEXT_PERSON -> "Next target person";
+			case ADD_FOOD -> "+500 settlement food";
+			case ADD_GOLD -> "+10,000 player gold";
+			case ADD_CARGO -> "+25 every cargo good";
+			case HEAL_PLAYER -> "Heal player";
+			case SPAWN_ARMY -> "Spawn 20-person army";
+			case ADD_TROOPS -> "Add 10 troops";
+			case SPAWN_CARAVAN -> "Spawn loaded caravan";
+			case PLAYER_KING -> "Make player king";
+			case SET_KING -> "Make target person king";
+			case CHANGE_OWNER -> "Give settlement to realm";
+			case APPOINT_LORD -> "Appoint settlement lord";
+			case TOGGLE_WAR -> "Toggle war with next realm";
+			case TRIGGER_CRIME -> "Trigger local crime";
+			case COMPLETE_CONTRACTS -> "Complete active contracts";
+			case ADVANCE_DAY -> "Advance one day";
+			case ADVANCE_MONTH -> "Advance one month";
+		};
+	}
+
+	private void handleCheatMenuClick(java.awt.Point point) {
+		for (java.util.Map.Entry<CheatAction, Rectangle> entry : cheatButtonHitboxes.entrySet()) {
+			if (!entry.getValue().contains(point)) continue;
+			runCheat(entry.getKey());
+			repaint();
+			return;
+		}
+	}
+
+	private void runCheat(CheatAction action) {
+		if (campaignSession == null) return;
+		java.util.List<world.Realm> realms = cheatRealms();
+		java.util.List<world.Person> people = cheatPeople();
+		if (action == CheatAction.NEXT_REALM) {
+			cheatRealmIndex = realms.isEmpty() ? 0 : (cheatRealmIndex + 1) % realms.size();
+			cheatStatus = "Target realm changed";
+			return;
+		}
+		if (action == CheatAction.NEXT_PERSON) {
+			cheatPersonIndex = people.isEmpty() ? 0 : (cheatPersonIndex + 1) % people.size();
+			cheatStatus = "Target person changed";
+			return;
+		}
+		world.CheatService cheats = campaignSession.getCheats();
+		world.geography.Settlement settlement = cheatSettlement();
+		world.Realm realm = cheatRealm();
+		world.Person person = cheatPerson();
+		long settlementId = settlement == null ? -1 : settlement.id;
+		long realmId = realm == null ? -1 : realm.id;
+		world.command.CommandResult result;
+		switch (action) {
+			case ADD_FOOD -> result = cheats.addFood(settlementId, 500);
+			case ADD_GOLD -> result = cheats.addPlayerGold(10_000);
+			case ADD_CARGO -> result = cheats.addPlayerCargo(25);
+			case HEAL_PLAYER -> result = cheats.healPlayer();
+			case SPAWN_ARMY -> result = cheats.spawnArmy(settlementId, 20);
+			case ADD_TROOPS -> result = cheats.addTroops(settlementId, 10);
+			case SPAWN_CARAVAN -> result = cheats.spawnCaravan(settlementId);
+			case PLAYER_KING -> result = cheats.makePlayerKing(realmId);
+			case SET_KING -> result = person == null ? world.command.CommandResult.rejected("CHEAT", "No target person")
+				: cheats.setKing(realmId, person.id);
+			case CHANGE_OWNER -> result = cheats.changeSettlementOwner(settlementId, realmId);
+			case APPOINT_LORD -> result = person == null ? world.command.CommandResult.rejected("CHEAT", "No target person")
+				: cheats.appointLord(settlementId, person.id);
+			case TOGGLE_WAR -> {
+				world.Realm other = realms.stream().filter(value -> value.id != realmId).findFirst().orElse(null);
+				result = other == null ? world.command.CommandResult.rejected("CHEAT", "Need another realm")
+					: cheats.toggleWar(realmId, other.id);
+			}
+			case TRIGGER_CRIME -> result = cheats.triggerCrime(settlementId);
+			case COMPLETE_CONTRACTS -> result = cheats.completePlayerContracts();
+			case ADVANCE_DAY -> { campaignSession.advanceDaysForTesting(1); result = world.command.CommandResult.accepted(); }
+			case ADVANCE_MONTH -> { campaignSession.advanceDaysForTesting(30); result = world.command.CommandResult.accepted(); }
+			default -> { return; }
+		}
+		campaignSession.refreshAfterCheat();
+		campaignSnapshot = campaignSession.getSnapshot();
+		cheatStatus = result.accepted ? (result.message.isEmpty() ? action.toString() + " applied" : result.message)
+			: "Rejected: " + result.message;
+	}
+
+	private world.geography.Settlement cheatSettlement() {
+		if (campaignSession == null) return null;
+		long id = selectedCampaignSettlementId != null ? selectedCampaignSettlementId
+			: campaignSession.getPlayerState().currentSettlementId;
+		return campaignSession.getWorld().geography.getSettlement(id);
+	}
+
+	private java.util.List<world.Realm> cheatRealms() {
+		if (campaignSession == null) return java.util.List.of();
+		java.util.List<world.Realm> values = new java.util.ArrayList<>(campaignSession.getWorld().realms.values());
+		values.sort(java.util.Comparator.comparingLong(value -> value.id));
+		return values;
+	}
+
+	private world.Realm cheatRealm() {
+		java.util.List<world.Realm> values = cheatRealms();
+		return values.isEmpty() ? null : values.get(Math.floorMod(cheatRealmIndex, values.size()));
+	}
+
+	private java.util.List<world.Person> cheatPeople() {
+		if (campaignSession == null) return java.util.List.of();
+		world.geography.Settlement settlement = cheatSettlement();
+		java.util.List<world.Person> values = new java.util.ArrayList<>();
+		for (world.Person person : campaignSession.getWorld().people.values()) {
+			if (!person.alive) continue;
+			if (settlement == null || (person.currentSettlementId != null
+					&& person.currentSettlementId == settlement.id)) values.add(person);
+		}
+		values.sort(java.util.Comparator.comparingLong(value -> value.id));
+		return values;
+	}
+
+	private world.Person cheatPerson() {
+		java.util.List<world.Person> values = cheatPeople();
+		return values.isEmpty() ? null : values.get(Math.floorMod(cheatPersonIndex, values.size()));
 	}
 
 	private void drawDebugOverlay(Graphics2D g2) {
@@ -2299,7 +2492,7 @@ System.nanoTime();
 			g2.drawString("Chronicle Conquest - Campaign", 20, 34);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 12));
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("TAB local | T travel | B/V grain | N/M veg | C contract | F5 save | F9 load", 20, 55);
+			g2.drawString("TAB local | T travel | C contract | F1 cheats | F5 save | F9 load", 20, 55);
 
 			if (snapshot == null) {
 				g2.setColor(Color.WHITE);
@@ -2348,6 +2541,13 @@ System.nanoTime();
 				if (snapshot.player != null && snapshot.player.settlementId == settlement.id) {
 					g2.setColor(Color.CYAN);
 					g2.drawOval(x - radius - 4, y - radius - 4, radius * 2 + 8, radius * 2 + 8);
+				}
+				if (isActiveContractDestination(snapshot, settlement.id)) {
+					g2.setColor(new Color(255, 190, 45));
+					g2.setStroke(new BasicStroke(3f));
+					g2.drawOval(x - radius - 8, y - radius - 8, radius * 2 + 16, radius * 2 + 16);
+					g2.drawString("CONTRACT", x + 11, y - 11);
+					g2.setStroke(new BasicStroke(1f));
 				}
 				g2.setColor(colorForRealm(settlement.realmId));
 				g2.fillOval(x - radius, y - radius, radius * 2, radius * 2);
@@ -2527,12 +2727,19 @@ System.nanoTime();
 					}
 				}
 				case CONTRACTS -> {
+					int shown = 0;
 					for (CampaignSnapshot.ContractView contract : snapshot.contracts) {
-						if ("EXPIRED".equals(contract.status)) continue;
-						g2.drawString("#" + contract.id + " " + contract.type + " " + contract.status
-							+ " reward " + contract.rewardCoins + "c", 32, y); y += 15;
-						if (y > panelY + 150) break;
+						if ("EXPIRED".equals(contract.status) || "FAILED".equals(contract.status)) continue;
+						g2.setColor("ACTIVE".equals(contract.status) ? new Color(255, 205, 85) : Color.WHITE);
+						g2.drawString("#" + contract.id + " [" + contract.status + "] " + contract.objective, 32, y); y += 14;
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.drawString("From " + contract.issuerName + " -> " + contract.destinationName
+							+ " | " + contract.progress, 44, y); y += 14;
+						g2.drawString("Reward " + contract.rewardCoins + "c | Penalty " + contract.penaltyCoins
+							+ "c | " + contract.remainingDays() + " days left", 44, y); y += 18;
+						if (++shown >= 3 || y > panelY + 150) break;
 					}
+					if (shown == 0) g2.drawString("No available or active contracts.", 32, y);
 				}
 				case PEOPLE -> {
 					long settlementId = selectedCampaignSettlementId == null && snapshot.player != null
@@ -2553,6 +2760,13 @@ System.nanoTime();
 				}
 				default -> { }
 			}
+		}
+
+		private boolean isActiveContractDestination(CampaignSnapshot snapshot, long settlementId) {
+			for (CampaignSnapshot.ContractView contract : snapshot.contracts) {
+				if ("ACTIVE".equals(contract.status) && contract.destinationSettlementId == settlementId) return true;
+			}
+			return false;
 		}
 
 		private CampaignSnapshot.PersonView findPerson(CampaignSnapshot snapshot, long id) {

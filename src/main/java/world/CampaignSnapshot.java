@@ -209,11 +209,27 @@ public final class CampaignSnapshot {
 
         List<ContractView> contractViews = new ArrayList<>();
         for (Contract contract : world.contracts.values()) {
+            Settlement issuer = world.geography.getSettlement(contract.issuerSettlementId);
+            Settlement destination = world.geography.getSettlement(contract.destinationSettlementId);
+            String issuerName = issuer == null ? "Unknown" : issuer.name;
+            String destinationName = destination == null ? "Unknown" : destination.name;
+            String objective = switch (contract.type) {
+                case DELIVER_GOODS -> "Bring " + contract.requiredQuantity + " "
+                        + contract.requiredGood + " to " + destinationName;
+                case DELIVER_MESSAGE -> "Carry the sealed message to " + destinationName;
+                case ESCORT_ROUTE -> "Travel safely from " + issuerName + " to " + destinationName;
+            };
+            int carried = world.player == null || contract.requiredGood == null ? 0
+                    : world.player.cargo.getQuantity(contract.requiredGood);
+            String progress = contract.type == Contract.ContractType.DELIVER_GOODS
+                    ? "Cargo " + Math.min(carried, contract.requiredQuantity) + "/" + contract.requiredQuantity
+                    : playerAt(world, contract.destinationSettlementId) ? "At destination" : "Destination not reached";
             contractViews.add(new ContractView(contract.id, contract.type.toString(),
-                    contract.issuerSettlementId, contract.destinationSettlementId,
-                    contract.deadlineMinute, contract.rewardCoins, contract.requiredGood == null
+                    contract.issuerSettlementId, issuerName, contract.destinationSettlementId, destinationName,
+                    contract.deadlineMinute, Math.max(0L, contract.deadlineMinute - minute),
+                    contract.rewardCoins, contract.penaltyCoins, contract.requiredGood == null
                             ? "None" : contract.requiredGood.toString(), contract.requiredQuantity,
-                    contract.status.toString()));
+                    objective, progress, contract.status.toString()));
         }
         contractViews.sort(Comparator.comparingLong(view -> view.id));
 
@@ -271,6 +287,10 @@ public final class CampaignSnapshot {
                 armyViews.size(), world.caravans.size(), activeWars, activeTreaties, activeSieges, averageFood,
                 realmViews, settlementViews, roadViews, caravanViews, armyViews,
                 contractViews, personViews, crimeViews, playerView, eventViews);
+    }
+
+    private static boolean playerAt(WorldState world, long settlementId) {
+        return world.player != null && world.player.currentSettlementId == settlementId;
     }
 
     private static int countPopulation(WorldState world, long settlementId) {
@@ -471,25 +491,42 @@ public final class CampaignSnapshot {
         public final long id;
         public final String type;
         public final long issuerSettlementId;
+        public final String issuerName;
         public final long destinationSettlementId;
+        public final String destinationName;
         public final long deadlineMinute;
+        public final long remainingMinutes;
         public final long rewardCoins;
+        public final long penaltyCoins;
         public final String requiredGood;
         public final int requiredQuantity;
+        public final String objective;
+        public final String progress;
         public final String status;
 
-        ContractView(long id, String type, long issuerSettlementId, long destinationSettlementId,
-                long deadlineMinute, long rewardCoins, String requiredGood,
-                int requiredQuantity, String status) {
+        ContractView(long id, String type, long issuerSettlementId, String issuerName,
+                long destinationSettlementId, String destinationName, long deadlineMinute,
+                long remainingMinutes, long rewardCoins, long penaltyCoins, String requiredGood,
+                int requiredQuantity, String objective, String progress, String status) {
             this.id = id;
             this.type = type;
             this.issuerSettlementId = issuerSettlementId;
+            this.issuerName = issuerName;
             this.destinationSettlementId = destinationSettlementId;
+            this.destinationName = destinationName;
             this.deadlineMinute = deadlineMinute;
+            this.remainingMinutes = remainingMinutes;
             this.rewardCoins = rewardCoins;
+            this.penaltyCoins = penaltyCoins;
             this.requiredGood = requiredGood;
             this.requiredQuantity = requiredQuantity;
+            this.objective = objective;
+            this.progress = progress;
             this.status = status;
+        }
+
+        public long remainingDays() {
+            return (remainingMinutes + WorldConfig.MINUTES_PER_DAY - 1) / WorldConfig.MINUTES_PER_DAY;
         }
     }
 
