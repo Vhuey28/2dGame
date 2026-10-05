@@ -6,14 +6,20 @@ package world;
  * and computation for headless simulation.
  */
 public final class WorldState {
+    /** Geography owns provinces, settlements, buildings, roads, and routes. */
+    public final world.geography.GeographySystem geography = new world.geography.GeographySystem();
+
     /** All persistent people in the world. Never null after init. */
     public final java.util.Map<Long, Person> people = new java.util.HashMap<>();
 
     /** All persistent households. Never null after init. */
     public final java.util.Map<Long, Household> households = new java.util.HashMap<>();
 
-    /** All persistent settlements. Never null after init. */
-    public final java.util.Map<Long, world.geography.Settlement> settlements = new java.util.HashMap<>();
+    /**
+     * Compatibility view of GeographySystem's canonical settlement registry.
+     * Both references point to the same map; there is only one source of truth.
+     */
+    public final java.util.Map<Long, world.geography.Settlement> settlements = geography.getSettlements();
 
     /** All persistent realms (kingdoms). Never null after init. */
     public final java.util.Map<Long, Realm> realms = new java.util.HashMap<>();
@@ -31,7 +37,4 @@ public final class WorldState {
 
     /** All generated IDs for validation. Never null after init. */
     public final IdGenerator idGenerator = new IdGenerator();
-
-    /** Geography system for provinces, settlements, roads, route graph. */
-    public final world.geography.GeographySystem geography = new world.geography.GeographySystem();
 }

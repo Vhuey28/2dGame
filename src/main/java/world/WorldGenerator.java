@@ -53,14 +53,21 @@ public final class WorldGenerator {
 
         // 3. Create settlements: 3 per realm (total 6)
         // Realm A settlements
-        long settlementA1 = createSettlement("Arden Vale", realmAId, 100, 100, world.idGenerator.next(), disputedProvinceId);
-        long settlementA2 = createSettlement("Eastwatch", realmAId, 200, 150, world.idGenerator.next(), disputedProvinceId);
-        long settlementA3 = createSettlement("Northhold", realmAId, 150, 200, world.idGenerator.next(), disputedProvinceId);
+        long settlementA1 = createSettlement("Arden Vale", realmAId, 100, 100, disputedProvinceId);
+        long settlementA2 = createSettlement("Eastwatch", realmAId, 200, 150, disputedProvinceId);
+        long settlementA3 = createSettlement("Northhold", realmAId, 150, 200, disputedProvinceId);
 
         // Realm B settlements
-        long settlementB1 = createSettlement("Balor's Rest", realmBId, 400, 100, world.idGenerator.next(), disputedProvinceId);
-        long settlementB2 = createSettlement("Southford", realmBId, 350, 200, world.idGenerator.next(), disputedProvinceId);
-        long settlementB3 = createSettlement("Westwatch", realmBId, 300, 300, world.idGenerator.next(), disputedProvinceId);
+        long settlementB1 = createSettlement("Balor's Rest", realmBId, 400, 100, disputedProvinceId);
+        long settlementB2 = createSettlement("Southford", realmBId, 350, 200, disputedProvinceId);
+        long settlementB3 = createSettlement("Westwatch", realmBId, 300, 300, disputedProvinceId);
+
+        disputedProvince.settlementIds.addAll(java.util.Arrays.asList(
+                settlementA1, settlementA2, settlementA3,
+                settlementB1, settlementB2, settlementB3));
+        realmA.capitalSettlementId = settlementA1;
+        realmB.capitalSettlementId = settlementB1;
+        realmA.controlledProvinceIds.add(disputedProvinceId);
         System.out.println("Created 6 settlements");
 
         // 3.1 Create initial workplaces (farms) for each settlement
@@ -97,13 +104,13 @@ public final class WorldGenerator {
         System.out.println("Vertical slice generation complete");
     }
 
-    private long createSettlement(String name, long controllingRealmId, int x, int y, long provinceId, long disputedProvinceId) {
+    private long createSettlement(String name, long controllingRealmId, int x, int y, long provinceId) {
         long settlementId = world.idGenerator.next();
         Settlement settlement = new Settlement(settlementId, name, provinceId, new WorldPosition(x, y), Settlement.SettlementType.VILLAGE);
         settlement.controllerRealmId = controllingRealmId;
         settlement.market = new Market(settlementId);
         settlement.publicStockpile = new Inventory();
-        settlement.treasury = new MoneyAccount(500L + (long)(Math.random() * 1000));
+        settlement.treasury = new MoneyAccount(500L + context.getRandom("GENERATION").nextInt(1000));
         world.geography.addSettlement(settlement);
         return settlementId;
     }
@@ -187,38 +194,42 @@ public final class WorldGenerator {
             }
         }
 
+        SeededRandom generationRandom = context.getRandom("GENERATION");
+
         // Generate people for realm A
         for (int i = 0; i < realmAPeople; i++) {
             long settlementId = realmASettlementIds.get(i % realmASettlementIds.size());
             long personId = world.idGenerator.next();
-            Person person = context.getWorld().people.getOrDefault(personId, new Person());
-            if (person.id == 0L) { // New person
-                person = new Person(personId, "Person_" + personId, "A",
-                        (i % 2 == 0) ? Person.Sex.MALE : Person.Sex.FEMALE,
-                        -((long) i * 60 * 24 * 30 * 12)); // Born i years ago
-                person.cultureId = 1L;
-                person.homeSettlementId = settlementId;
-                person.currentSettlementId = settlementId;
-                world.people.put(personId, person);
-            }
-            // Assign to a household (create simple households)
+            int age = generationRandom.nextInt(1, 76);
+            long birthMinute = -((long) age * WorldConfig.MINUTES_PER_YEAR)
+                    - generationRandom.nextInt(WorldConfig.MINUTES_PER_YEAR);
+            Person person = new Person(personId, "Person_" + personId, "A",
+                    generationRandom.nextBoolean() ? Person.Sex.MALE : Person.Sex.FEMALE,
+                    birthMinute);
+            person.cultureId = 1L;
+            person.homeSettlementId = settlementId;
+            person.currentSettlementId = settlementId;
+            person.type = age < 18 ? Person.PersonType.CHILD : Person.PersonType.CITIZEN;
+            world.people.put(personId, person);
             assignToHousehold(person);
         }
 
-        // Generate people for realm B
+        // Generate people for realm B. IDs always come directly from IdGenerator;
+        // artificial offsets can collide after a long-running campaign.
         for (int i = 0; i < peoplePerRealm; i++) {
             long settlementId = realmBSettlementIds.get(i % realmBSettlementIds.size());
-            long personId = world.idGenerator.next() + 10000; // Offset to avoid ID conflicts
-            Person person = context.getWorld().people.getOrDefault(personId, new Person());
-            if (person.id == 0L) { // New person
-                person = new Person(personId, "Person_" + personId, "B",
-                        (i % 2 == 0) ? Person.Sex.MALE : Person.Sex.FEMALE,
-                        -((long) i * 60 * 24 * 30 * 12)); // Born i years ago
-                person.cultureId = 2L;
-                person.homeSettlementId = settlementId;
-                person.currentSettlementId = settlementId;
-                world.people.put(personId, person);
-            }
+            long personId = world.idGenerator.next();
+            int age = generationRandom.nextInt(1, 76);
+            long birthMinute = -((long) age * WorldConfig.MINUTES_PER_YEAR)
+                    - generationRandom.nextInt(WorldConfig.MINUTES_PER_YEAR);
+            Person person = new Person(personId, "Person_" + personId, "B",
+                    generationRandom.nextBoolean() ? Person.Sex.MALE : Person.Sex.FEMALE,
+                    birthMinute);
+            person.cultureId = 2L;
+            person.homeSettlementId = settlementId;
+            person.currentSettlementId = settlementId;
+            person.type = age < 18 ? Person.PersonType.CHILD : Person.PersonType.CITIZEN;
+            world.people.put(personId, person);
             assignToHousehold(person);
         }
     }
@@ -264,7 +275,7 @@ public final class WorldGenerator {
                 household.inventory.add(GoodType.VEGETABLES, memberCount * 5);
             }
             // Give some starting money
-            household.account.add(50L + (long) (Math.random() * 100));
+            household.account.add(50L + context.getRandom("GENERATION").nextInt(100));
             // Set initial food security
             household.foodSecurity = 1.0;
         }

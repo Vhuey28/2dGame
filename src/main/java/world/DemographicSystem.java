@@ -1,6 +1,7 @@
 package world;
 
 import world.event.WorldEvent;
+import world.economy.Workplace;
 
 import java.util.ArrayList;
 
@@ -84,12 +85,33 @@ public final class DemographicSystem {
         person.deathMinute = deathMinute;
         person.deathCause = cause;
 
-        // Remove from employment and offices
+        // Remove from employment and offices.
         if (person.employerId != null) {
+            Workplace workplace = world.workplaces.get(person.employerId);
+            if (workplace != null) workplace.removeWorker(person.id);
             person.employerId = null;
         }
         if (person.officeId != null) {
             person.officeId = null;
+        }
+
+        // Dead people remain in world.people for history and family links, but
+        // they must not continue consuming household food.
+        if (person.householdId != null) {
+            Household household = world.households.get(person.householdId);
+            if (household != null) {
+                household.removeMember(person.id);
+                if (household.headPersonId != null && household.headPersonId == person.id) {
+                    household.headPersonId = null;
+                    for (Long memberId : household.memberIds) {
+                        Person member = world.people.get(memberId);
+                        if (member != null && member.alive) {
+                            household.headPersonId = memberId;
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
         // Emit event

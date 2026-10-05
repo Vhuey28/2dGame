@@ -85,19 +85,22 @@ public class WorldSimulation {
             onScheduledEvent(e, current);
         }
 
-        // Check if we've crossed a day boundary (1440 minutes per day)
+        // Process every crossed boundary. This is important for campaign debug
+        // controls, loading catch-up, and future fast-forward commands that may
+        // advance more than one day at a time.
         long prevDay = previousMinute / WorldConfig.MINUTES_PER_DAY;
         long currDay = current / WorldConfig.MINUTES_PER_DAY;
-        if (currDay > prevDay) {
-            processDaySystems(currDay * WorldConfig.MINUTES_PER_DAY);
+        for (long day = prevDay + 1; day <= currDay; day++) {
+            processDaySystems(day * WorldConfig.MINUTES_PER_DAY);
         }
 
-        // Check if we've crossed a month boundary (43200 minutes per month)
         long prevMonth = previousMinute / WorldConfig.MINUTES_PER_MONTH;
         long currMonth = current / WorldConfig.MINUTES_PER_MONTH;
-        if (currMonth > prevMonth) {
-            processMonthSystems(currMonth * WorldConfig.MINUTES_PER_MONTH);
+        for (long month = prevMonth + 1; month <= currMonth; month++) {
+            processMonthSystems(month * WorldConfig.MINUTES_PER_MONTH);
         }
+
+        context.eventHistory.trim(current);
     }
 
     /** Process all daily systems (production, consumption, market clearing). */

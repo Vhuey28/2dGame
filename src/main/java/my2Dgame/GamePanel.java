@@ -27,6 +27,9 @@ import entity.Player;
 import entity.Projectile;
 import entity.Squad;
 import tile.tileManager;
+import world.CampaignSession;
+import world.CampaignSnapshot;
+import world.WorldConfig;
 
 public class GamePanel extends JPanel implements Runnable{
 	//Screen Settings
@@ -79,7 +82,7 @@ public class GamePanel extends JPanel implements Runnable{
 	public enum GameState {
 		PLAYING, PAUSED, INVENTORY, KINGDOM_AFFAIRS
 	}
-	public enum GameLayer { OVERWORLD, DEPLOYMENT, BATTLE }
+		public enum GameLayer { OVERWORLD, WORLD_MAP, DEPLOYMENT, BATTLE }
 	GameState gameState = GameState.PLAYING;
 	public GameLayer currentLayer = GameLayer.OVERWORLD;
 	private boolean debugOverlayVisible = false;
@@ -109,8 +112,13 @@ public class GamePanel extends JPanel implements Runnable{
 	String currentMap = "map1.txt";
 	public party.PartyManager partyManager = new party.PartyManager();
 	public party.Party playerParty = new party.Party();
-	public kingdom.KingdomSimulation kingdomSim = new kingdom.KingdomSimulation();
-	private party.Party pendingEnemyParty;
+		public kingdom.KingdomSimulation kingdomSim = new kingdom.KingdomSimulation();
+		private CampaignSession campaignSession;
+		private volatile CampaignSnapshot campaignSnapshot;
+		private Long selectedCampaignSettlementId;
+		private final java.util.Map<Long, Rectangle> campaignSettlementHitboxes = new java.util.HashMap<>();
+		private static final long CAMPAIGN_SEED = WorldConfig.DEFAULT_SEED;
+		private party.Party pendingEnemyParty;
 	private boolean pendingCaughtFleeing;
 	private entity.Formation.Type selectedFormation = entity.Formation.Type.WEDGE;
 	private java.util.Map<party.Party, Integer> retreatCooldowns = new java.util.HashMap<>();
@@ -146,9 +154,9 @@ public class GamePanel extends JPanel implements Runnable{
 	private Rectangle settingsButtonRect = new Rectangle(screenWidth/2 - 80, screenHeight/2 + 40, 160, 36);
 	private Rectangle[][] settingsRowRects;
 	
-	// Survival mode state
-	public enum GameMode { SANDBOX, SURVIVAL }
-	public GameMode gameMode = GameMode.SANDBOX;
+		// Game mode state
+		public enum GameMode { SANDBOX, CAMPAIGN, SURVIVAL }
+		public GameMode gameMode = GameMode.SANDBOX;
 
 	public enum MenuStage { MODE_SELECT, ALLY_YES_NO, ALLY_TYPE, READY }
 	public MenuStage menuStage = MenuStage.MODE_SELECT;
@@ -172,9 +180,10 @@ public class GamePanel extends JPanel implements Runnable{
 	private MapLink survivalPortal = null;
 	private final String[] survivalMapPool = {"map1.txt", "mapA.txt", "forest.tmx", "home.txt"}; // extend as you add maps
 
-	// Menu button rects (only used before gameStarted)
-	private Rectangle sandboxModeButton = new Rectangle(screenWidth/2 - 160, screenHeight/2, 140, 44);
-	private Rectangle survivalModeButton = new Rectangle(screenWidth/2 + 20, screenHeight/2, 140, 44);
+		// Menu button rects (only used before gameStarted)
+		private Rectangle sandboxModeButton = new Rectangle(screenWidth/2 - 240, screenHeight/2, 140, 44);
+		private Rectangle campaignModeButton = new Rectangle(screenWidth/2 - 70, screenHeight/2, 140, 44);
+		private Rectangle survivalModeButton = new Rectangle(screenWidth/2 + 100, screenHeight/2, 140, 44);
 	private Rectangle allyYesButton = new Rectangle(screenWidth/2 - 160, screenHeight/2, 140, 44);
 	private Rectangle allyNoButton = new Rectangle(screenWidth/2 + 20, screenHeight/2, 140, 44);
 	private Rectangle allyMeleeButton = new Rectangle(screenWidth/2 - 220, screenHeight/2, 130, 44);
@@ -213,17 +222,40 @@ public class GamePanel extends JPanel implements Runnable{
 				if (!gameStarted && code == KeyEvent.VK_ENTER && menuStage == MenuStage.READY) {
 					gameStarted = true;
 					gamePaused = false;
-					if (gameMode == GameMode.SURVIVAL) {
-						startSurvivalMode();
-					}
-					repaint();
+						if (gameMode == GameMode.SURVIVAL) {
+							startSurvivalMode();
+						} else if (gameMode == GameMode.CAMPAIGN) {
+							startCampaignMode();
+						}
+						repaint();
 					return;
 				}
-				if (gameStarted && code == KeyEvent.VK_P) {
-					gamePaused = !gamePaused;
-					repaint();
-				}
-				if (code == KeyEvent.VK_T) {
+					if (gameStarted && code == KeyEvent.VK_P) {
+						gamePaused = !gamePaused;
+						if (gameMode == GameMode.CAMPAIGN && campaignSession != null) {
+							campaignSession.setWorldPaused(gamePaused);
+							campaignSnapshot = campaignSession.getSnapshot();
+						}
+						repaint();
+					}
+					if (gameStarted && gameMode == GameMode.CAMPAIGN) {
+						if (code == KeyEvent.VK_TAB) {
+							currentLayer = currentLayer == GameLayer.WORLD_MAP
+								? GameLayer.OVERWORLD : GameLayer.WORLD_MAP;
+							repaint();
+							return;
+						}
+						if (campaignSession != null && currentLayer == GameLayer.WORLD_MAP) {
+							if (code == KeyEvent.VK_1) campaignSession.setSpeed(1);
+							if (code == KeyEvent.VK_2) campaignSession.setSpeed(60);
+							if (code == KeyEvent.VK_3) campaignSession.setSpeed(1440);
+							if (code == KeyEvent.VK_0) campaignSession.toggleWorldPaused();
+							if (code == KeyEvent.VK_F6) campaignSession.advanceOneDayForTesting();
+							campaignSnapshot = campaignSession.getSnapshot();
+							repaint();
+						}
+					}
+					if (code == KeyEvent.VK_T) {
 					int col = (int) player.x / tileSize;
 					int row = (int) player.y / tileSize;
 					System.out.println("Ground tile: " + tileM.getMapTileNum()[col][row]
@@ -235,20 +267,20 @@ public class GamePanel extends JPanel implements Runnable{
 				if (code == KeyEvent.VK_F3) {
 					debugOverlayVisible = !debugOverlayVisible;
 				}
-				if (gameStarted && code == KeyEvent.VK_F4) {
-					spawnDebugParty(0.4);
-				}
-				if (gameStarted && code == KeyEvent.VK_F5) {
-					spawnDebugParty(2.5);
-				}
-				if (gameStarted && code == KeyEvent.VK_F6) {
-					for (int i = 0; i < 6; i++) {
-						kingdomSim.forceMonthlyTickForTesting();
+					if (gameStarted && gameMode != GameMode.CAMPAIGN && code == KeyEvent.VK_F4) {
+						spawnDebugParty(0.4);
 					}
-				}
-				if (gameStarted && code == KeyEvent.VK_F7) {
-					toggleWarWithNearestFaction();
-				}
+					if (gameStarted && gameMode != GameMode.CAMPAIGN && code == KeyEvent.VK_F5) {
+						spawnDebugParty(2.5);
+					}
+					if (gameStarted && gameMode != GameMode.CAMPAIGN && code == KeyEvent.VK_F6) {
+						for (int i = 0; i < 6; i++) {
+							kingdomSim.forceMonthlyTickForTesting();
+						}
+					}
+					if (gameStarted && gameMode != GameMode.CAMPAIGN && code == KeyEvent.VK_F7) {
+						toggleWarWithNearestFaction();
+					}
 				
 			}
 		});
@@ -281,8 +313,9 @@ public class GamePanel extends JPanel implements Runnable{
 				}
 			}
 		});
-		this.setFocusable(true);
-		playerParty.isPlayerParty = true;
+			this.setFocusable(true);
+			this.setFocusTraversalKeysEnabled(false); // allow TAB to toggle the campaign world map
+			playerParty.isPlayerParty = true;
 		playerParty.factionName = "Player";
 		this.addMouseListener(new MouseAdapter() {
 			@Override
@@ -317,6 +350,10 @@ public class GamePanel extends JPanel implements Runnable{
 				
 				if (!gameStarted) {
 					handleStartMenuClick(e.getPoint());
+					return;
+				}
+				if (gameMode == GameMode.CAMPAIGN && currentLayer == GameLayer.WORLD_MAP && !gamePaused) {
+					handleCampaignMapClick(e.getPoint());
 					return;
 				}
 				if (gamePaused && settingsMenuOpen && !survivalPowerUpMenuOpen) {
@@ -396,6 +433,10 @@ public class GamePanel extends JPanel implements Runnable{
 		gameMode = GameMode.SANDBOX;
 		gameStarted = false;
 		gamePaused = false;
+		currentLayer = GameLayer.OVERWORLD;
+		campaignSession = null;
+		campaignSnapshot = null;
+		selectedCampaignSettlementId = null;
 		menuStage = MenuStage.MODE_SELECT;
 		survivalWaveNumber = 0;
 		survivalEnemyCountForWave = 10;
@@ -425,11 +466,15 @@ public class GamePanel extends JPanel implements Runnable{
 		player.projectiles.clear();
 		player.areas.clear();
 		player.inventory.clear();
-		gameMode = GameMode.SANDBOX;
-		gameStarted = false;
-		gamePaused = false;
-		menuStage = MenuStage.MODE_SELECT;
-		setupMap("map1.txt");
+			gameMode = GameMode.SANDBOX;
+			gameStarted = false;
+			gamePaused = false;
+			currentLayer = GameLayer.OVERWORLD;
+			campaignSession = null;
+			campaignSnapshot = null;
+			selectedCampaignSettlementId = null;
+			menuStage = MenuStage.MODE_SELECT;
+			setupMap("map1.txt");
 		teleportPlayerForMap("map1.txt");
 		waveActive = false;
 		waveMessageTimer = 0;
@@ -564,13 +609,16 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 		switch (menuStage) {
 			case MODE_SELECT:
-				if (sandboxModeButton.contains(p)) {
-					gameMode = GameMode.SANDBOX;
-					menuStage = MenuStage.READY;
-				} else if (survivalModeButton.contains(p)) {
-					gameMode = GameMode.SURVIVAL;
-					menuStage = MenuStage.ALLY_YES_NO;
-				}
+					if (sandboxModeButton.contains(p)) {
+						gameMode = GameMode.SANDBOX;
+						menuStage = MenuStage.READY;
+					} else if (campaignModeButton.contains(p)) {
+						gameMode = GameMode.CAMPAIGN;
+						menuStage = MenuStage.READY;
+					} else if (survivalModeButton.contains(p)) {
+						gameMode = GameMode.SURVIVAL;
+						menuStage = MenuStage.ALLY_YES_NO;
+					}
 				break;
 			case ALLY_YES_NO:
 				if (allyYesButton.contains(p)) {
@@ -595,9 +643,20 @@ public class GamePanel extends JPanel implements Runnable{
 			case READY:
 				break; // ENTER key starts the game from here, no click needed
 		}
-	}
+		}
 
-	private void startSurvivalMode() {
+		private void startCampaignMode() {
+			campaignSession = new CampaignSession(CAMPAIGN_SEED);
+			campaignSnapshot = campaignSession.getSnapshot();
+			selectedCampaignSettlementId = campaignSnapshot.settlements.isEmpty()
+				? null : campaignSnapshot.settlements.get(0).id;
+			currentLayer = GameLayer.WORLD_MAP;
+			gamePaused = false;
+			setupMap("map1.txt");
+			teleportPlayerForMap("map1.txt");
+		}
+
+		private void startSurvivalMode() {
 		survivalWaveNumber = 1;
 		survivalEnemyCountForWave = 10;
 		activePowerUps.clear();
@@ -1104,10 +1163,17 @@ System.nanoTime();
 	
 	public void update() {
 
-		if (!gameStarted || gamePaused) {
-			return;
-		}
-		if (gameMode == GameMode.SANDBOX && currentLayer == GameLayer.OVERWORLD) {
+			if (!gameStarted || gamePaused) {
+				return;
+			}
+			if (gameMode == GameMode.CAMPAIGN && campaignSession != null) {
+				campaignSession.update(1.0 / FPS);
+				campaignSnapshot = campaignSession.getSnapshot();
+				if (currentLayer == GameLayer.WORLD_MAP) {
+					return;
+				}
+			}
+			if (gameMode == GameMode.SANDBOX && currentLayer == GameLayer.OVERWORLD) {
 			syncPlayerPartyFromTroops();
 			partyManager.update(this, kingdomSim.allKingdoms, playerParty);
 			checkPartyEncounters();
@@ -1569,6 +1635,15 @@ System.nanoTime();
 			return;
 		}
 
+		if (gameMode == GameMode.CAMPAIGN && currentLayer == GameLayer.WORLD_MAP) {
+			drawCampaignWorld(g2);
+			if (gamePaused) drawPauseMenu(g2);
+			if (gameCrashed) drawCrashMenu(g2);
+			g2.setTransform(oldTransform);
+			g2.dispose();
+			return;
+		}
+
 		// Defensive copies — update() runs on a separate thread and can mutate these
 		// lists mid-paint otherwise, causing ConcurrentModificationException.
 		java.util.List<Enemy> enemiesSnapshot = new java.util.ArrayList<>(enemies);
@@ -1849,7 +1924,161 @@ System.nanoTime();
 		return Math.max(nearest, Math.round((float) value / nearest) * nearest);
 	}
 
-	private void drawStartMenu(Graphics2D g2) {
+		private void handleCampaignMapClick(java.awt.Point point) {
+			for (java.util.Map.Entry<Long, Rectangle> entry : campaignSettlementHitboxes.entrySet()) {
+				if (entry.getValue().contains(point)) {
+					selectedCampaignSettlementId = entry.getKey();
+					repaint();
+					return;
+				}
+			}
+		}
+
+		private void drawCampaignWorld(Graphics2D g2) {
+			CampaignSnapshot snapshot = campaignSnapshot;
+			g2.setColor(new Color(16, 22, 29));
+			g2.fillRect(0, 0, screenWidth, screenHeight);
+
+			g2.setColor(new Color(222, 204, 155));
+			g2.setFont(new Font("Serif", Font.BOLD, 28));
+			g2.drawString("Chronicle Conquest - Campaign", 20, 34);
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 12));
+			g2.setColor(Color.LIGHT_GRAY);
+			g2.drawString("TAB: enter local world   1/2/3: time speed   0: pause world   F6: +1 day   P: menu", 20, 55);
+
+			if (snapshot == null) {
+				g2.setColor(Color.WHITE);
+				g2.drawString("Generating campaign world...", 20, 90);
+				return;
+			}
+
+			final int mapX = 20;
+			final int mapY = 72;
+			final int mapW = 500;
+			final int mapH = 468;
+			g2.setColor(new Color(35, 52, 48));
+			g2.fillRoundRect(mapX, mapY, mapW, mapH, 14, 14);
+			g2.setColor(new Color(90, 110, 92));
+			g2.drawRoundRect(mapX, mapY, mapW, mapH, 14, 14);
+
+			double[] bounds = getCampaignBounds(snapshot);
+			for (CampaignSnapshot.RoadView road : snapshot.roads) {
+				int x1 = campaignMapCoordinate(road.fromX, bounds[0], bounds[1], mapX, mapW);
+				int y1 = campaignMapCoordinate(road.fromY, bounds[2], bounds[3], mapY, mapH);
+				int x2 = campaignMapCoordinate(road.toX, bounds[0], bounds[1], mapX, mapW);
+				int y2 = campaignMapCoordinate(road.toY, bounds[2], bounds[3], mapY, mapH);
+				g2.setColor(road.blocked ? new Color(160, 60, 60) : new Color(137, 116, 80));
+				g2.setStroke(new BasicStroke(road.danger > 0.5 ? 1f : 2f));
+				g2.drawLine(x1, y1, x2, y2);
+			}
+			g2.setStroke(new BasicStroke(1f));
+
+			campaignSettlementHitboxes.clear();
+			for (CampaignSnapshot.SettlementView settlement : snapshot.settlements) {
+				int x = campaignMapCoordinate(settlement.worldX, bounds[0], bounds[1], mapX, mapW);
+				int y = campaignMapCoordinate(settlement.worldY, bounds[2], bounds[3], mapY, mapH);
+				int radius = selectedCampaignSettlementId != null && selectedCampaignSettlementId == settlement.id ? 10 : 7;
+				Rectangle hitbox = new Rectangle(x - 12, y - 12, 24, 24);
+				campaignSettlementHitboxes.put(settlement.id, hitbox);
+				g2.setColor(colorForRealm(settlement.realmId));
+				g2.fillOval(x - radius, y - radius, radius * 2, radius * 2);
+				g2.setColor(Color.WHITE);
+				g2.drawOval(x - radius, y - radius, radius * 2, radius * 2);
+				int labelX = x > mapX + mapW - 120 ? x - 105 : x + 10;
+				g2.setFont(new Font("SansSerif", Font.BOLD, 11));
+				g2.drawString(settlement.name, labelX, y - 8);
+				g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
+				g2.drawString("Pop " + settlement.population, labelX, y + 6);
+			}
+
+			int panelX = 535;
+			int y = 80;
+			g2.setFont(new Font("SansSerif", Font.BOLD, 15));
+			g2.setColor(new Color(222, 204, 155));
+			g2.drawString("WORLD STATUS", panelX, y); y += 22;
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+			g2.setColor(Color.WHITE);
+			g2.drawString(snapshot.getDateLabel(), panelX, y); y += 17;
+			String speedText = snapshot.paused ? "PAUSED" : snapshot.speed + "x";
+			g2.drawString("Time: " + speedText, panelX, y); y += 17;
+			g2.drawString("Population: " + snapshot.livingPopulation, panelX, y); y += 17;
+			g2.drawString("Households: " + snapshot.householdCount, panelX, y); y += 17;
+			g2.drawString(String.format("Food security: %.0f%%", snapshot.averageFoodSecurity * 100.0), panelX, y); y += 17;
+			g2.drawString("Armies/Caravans: " + snapshot.armyCount + "/" + snapshot.caravanCount, panelX, y); y += 17;
+			g2.drawString("Active wars: " + snapshot.warCount, panelX, y); y += 24;
+
+			g2.setColor(new Color(222, 204, 155));
+			g2.setFont(new Font("SansSerif", Font.BOLD, 13));
+			g2.drawString("REALMS", panelX, y); y += 18;
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+			for (CampaignSnapshot.RealmView realm : snapshot.realms) {
+				g2.setColor(colorForRealm(realm.id));
+				g2.drawString(realm.name, panelX, y); y += 13;
+				g2.setColor(Color.LIGHT_GRAY);
+				g2.drawString(" pop " + realm.population + "  treasury " + realm.treasury, panelX, y); y += 14;
+			}
+
+			y += 5;
+			CampaignSnapshot.SettlementView selected = selectedCampaignSettlementId == null
+				? null : snapshot.findSettlement(selectedCampaignSettlementId);
+			if (selected != null) {
+				g2.setColor(new Color(222, 204, 155));
+				g2.setFont(new Font("SansSerif", Font.BOLD, 13));
+				g2.drawString("SELECTED SETTLEMENT", panelX, y); y += 18;
+				g2.setColor(Color.WHITE);
+				g2.drawString(selected.name, panelX, y); y += 15;
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+				g2.drawString("Population: " + selected.population, panelX, y); y += 14;
+				g2.drawString("Households: " + selected.households, panelX, y); y += 14;
+				g2.drawString("Treasury: " + selected.treasury, panelX, y); y += 14;
+				g2.drawString("Grain / veg: " + selected.grain + " / " + selected.vegetables, panelX, y); y += 14;
+				g2.drawString(String.format("Food security: %.0f%%", selected.foodSecurity * 100.0), panelX, y); y += 18;
+			}
+
+			g2.setColor(new Color(222, 204, 155));
+			g2.setFont(new Font("SansSerif", Font.BOLD, 12));
+			g2.drawString("RECENT EVENTS", panelX, y); y += 16;
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 9));
+			g2.setColor(Color.LIGHT_GRAY);
+			if (snapshot.recentEvents.isEmpty()) {
+				g2.drawString("No major events yet", panelX, y);
+			} else {
+				for (CampaignSnapshot.EventView event : snapshot.recentEvents) {
+					g2.drawString("D" + (event.worldMinute / WorldConfig.MINUTES_PER_DAY + 1) + " " + event.type, panelX, y);
+					y += 12;
+					if (y > screenHeight - 10) break;
+				}
+			}
+		}
+
+		private double[] getCampaignBounds(CampaignSnapshot snapshot) {
+			double minX = Double.POSITIVE_INFINITY;
+			double maxX = Double.NEGATIVE_INFINITY;
+			double minY = Double.POSITIVE_INFINITY;
+			double maxY = Double.NEGATIVE_INFINITY;
+			for (CampaignSnapshot.SettlementView settlement : snapshot.settlements) {
+				minX = Math.min(minX, settlement.worldX);
+				maxX = Math.max(maxX, settlement.worldX);
+				minY = Math.min(minY, settlement.worldY);
+				maxY = Math.max(maxY, settlement.worldY);
+			}
+			if (snapshot.settlements.isEmpty()) return new double[]{0, 1, 0, 1};
+			if (maxX <= minX) maxX = minX + 1;
+			if (maxY <= minY) maxY = minY + 1;
+			return new double[]{minX, maxX, minY, maxY};
+		}
+
+		private int campaignMapCoordinate(double value, double min, double max, int start, int size) {
+			double normalized = (value - min) / (max - min);
+			return start + 35 + (int) Math.round(normalized * (size - 70));
+		}
+
+		private Color colorForRealm(Long realmId) {
+			if (realmId == null) return new Color(150, 150, 150);
+			return (realmId & 1L) == 0L ? new Color(70, 145, 230) : new Color(210, 85, 75);
+		}
+
+		private void drawStartMenu(Graphics2D g2) {
 		g2.setColor(Color.black);
 		g2.fillRect(0, 0, screenWidth, screenHeight);
 		g2.setColor(Color.white);
@@ -1864,6 +2093,7 @@ System.nanoTime();
 			case MODE_SELECT:
 				drawMenuPrompt(g2, "Choose a game mode");
 				drawMenuButton(g2, sandboxModeButton, "Sandbox");
+				drawMenuButton(g2, campaignModeButton, "Campaign");
 				drawMenuButton(g2, survivalModeButton, "Survival");
 				break;
 			case ALLY_YES_NO:
@@ -1880,9 +2110,14 @@ System.nanoTime();
 				drawMenuButton(g2, backButton, "< Back");
 				break;
 			case READY:
-		String prompt = "Press ENTER to start";
-		int promptWidth = g2.getFontMetrics().stringWidth(prompt);
-		g2.drawString(prompt, (screenWidth - promptWidth) / 2, screenHeight / 2);
+				String selectedMode = gameMode == GameMode.CAMPAIGN ? "Campaign"
+					: gameMode == GameMode.SURVIVAL ? "Survival" : "Sandbox";
+				String modeLabel = selectedMode + " selected";
+				int modeWidth = g2.getFontMetrics().stringWidth(modeLabel);
+				g2.drawString(modeLabel, (screenWidth - modeWidth) / 2, screenHeight / 2 - 30);
+				String prompt = "Press ENTER to start";
+				int promptWidth = g2.getFontMetrics().stringWidth(prompt);
+				g2.drawString(prompt, (screenWidth - promptWidth) / 2, screenHeight / 2);
 				break;
 		}
 
