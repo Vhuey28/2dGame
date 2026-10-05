@@ -148,6 +148,8 @@ public class Enemy extends Entity {
     BufferedImage[] troopDeathDownLeft = new BufferedImage[7];
     BufferedImage[] troopDeathDownRight = new BufferedImage[7];
 
+    public static final boolean WEB_MODE = "true".equals(System.getProperty("chronicle.webmode"));
+
     public Enemy(GamePanel gp) {
         this.gp = gp;
         setDefaultValues();
@@ -576,7 +578,7 @@ public class Enemy extends Entity {
         if (currentPath == null || pathIndex >= currentPath.size() || pathRecomputeTimer <= 0) {
             currentPath = AStarPathfinder.findPath(gp, (int)x, (int)y, (int)targetX, (int)targetY);
             pathIndex = 0;
-            pathRecomputeTimer = 45; // ~0.75s at 60fps
+            pathRecomputeTimer = WEB_MODE ? (75 + (int)(Math.random() * 30)) : (45 + (int)(Math.random() * 20)); // ~0.75s at 60fps
         }
 
         // Movement direction toward target (for distance/animation)

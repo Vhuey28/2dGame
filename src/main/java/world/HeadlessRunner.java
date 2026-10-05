@@ -1,0 +1,112 @@
+package world;
+
+import world.economy.GoodType;
+
+/**
+ * Standalone headless runner for validating the world simulation.
+ * Creates a small world, advances it, and reports final state.
+ */
+public class HeadlessRunner {
+    public static void main(String[] args) {
+        System.out.println("Chronicle Conquest — Headless World Simulation Runner");
+
+        long seed = WorldConfig.DEFAULT_SEED;
+        int years = 1;
+
+        if (args.length >= 1) {
+            try {
+                seed = Long.parseLong(args[0]);
+            } catch (NumberFormatException e) {
+                System.err.println("Invalid seed: " + args[0]);
+            }
+        }
+        if (args.length >= 2) {
+            try {
+                years = Integer.parseInt(args[1]);
+            } catch (NumberFormatException e) {
+                System.err.println("Invalid years: " + args[1]);
+            }
+        }
+
+        System.out.println("Seed: " + seed + ", Years: " + years);
+
+        // Setup
+        WorldClock clock = new WorldClock(0L);
+        WorldState state = new WorldState();
+        WorldSimulation sim = new WorldSimulation(clock, state);
+        SimulationContext context = sim.getContext();
+
+        // Initialize seeded random streams for this seed
+        context.randomStreams.put("DEMOGRAPHICS", new SeededRandom(seed + 1));
+        context.randomStreams.put("ECONOMY", new SeededRandom(seed + 2));
+        context.randomStreams.put("POLITICS", new SeededRandom(seed + 3));
+        context.randomStreams.put("MILITARY", new SeededRandom(seed + 4));
+        context.randomStreams.put("GENERATION", new SeededRandom(seed + 5));
+
+        // Generate world
+        WorldGenerator generator = new WorldGenerator(context);
+        generator.generateVerticalSlice();
+
+        System.out.println("World after generation:");
+        System.out.println("  People: " + state.people.size());
+        System.out.println("  Households: " + state.households.size());
+        System.out.println("  Settlements: " + state.geography.getSettlementCount());
+        System.out.println("  Provinces: " + state.geography.getProvinceCount());
+        System.out.println("  Realms: " + state.realms.size());
+        System.out.println("  Roads: " + state.geography.getRouteGraph().getAllRoads().size());
+        System.out.println("  Next ID: " + state.idGenerator.getNextId());
+
+        // Simulate the given number of years
+        long totalMinutes = (long) years * WorldConfig.MINUTES_PER_YEAR;
+
+        System.out.println("Simulating " + totalMinutes + " minutes...");
+        for (long m = 0; m < totalMinutes; m += WorldConfig.STEP_MINUTES) {
+            sim.advanceMinutes(WorldConfig.STEP_MINUTES);
+        }
+
+        long endMinute = sim.getClock().getWorldMinute();
+        System.out.println("Simulation complete. End minute: " + endMinute +
+            " (" + WorldCalendar.getYear(endMinute) + "Y " + WorldCalendar.getMonth(endMinute) + "M " + WorldCalendar.getDay(endMinute) + "D)");
+
+        System.out.println("Events in history: " + context.eventHistory.getHistorical().size());
+
+        System.out.println("Final world state:");
+        System.out.println("  People: " + state.people.size());
+        System.out.println("  Households: " + state.households.size());
+        System.out.println("  Settlements: " + state.geography.getSettlementCount());
+        System.out.println("  Realms: " + state.realms.size());
+        System.out.println("  Workplaces: " + state.workplaces.size());
+
+        // Report on food economy
+        System.out.println("Food economy status:");
+        int totalGrain = 0;
+        int totalVeg = 0;
+        double avgFoodSecurity = 0.0;
+        int householdCount = 0;
+        for (Household h : state.households.values()) {
+            if (h.getMemberCount() > 0) {
+                totalGrain += h.inventory.getQuantity(GoodType.GRAIN);
+                totalVeg += h.inventory.getQuantity(GoodType.VEGETABLES);
+                avgFoodSecurity += h.foodSecurity;
+                householdCount++;
+            }
+        }
+        if (householdCount > 0) {
+            avgFoodSecurity /= householdCount;
+        }
+        System.out.println("  Total grain in households: " + totalGrain);
+        System.out.println("  Total vegetables in households: " + totalVeg);
+        System.out.println("  Average food security: " + String.format("%.2f", avgFoodSecurity));
+
+        // Validation: every person has valid household and location
+        int invalidPeople = 0;
+        for (Person p : state.people.values()) {
+            if (p.householdId == null && p.alive) {
+                invalidPeople++;
+            }
+        }
+        System.out.println("  People without household: " + invalidPeople);
+
+        System.out.println("Headless run complete.");
+    }
+}

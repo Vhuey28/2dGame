@@ -17,7 +17,9 @@ import java.io.StringWriter;
 import java.util.Iterator;
 import java.util.Random;
 
+import javax.swing.JFrame;
 import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
 
 import entity.Enemy;
 import entity.Hero;
@@ -47,6 +49,10 @@ public class GamePanel extends JPanel implements Runnable{
 	public final int screenX = screenWidth / 2 - tileSize / 2;
 	public final int screenY = screenHeight / 2 - tileSize / 2;
 
+	// GamePanel field
+	private JFrame parentWindow;
+	public void setParentWindow(JFrame window) { this.parentWindow = window; }
+
 	private float minimapZoom = 1.0f;          // current smoothed zoom
 	private float targetMinimapZoom = 1.0f;    // zoom level being eased toward
 	private float minZoom = 0.5f;              // most zoomed-out
@@ -54,7 +60,11 @@ public class GamePanel extends JPanel implements Runnable{
 	private float zoomLerpSpeed = 6f;          // higher = snappier zoom transitions
 	private int minimapScreenSize = 250;       // on-screen pixel size of the minimap (fixed square)
 	private float baseViewRadiusTiles = 20f;   // how many tiles are visible at zoom = 1.0
- 
+
+	public static final boolean WEB_MODE = "true".equals(System.getProperty("chronicle.webmode"));
+
+	private static final int MAX_AI_PARTIES = WEB_MODE ? 6 : 12;
+	
 	// Camera fields — replace with your actual camera tracking if named differently
 	private float cameraX, cameraY;
 
@@ -79,7 +89,7 @@ public class GamePanel extends JPanel implements Runnable{
 	}
 
 	//FPS
-	int FPS = 60;
+	int FPS = WEB_MODE ? 30 : 60;
 
 
 	tileManager tileM = new tileManager(this);
@@ -149,7 +159,7 @@ public class GamePanel extends JPanel implements Runnable{
 	// Survival session state
 	public int survivalWaveNumber = 0;
 	public int survivalEnemyCountForWave = 10; // first wave; +15 each wave after
-	private static final int MAX_ENEMIES_PER_WAVE = 40; // cap to prevent unbounded spawn bursts
+	private static final int MAX_ENEMIES_PER_WAVE =WEB_MODE ? 20 : 9999; // cap to prevent unbounded spawn bursts
 	public boolean survivalWaveTransition = false; // true while power-up menu/portal-wait is showing
 	public boolean survivalPowerUpMenuOpen = false;
 	public java.util.List<String> availablePowerUps = new java.util.ArrayList<>(
@@ -185,12 +195,7 @@ public class GamePanel extends JPanel implements Runnable{
 	    new Rectangle(screenWidth/2 - 100, screenHeight/2, 200, 60),
 	    new Rectangle(screenWidth/2 + 130, screenHeight/2, 200, 60)
 	};
-	// Leave survival menu butttons
-	private Rectangle[] leaveButtons={
-		new Rectangle(screenWidth/2 - 330, screenHeight/2, 200, 60),
-	    new Rectangle(screenWidth/2 - 100, screenHeight/2, 200, 60),
-	    
-	};
+	
 	public int getCurrentMapWidthTiles() { return tileM.currentMapWidth; }
 	public int getCurrentMapHeightTiles() { return tileM.currentMapHeight; }
 
@@ -223,6 +228,9 @@ public class GamePanel extends JPanel implements Runnable{
 					int row = (int) player.y / tileSize;
 					System.out.println("Ground tile: " + tileM.getMapTileNum()[col][row]
 						+ " | Decoration tile: " + tileM.getDecorationTileNum(col, row));
+				}
+				if (code == KeyEvent.VK_F11) {
+					Main.toggleFullscreen(parentWindow, GamePanel.this);
 				}
 				if (code == KeyEvent.VK_F3) {
 					debugOverlayVisible = !debugOverlayVisible;
@@ -311,14 +319,14 @@ public class GamePanel extends JPanel implements Runnable{
 					handleStartMenuClick(e.getPoint());
 					return;
 				}
-				if (gamePaused && settingsMenuOpen) {
+				if (gamePaused && settingsMenuOpen && !survivalPowerUpMenuOpen) {
 					BindingManager.Action[] actions = BindingManager.Action.values();
 					for (int i = 0; i < actions.length; i++) {
-						if (settingsRowRects[i][0].contains(e.getPoint())) {
+						try{if (settingsRowRects[i][0].contains(e.getPoint())) {
 							awaitingRebindAction = actions[i];
 							awaitingRebindIsController = false;
 							return;
-						}
+						} }catch (ArrayIndexOutOfBoundsException ex) { /* ignore */ }
 						if (settingsRowRects[i][1].contains(e.getPoint())) {
 							awaitingRebindAction = actions[i];
 							awaitingRebindIsController = true;
@@ -336,6 +344,10 @@ public class GamePanel extends JPanel implements Runnable{
 						restartGame();
 						return;
 					}
+					if(getQuitButtonRect().contains(e.getPoint())){
+						quitSurvival();
+						return;
+					}
 					// Handle power-up menu clicks in survival mode
 					if (gameMode == GameMode.SURVIVAL && survivalPowerUpMenuOpen && powerUpButtons != null) {
 						for (int i = 0; i < powerUpButtons.length; i++) {
@@ -349,10 +361,7 @@ public class GamePanel extends JPanel implements Runnable{
 						}
 						
 					}
-					if(getQuitButtonRect().contains(e.getPoint())){
-						quitSurvival();
-						return;
-					}
+					
 					
 				}
 				if (gameMode != GameMode.SURVIVAL && inventoryButton.contains(e.getPoint())) {
@@ -377,17 +386,7 @@ public class GamePanel extends JPanel implements Runnable{
 		this.setFocusable(true);
 		setupMap("map1.txt");
 	}
-	public void handleLeaveButtonClick(MouseEvent e) {
-		// Find the leave button based on its position
-		for (Rectangle btn : leaveButtons) {
-			if (btn.contains(e.getPoint())) {
-				// Set the game state to PLAYING
-				setGameState(GameState.PLAYING);
-				// Exit the loop since we found the button
-				break;
-			}
-		}
-	}
+	
 
 	public Rectangle getQuitButtonRect(){
 		return new Rectangle(100, screenHeight - 100, 200, 50);
@@ -686,7 +685,7 @@ public class GamePanel extends JPanel implements Runnable{
 		java.util.Collections.shuffle(pool, random);
 		for (int i = 0; i < 3 && i < pool.size(); i++) {
 			currentPowerUpChoices[i] = pool.get(i);
-		}
+		} 
 	}
 
 	
@@ -994,7 +993,7 @@ public class GamePanel extends JPanel implements Runnable{
 
 	@Override
 	//sleep mathod: a game loop
-	public void run() {
+	/*public void run() {
 		
 		double drawInterval = 1000000000/FPS; //0.01666 seconds
 		double nextDrawTime = System.nanoTime() + drawInterval;
@@ -1034,8 +1033,49 @@ public class GamePanel extends JPanel implements Runnable{
 			}
 		}
 		
-	} 
-	
+	} */
+	public void run() {
+    double drawInterval = 1000000000 / FPS; // 0.01666 seconds
+    double nextDrawTime = System.nanoTime() + drawInterval;
+
+    while (gameThread != null) {
+        // update information like player position
+        try {
+            if (!gameCrashed) {
+                update();
+            }
+        } catch (Exception e) {
+            handleCrash(e);
+        }
+
+        // Render the screen with updated info
+        SwingUtilities.invokeLater(() -> {
+            try {
+                repaint();
+            } catch (Exception e) {
+                handleCrash(e);
+            }
+        });
+
+        try {
+            double remainingTime = nextDrawTime - 
+System.nanoTime();
+            remainingTime = remainingTime / 1000000;
+
+            if (remainingTime < 0) {
+                remainingTime = 0;
+            }
+
+            // Control frame rate
+            long sleepTime = (long) remainingTime;
+            Thread.sleep(sleepTime);
+
+            nextDrawTime += drawInterval;
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+}
 	// delta method: a alternate version of the run game loop
 	/*public void run() {
 		
@@ -1121,6 +1161,10 @@ public class GamePanel extends JPanel implements Runnable{
 			prevCtrlX = controllerH.xPressed;
 			prevCtrlM = controllerH.mPressed;
 			prevCtrlShift = controllerH.shiftPressed;
+		}
+		 // Check if the game is paused, but only if the power-up menu is not open
+		if (gamePaused && !survivalPowerUpMenuOpen && !settingsMenuOpen) {
+			update();
 		}
 		player.update();
 		if (redBox != null) {
@@ -1910,54 +1954,99 @@ public class GamePanel extends JPanel implements Runnable{
 		g2.drawString(controls, x + (width - cw) / 2, y + 200);
 	}
 
+	// private void drawSettingsMenu(Graphics2D g2) {
+	// 	g2.setColor(new Color(0, 0, 0, 220));
+	// 	g2.fillRect(0, 0, screenWidth, screenHeight);
+	// 	g2.setColor(Color.white);
+	// 	g2.setFont(new Font("Arial", Font.BOLD, 28));
+	// 	g2.drawString("Key & Controller Bindings", screenWidth/2 - 160, 60);
+
+	// 	g2.setFont(new Font("Arial", Font.PLAIN, 16));
+	// 	int y = 110;
+	// 	int rowHeight = 32;
+	// 	BindingManager.Action[] actions = BindingManager.Action.values();
+	// 	settingsRowRects = new Rectangle[actions.length][2]; // [action index][0 = keyboard col, 1 = controller col]
+
+	// 	for (int i = 0; i < actions.length; i++) {
+	// 		BindingManager.Action action = actions[i];
+	// 		g2.setColor(Color.white);
+	// 		g2.drawString(action.name(), 60, y + 20);
+
+	// 		// Keyboard binding button
+	// 		Rectangle kbRect = new Rectangle(320, y, 140, 26);
+	// 		settingsRowRects[i][0] = kbRect;
+	// 		boolean awaitingThisKb = awaitingRebindAction == action && !awaitingRebindIsController;
+	// 		g2.setColor(awaitingThisKb ? new Color(200, 150, 0) : new Color(50, 50, 50));
+	// 		g2.fillRect(kbRect.x, kbRect.y, kbRect.width, kbRect.height);
+	// 		g2.setColor(Color.white);
+	// 		String kbLabel = awaitingThisKb ? "Press a key..." : KeyEvent.getKeyText(bindings.getKeyBinding(action));
+	// 		g2.drawString(kbLabel, kbRect.x + 8, kbRect.y + 18);
+
+	// 		// Controller binding button
+	// 		Rectangle ctrlRect = new Rectangle(480, y, 160, 26);
+	// 		settingsRowRects[i][1] = ctrlRect;
+	// 		boolean awaitingThisCtrl = awaitingRebindAction == action && awaitingRebindIsController;
+	// 		g2.setColor(awaitingThisCtrl ? new Color(200, 150, 0) : new Color(50, 50, 50));
+	// 		g2.fillRect(ctrlRect.x, ctrlRect.y, ctrlRect.width, ctrlRect.height);
+	// 		g2.setColor(Color.white);
+	// 		int ctrlBinding = bindings.getControllerBinding(action);
+	// 		String ctrlLabel = awaitingThisCtrl ? "Press a button..."
+	// 			: (ctrlBinding >= 0 && controllerH != null ? controllerH.getButtonLabel(ctrlBinding) : "—");
+	// 		g2.drawString(ctrlLabel, ctrlRect.x + 8, ctrlRect.y + 18);
+
+	// 		y += rowHeight;
+	// 	}
+
+	// 	g2.setColor(Color.yellow);
+	// 	g2.drawString("Click a binding, then press the new key/button. ESC to go back.", 60, y + 30);
+	// }
+
 	private void drawSettingsMenu(Graphics2D g2) {
-		g2.setColor(new Color(0, 0, 0, 220));
-		g2.fillRect(0, 0, screenWidth, screenHeight);
-		g2.setColor(Color.white);
-		g2.setFont(new Font("Arial", Font.BOLD, 28));
-		g2.drawString("Key & Controller Bindings", screenWidth/2 - 160, 60);
+    g2.setColor(new Color(0, 0, 0, 220));
+    g2.fillRect(0, 0, screenWidth, screenHeight);
+    g2.setColor(Color.white);
+    g2.setFont(new Font("Arial", Font.BOLD, 28));
+    g2.drawString("Key & Controller Bindings", screenWidth/2 - 160, 60);
 
-		g2.setFont(new Font("Arial", Font.PLAIN, 16));
-		int y = 110;
-		int rowHeight = 32;
-		BindingManager.Action[] actions = BindingManager.Action.values();
-		settingsRowRects = new Rectangle[actions.length][2]; // [action index][0 = keyboard col, 1 = controller col]
+    g2.setFont(new Font("Arial", Font.PLAIN, 16));
+    int y = 110;
+    int rowHeight = 32;
+    BindingManager.Action[] actions = BindingManager.Action.values();
+    settingsRowRects = new Rectangle[actions.length][2]; // Initialize the array here
 
-		for (int i = 0; i < actions.length; i++) {
-			BindingManager.Action action = actions[i];
-			g2.setColor(Color.white);
-			g2.drawString(action.name(), 60, y + 20);
+    for (int i = 0; i < actions.length; i++) {
+        BindingManager.Action action = actions[i];
+        g2.setColor(Color.white);
+        g2.drawString(action.name(), 60, y + 20);
 
-			// Keyboard binding button
-			Rectangle kbRect = new Rectangle(320, y, 140, 26);
-			settingsRowRects[i][0] = kbRect;
-			boolean awaitingThisKb = awaitingRebindAction == action && !awaitingRebindIsController;
-			g2.setColor(awaitingThisKb ? new Color(200, 150, 0) : new Color(50, 50, 50));
-			g2.fillRect(kbRect.x, kbRect.y, kbRect.width, kbRect.height);
-			g2.setColor(Color.white);
-			String kbLabel = awaitingThisKb ? "Press a key..." : KeyEvent.getKeyText(bindings.getKeyBinding(action));
-			g2.drawString(kbLabel, kbRect.x + 8, kbRect.y + 18);
+        // Keyboard binding button
+        Rectangle kbRect = new Rectangle(320, y, 140, 26);
+        settingsRowRects[i][0] = kbRect;
+        boolean awaitingThisKb = awaitingRebindAction == action && !awaitingRebindIsController;
+        g2.setColor(awaitingThisKb ? new Color(200, 150, 0) : new Color(50, 50, 50));
+        g2.fillRect(kbRect.x, kbRect.y, kbRect.width, kbRect.height);
+        g2.setColor(Color.white);
+        String kbLabel = awaitingThisKb ? "Press a key..." : KeyEvent.getKeyText(bindings.getKeyBinding(action));
+        g2.drawString(kbLabel, kbRect.x + 8, kbRect.y + 18);
 
-			// Controller binding button
-			Rectangle ctrlRect = new Rectangle(480, y, 160, 26);
-			settingsRowRects[i][1] = ctrlRect;
-			boolean awaitingThisCtrl = awaitingRebindAction == action && awaitingRebindIsController;
-			g2.setColor(awaitingThisCtrl ? new Color(200, 150, 0) : new Color(50, 50, 50));
-			g2.fillRect(ctrlRect.x, ctrlRect.y, ctrlRect.width, ctrlRect.height);
-			g2.setColor(Color.white);
-			int ctrlBinding = bindings.getControllerBinding(action);
-			String ctrlLabel = awaitingThisCtrl ? "Press a button..."
-				: (ctrlBinding >= 0 && controllerH != null ? controllerH.getButtonLabel(ctrlBinding) : "—");
-			g2.drawString(ctrlLabel, ctrlRect.x + 8, ctrlRect.y + 18);
+        // Controller binding button
+        Rectangle ctrlRect = new Rectangle(480, y, 160, 26);
+        settingsRowRects[i][1] = ctrlRect;
+        boolean awaitingThisCtrl = awaitingRebindAction == action && awaitingRebindIsController;
+        g2.setColor(awaitingThisCtrl ? new Color(200, 150, 0) : new Color(50, 50, 50));
+        g2.fillRect(ctrlRect.x, ctrlRect.y, ctrlRect.width, ctrlRect.height);
+        g2.setColor(Color.white);
+        int ctrlBinding = bindings.getControllerBinding(action);
+        String ctrlLabel = awaitingThisCtrl ? "Press a button..."
+                : (ctrlBinding >= 0 && controllerH != null ? controllerH.getButtonLabel(ctrlBinding) : "—");
+        g2.drawString(ctrlLabel, ctrlRect.x + 8, ctrlRect.y + 18);
 
-			y += rowHeight;
-		}
+        y += rowHeight;
+    }
 
 		g2.setColor(Color.yellow);
 		g2.drawString("Click a binding, then press the new key/button. ESC to go back.", 60, y + 30);
 	}
-
-	
 
 	private void drawPowerUpMenu(Graphics2D g2) {
 

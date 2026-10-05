@@ -1,0 +1,782 @@
+{
+  "version": 2,
+  "bodyType": "male",
+  "selections": {
+    "body": {
+      "itemId": "body",
+      "subId": null,
+      "variant": "",
+      "recolor": "black",
+      "name": "Body Color (black)"
+    },
+    "head": {
+      "itemId": "heads_human_male",
+      "subId": null,
+      "variant": "",
+      "recolor": "black",
+      "name": "Human Male (black)"
+    },
+    "expression": {
+      "itemId": "face_neutral",
+      "subId": null,
+      "variant": "",
+      "recolor": "black",
+      "name": "Neutral (black)"
+    },
+    "beard": {
+      "itemId": "beards_beard",
+      "subId": null,
+      "variant": "",
+      "recolor": "white",
+      "name": "Basic Beard (white)"
+    },
+    "hair": {
+      "itemId": "hair_buzzcut",
+      "subId": null,
+      "variant": "",
+      "recolor": "black",
+      "name": "Buzzcut (black)"
+    },
+    "legs": {
+      "itemId": "legs_pants2",
+      "subId": null,
+      "variant": "",
+      "recolor": "black",
+      "name": "Long Pants (black)"
+    },
+    "shoes": {
+      "itemId": "feet_shoes_basic",
+      "subId": null,
+      "variant": "",
+      "recolor": "black",
+      "name": "Basic Shoes (black)"
+    },
+    "weapon": {
+      "itemId": "weapon_polearm_dragonspear",
+      "subId": null,
+      "variant": "steel",
+      "recolor": "",
+      "name": "Dragon spear (steel)"
+    },
+    "ammo": {
+      "itemId": "weapon_ranged_bow_arrow",
+      "subId": null,
+      "variant": "arrow",
+      "recolor": "",
+      "name": "Ammo (arrow)"
+    },
+    "hat": {
+      "itemId": "hat_helmet_sugarloaf_simple",
+      "subId": null,
+      "variant": "",
+      "recolor": "silver",
+      "name": "Simple sugarloaf helm (silver)"
+    },
+    "armour": {
+      "itemId": "torso_armour_plate",
+      "subId": null,
+      "variant": "",
+      "recolor": "iron",
+      "name": "Plate (iron)"
+    },
+    "cape": {
+      "itemId": "cape_tattered",
+      "subId": null,
+      "variant": "",
+      "recolor": "red",
+      "name": "Tattered (red)"
+    },
+    "jacket": {
+      "itemId": "torso_jacket_frock",
+      "subId": null,
+      "variant": "black",
+      "recolor": "",
+      "name": "Frock coat (black)"
+    }
+  },
+  "selectedAnimation": "thrust_oversize",
+  "showTransparencyGrid": true,
+  "applyTransparencyMask": false,
+  "matchBodyColorEnabled": true,
+  "compactDisplay": false,
+  "enabledLicenses": {
+    "CC0": true,
+    "CC-BY-SA": true,
+    "CC-BY": true,
+    "OGA-BY": true,
+    "GPL": true
+  },
+  "enabledAnimations": {
+    "spellcast": false,
+    "thrust": false,
+    "walk": false,
+    "slash": false,
+    "shoot": false,
+    "hurt": false,
+    "climb": false,
+    "idle": false,
+    "jump": false,
+    "sit": false,
+    "emote": false,
+    "run": false,
+    "watering": false,
+    "combat": false,
+    "1h_slash": false,
+    "1h_backslash": false,
+    "1h_halfslash": false
+  },
+  "url": "https://liberatedpixelcup.github.io/Universal-LPC-Spritesheet-Character-Generator/#sex=male&body=Body_Color_black&head=Human_Male_black&expression=Neutral_black&beard=Basic_Beard_white&hair=Buzzcut_black&legs=Long_Pants_black&shoes=Basic_Shoes_black&weapon=Dragon_spear_steel&ammo=Ammo_arrow&hat=Simple_sugarloaf_helm_silver&armour=Plate_iron&cape=Tattered_red&jacket=Frock_coat_black",
+  "layers": [
+    {
+      "itemId": "cape_tattered",
+      "name": "Tattered (red)",
+      "variant": "",
+      "recolors": {
+        "cape": "red"
+      },
+      "zPos": 5,
+      "layerNum": 2,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "cape/tattered/bg/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle"
+      ]
+    },
+    {
+      "itemId": "body",
+      "name": "Body Color (black)",
+      "variant": "",
+      "recolors": {
+        "body": "black"
+      },
+      "zPos": 10,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "body/bodies/male/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "feet_shoes_basic",
+      "name": "Basic Shoes (black)",
+      "variant": "",
+      "recolors": {
+        "shoes": "black"
+      },
+      "zPos": 15,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "feet/shoes/basic/male/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "legs_pants2",
+      "name": "Long Pants (black)",
+      "variant": "",
+      "recolors": {
+        "legs": "black"
+      },
+      "zPos": 20,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "legs/pants2/male/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "torso_jacket_frock",
+      "name": "Frock coat (black)",
+      "variant": "black",
+      "recolors": null,
+      "zPos": 55,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "torso/jacket/frock/male/spellcast/black.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt"
+      ]
+    },
+    {
+      "itemId": "torso_armour_plate",
+      "name": "Plate (iron)",
+      "variant": "",
+      "recolors": {
+        "armour": "iron"
+      },
+      "zPos": 60,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "torso/armour/plate/male/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "cape_tattered",
+      "name": "Tattered (red)",
+      "variant": "",
+      "recolors": {
+        "cape": "red"
+      },
+      "zPos": 85,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "cape/tattered/fg/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle"
+      ]
+    },
+    {
+      "itemId": "heads_human_male",
+      "name": "Human Male (black)",
+      "variant": "",
+      "recolors": {
+        "head": "black"
+      },
+      "zPos": 100,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "head/heads/human/male/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "face_neutral",
+      "name": "Neutral (black)",
+      "variant": "",
+      "recolors": {
+        "expression": "black"
+      },
+      "zPos": 101,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "head/faces/male/neutral/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "beards_beard",
+      "name": "Basic Beard (white)",
+      "variant": "",
+      "recolors": {
+        "beard": "white"
+      },
+      "zPos": 110,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "beards/beard/basic/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "hair_buzzcut",
+      "name": "Buzzcut (black)",
+      "variant": "",
+      "recolors": {
+        "hair": "black"
+      },
+      "zPos": 120,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "hair/buzzcut/adult/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "hat_helmet_sugarloaf_simple",
+      "name": "Simple sugarloaf helm (silver)",
+      "variant": "",
+      "recolors": {
+        "hat": "silver"
+      },
+      "zPos": 130,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "hat/helmet/sugarloaf_simple/male/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "weapon_ranged_bow_arrow",
+      "name": "Ammo (arrow)",
+      "variant": "arrow",
+      "recolors": null,
+      "zPos": 150,
+      "layerNum": 1,
+      "yPos": 1024,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "weapon/ranged/bow/arrow/shoot/arrow.png"
+      },
+      "supportedAnimations": [
+        "shoot"
+      ]
+    }
+  ],
+  "credits": [
+    {
+      "fileName": "body/bodies/male/thrust_oversize.png",
+      "file": "body/bodies/male",
+      "notes": "see details at https://opengameart.org/content/lpc-character-bases; 'Thick' Male Revised Run/Climb by JaidynReiman (based on ElizaWy's LPC Revised)",
+      "authors": [
+        "bluecarrot16",
+        "JaidynReiman",
+        "Benjamin K. Smith (BenCreating)",
+        "Evert",
+        "Eliza Wyatt (ElizaWy)",
+        "TheraHedwig",
+        "MuffinElZangano",
+        "Durrani",
+        "Johannes Sjölund (wulax)",
+        "Stephen Challener (Redshrike)"
+      ],
+      "licenses": [
+        "OGA-BY 3.0",
+        "CC-BY-SA 3.0",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/liberated-pixel-cup-lpc-base-assets-sprites-map-tiles",
+        "https://opengameart.org/content/lpc-medieval-fantasy-character-sprites",
+        "https://opengameart.org/content/lpc-male-jumping-animation-by-durrani",
+        "https://opengameart.org/content/lpc-runcycle-and-diagonal-walkcycle",
+        "https://opengameart.org/content/lpc-revised-character-basics",
+        "https://opengameart.org/content/lpc-be-seated",
+        "https://opengameart.org/content/lpc-runcycle-for-male-muscular-and-pregnant-character-bases-with-modular-heads",
+        "https://opengameart.org/content/lpc-jump-expanded",
+        "https://opengameart.org/content/lpc-character-bases"
+      ]
+    },
+    {
+      "fileName": "head/heads/human/male/thrust_oversize.png",
+      "file": "head/heads/human/male",
+      "notes": "original head by Redshrike, tweaks by BenCreating, modular version by bluecarrot16",
+      "authors": [
+        "bluecarrot16",
+        "Benjamin K. Smith (BenCreating)",
+        "Stephen Challener (Redshrike)"
+      ],
+      "licenses": [
+        "OGA-BY 3.0",
+        "CC-BY-SA 3.0",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/liberated-pixel-cup-lpc-base-assets-sprites-map-tiles",
+        "https://opengameart.org/content/lpc-character-bases"
+      ]
+    },
+    {
+      "fileName": "head/faces/male/neutral/thrust_oversize.png",
+      "file": "head/faces",
+      "notes": "Original by Redshrike, Expressions by ElizaWy, mapped to all frames by JaidynReiman",
+      "authors": [
+        "JaidynReiman",
+        "ElizaWy",
+        "Stephen Challener (Redshrike)"
+      ],
+      "licenses": [
+        "OGA-BY 3.0"
+      ],
+      "urls": [
+        "https://github.com/ElizaWy/LPC/tree/main/Characters/Head",
+        "https://opengameart.org/content/ulpc-expanded-expressions"
+      ]
+    },
+    {
+      "fileName": "beards/beard/basic/thrust_oversize.png",
+      "file": "beards/beard/basic",
+      "notes": "Original by Nemisys, repositioning by JaidynReiman.",
+      "authors": [
+        "JaidynReiman",
+        "Carlo Enrico Victoria (Nemisys)"
+      ],
+      "licenses": [
+        "CC-BY-SA 3.0",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-white-beard"
+      ]
+    },
+    {
+      "fileName": "hair/buzzcut/adult/thrust_oversize.png",
+      "file": "hair/buzzcut",
+      "notes": "",
+      "authors": [
+        "ElizaWy"
+      ],
+      "licenses": [
+        "OGA-BY 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-hair"
+      ]
+    },
+    {
+      "fileName": "legs/pants2/male/thrust_oversize.png",
+      "file": "legs/pants2/male",
+      "notes": "original overalls by ElizaWy, base animations adapted from v3 overalls by bluecarrot16, pants by JaidynReiman",
+      "authors": [
+        "JaidynReiman",
+        "ElizaWy",
+        "Bluecarrot16",
+        "Johannes Sjölund (wulax)",
+        "Stephen Challener (Redshrike)"
+      ],
+      "licenses": [
+        "OGA-BY 3.0",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://github.com/ElizaWy/LPC/tree/main/Characters/Clothing",
+        "https://opengameart.org/content/lpc-expanded-sit-run-jump-more",
+        "https://opengameart.org/content/lpc-expanded-pants"
+      ]
+    },
+    {
+      "fileName": "feet/shoes/basic/male/thrust_oversize.png",
+      "file": "feet/shoes",
+      "notes": "original by wulax, edited for v3 base by bluecarrot16, Jump/Sit/Emote/Run/Revised Combat by JaidynReiman",
+      "authors": [
+        "JaidynReiman",
+        "bluecarrot16",
+        "Johannes Sjölund (wulax)"
+      ],
+      "licenses": [
+        "OGA-BY 3.0",
+        "CC-BY-SA 3.0",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-medieval-fantasy-character-sprites",
+        "http://opengameart.org/content/lpc-clothing-updates",
+        "https://opengameart.org/content/lpc-expanded-socks-shoes"
+      ]
+    },
+    {
+      "fileName": "weapon/polearm/dragonspear/foreground/walk/thrust_oversize/steel.png",
+      "file": "weapon/polearm/dragonspear",
+      "notes": "original \"dragon spear\" by daneeklu and gr3yh47; adapted to opposite hand and split into layers by bluecarrot16",
+      "authors": [
+        "Daniel Eddeland (daneeklu)",
+        "gr3yh47",
+        "Johannes Sjölund (wulax)"
+      ],
+      "licenses": [
+        "CC-BY-SA 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-weapons-two-bows-a-spear-and-a-trident",
+        "https://opengameart.org/content/lpc-extended-weapon-animations"
+      ]
+    },
+    {
+      "fileName": "weapon/ranged/bow/arrow/thrust_oversize/arrow.png",
+      "file": "weapon/ranged/bow/arrow",
+      "notes": "",
+      "authors": [
+        "Johannes Sjölund (wulax)"
+      ],
+      "licenses": [
+        "OGA-BY 3.0",
+        "CC-BY-SA 3.0",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-medieval-fantasy-character-sprites"
+      ]
+    },
+    {
+      "fileName": "hat/helmet/sugarloaf_simple/male/thrust_oversize.png",
+      "file": "hat/helmet/sugarloaf_simple",
+      "notes": "",
+      "authors": [
+        "bluecarrot16"
+      ],
+      "licenses": [
+        "CC-BY 3.0",
+        "CC-BY 4.0",
+        "OGA-BY 3.0",
+        "GPL 2.0",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-helmets",
+        "https://opengameart.org/content/lpc-expanded-hats-facial-helmets"
+      ]
+    },
+    {
+      "fileName": "torso/armour/plate/male/thrust_oversize.png",
+      "file": "torso/armour/plate/male",
+      "notes": "original by wulax, recolor by bigbeargames, color reduced to 7 colors and adapted to v3 bases by bluecarrot16, run/jump/sit/climb/revised combat by JaidynReiman, reduced colors to 6 (based on Napsio's Vitruvian)",
+      "authors": [
+        "Napsio (Vitruvian Studio)",
+        "JaidynReiman",
+        "bluecarrot16",
+        "Michael Whitlock (bigbeargames)",
+        "Johannes Sjölund (wulax)"
+      ],
+      "licenses": [
+        "OGA-BY 3.0",
+        "CC-BY-SA 3.0",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-medieval-fantasy-character-sprites",
+        "https://opengameart.org/content/lpc-combat-armor-for-women"
+      ]
+    },
+    {
+      "fileName": "cape/tattered/fg/thrust_oversize.png",
+      "file": "cape/tattered/fg",
+      "notes": "",
+      "authors": [
+        "Nila122",
+        "JaidynReiman"
+      ],
+      "licenses": [
+        "OGA-BY 3.0",
+        "CC-BY-SA 3.0",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-curly-hair-elven-ears-white-cape-with-blue-trim-and-more",
+        "https://opengameart.org/content/lpc-roman-armor"
+      ]
+    },
+    {
+      "fileName": "cape/tattered/bg/thrust_oversize.png",
+      "file": "cape/tattered/bg",
+      "notes": "",
+      "authors": [
+        "Nila122",
+        "JaidynReiman"
+      ],
+      "licenses": [
+        "OGA-BY 3.0",
+        "CC-BY-SA 3.0",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-curly-hair-elven-ears-white-cape-with-blue-trim-and-more",
+        "https://opengameart.org/content/lpc-roman-armor"
+      ]
+    },
+    {
+      "fileName": "torso/jacket/frock/male/thrust_oversize/black.png",
+      "file": "torso/jacket/frock",
+      "notes": "",
+      "authors": [
+        "bluecarrot16"
+      ],
+      "licenses": [
+        "CC-BY-SA 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-pirates"
+      ]
+    }
+  ]
+}

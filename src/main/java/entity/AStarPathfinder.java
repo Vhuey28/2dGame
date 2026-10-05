@@ -20,8 +20,10 @@ import my2Dgame.GamePanel;
  * ticks), not every frame.
  */
 public class AStarPathfinder {
-
-    private static final int MAX_SEARCH_RADIUS_TILES = 80; // tiles in each direction from the start (was 40)
+    public static final boolean WEB_MODE = "true".equals(System.getProperty("chronicle.webmode"));
+    
+    private static final int MAX_SEARCH_RADIUS_TILES = WEB_MODE ? 30 : 80;; // tiles in each direction from the start (was 40)
+    private static final int maxIterations = WEB_MODE ? 2000 : 8000; // adjust the local variable to reference this instead, or make it a class constant
 
     private static class Node {
         int col, row;
@@ -62,7 +64,6 @@ public class AStarPathfinder {
         };
 
         int iterations = 0;
-        int maxIterations = 8000; // hard safety cap regardless of radius (was 4000)
 
         while (!openSet.isEmpty() && iterations++ < maxIterations) {
             Node current = openSet.poll();

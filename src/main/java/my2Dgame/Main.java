@@ -31,7 +31,7 @@ public class Main {
         window.addKeyListener(new java.awt.event.KeyAdapter() {
             @Override
             public void keyPressed(java.awt.event.KeyEvent e) {
-                if (!WEB_BUILD && e.getKeyCode() == java.awt.event.KeyEvent.VK_F11) {
+                if (e.getKeyCode() == java.awt.event.KeyEvent.VK_F11) {
                     toggleFullscreen(window, gamePanel);
                 }
             }
@@ -39,9 +39,6 @@ public class Main {
     }
 
     public static void toggleFullscreen(JFrame frame, GamePanel gamePanel) {
-        if (WEB_BUILD) {
-            return;
-        }
         GraphicsDevice device = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
         if (!isFullscreen) {
             frame.dispose();

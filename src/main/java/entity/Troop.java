@@ -113,6 +113,8 @@ public class Troop extends Entity {
     BufferedImage[] meleeDeathDownLeft = new BufferedImage[7];
     BufferedImage[] meleeDeathDownRight = new BufferedImage[7];
 
+    public static final boolean WEB_MODE = "true".equals(System.getProperty("chronicle.webmode"));
+
     public Troop(GamePanel gp, float x, float y, Role role) {
         this.gp = gp;
         this.x = x;
@@ -123,6 +125,12 @@ public class Troop extends Entity {
         this.speed = 3f;
         direction = "down";
         pathRecomputeTimer = (int) (Math.random() * 45); // jittered starting value — staggers first recompute
+
+        if(role == Role.MELEE){
+            health = 120;
+        }else if(role == Role.ARCHER){
+            health = 30;
+        }
         loadTroopImages();
     }
 
@@ -234,7 +242,7 @@ public class Troop extends Entity {
                     currentPath = AStarPathfinder.findPath(gp, (int)x, (int)y,
             (int)targetX, (int)targetY);
                     pathIndex = 0;
-                    pathRecomputeTimer = 45 + (int) (Math.random() * 20); // 45-65 range instead of a fixed 45 — keeps recomputes spread out over time
+                   pathRecomputeTimer = WEB_MODE ? (75 + (int)(Math.random() * 30)) : (45 + (int)(Math.random() * 20)); // 45-65 range instead of a fixed 45 — keeps recomputes spread out over time
                 }
 
                 if (currentPath != null && pathIndex < currentPath.size()) {
@@ -246,7 +254,6 @@ public class Troop extends Entity {
                     dx = targetX - x;
                     dy = targetY - y;
                 }
-  
         } else if (mode == Mode.ROAM) {
             roamWaitTimer--;
             boolean needNewTarget = roamTargetX < 0 || roamWaitTimer <= 0;
@@ -345,7 +352,7 @@ public class Troop extends Entity {
                         ty = ty / projDist;
                     }
                     projectiles.add(new Projectile(x + gp.tileSize/2f, y + gp.tileSize/2f, tx, ty, 5, 6, Color.cyan));
-                    shootCooldown = 40;
+                    shootCooldown = 90;
                     // Trigger shoot animation
                     isArcherAttacking = true;
                     archerAttackAnimationCounter = 0;
@@ -400,7 +407,11 @@ public class Troop extends Entity {
                 meleeAttackAnimationCounter = 0;
                 meleeAttackAnimationFrame = 1;
                 // Deal damage to enemy
-                target.health -= 10;
+                if(role == Role.MELEE){
+                    target.health -= 9;
+                }else if(role == Role.ARCHER){
+                    target.health -= 2;
+                }
                 if (target.health < 0) target.health = 0;
                 target.showHealthCounter = 60;
                 target.threatTable.addThreat(this, 10);   // <-- add this, makes the enemy retarget this troop

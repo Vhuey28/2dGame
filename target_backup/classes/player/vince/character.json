@@ -1,0 +1,606 @@
+{
+  "version": 2,
+  "bodyType": "muscular",
+  "selections": {
+    "head": {
+      "itemId": "heads_human_male",
+      "subId": null,
+      "variant": "",
+      "recolor": "brown",
+      "name": "Human Male (brown)"
+    },
+    "expression": {
+      "itemId": "face_neutral",
+      "subId": null,
+      "variant": "",
+      "recolor": "brown",
+      "name": "Neutral (brown)"
+    },
+    "wings": {
+      "itemId": "wings_bat",
+      "subId": null,
+      "variant": "red",
+      "recolor": "",
+      "name": "Bat Wings (red)"
+    },
+    "beard": {
+      "itemId": "beards_winter",
+      "subId": null,
+      "variant": "",
+      "recolor": "black",
+      "name": "Winter Beard (black)"
+    },
+    "hair": {
+      "itemId": "hair_natural",
+      "subId": null,
+      "variant": "",
+      "recolor": "black",
+      "name": "Natural (black)"
+    },
+    "body": {
+      "itemId": "body",
+      "subId": null,
+      "variant": "",
+      "recolor": "brown",
+      "name": "Body Color (brown)"
+    },
+    "weapon": {
+      "itemId": "weapon_blunt_waraxe",
+      "subId": null,
+      "variant": "waraxe",
+      "recolor": "",
+      "name": "Waraxe (waraxe)"
+    },
+    "legs": {
+      "itemId": "legs_formal",
+      "subId": null,
+      "variant": "",
+      "recolor": "blue",
+      "name": "Formal Pants (blue)"
+    },
+    "shoes_toe": {
+      "itemId": "feet_plate_toe_thick",
+      "subId": null,
+      "variant": "",
+      "recolor": "gold",
+      "name": "Thick Plated Toe (gold)"
+    }
+  },
+  "selectedAnimation": "watering",
+  "showTransparencyGrid": true,
+  "applyTransparencyMask": false,
+  "matchBodyColorEnabled": true,
+  "compactDisplay": false,
+  "enabledLicenses": {
+    "CC0": true,
+    "CC-BY-SA": true,
+    "CC-BY": true,
+    "OGA-BY": true,
+    "GPL": true
+  },
+  "enabledAnimations": {
+    "spellcast": false,
+    "thrust": false,
+    "walk": false,
+    "slash": false,
+    "shoot": false,
+    "hurt": false,
+    "climb": false,
+    "idle": false,
+    "jump": false,
+    "sit": false,
+    "emote": false,
+    "run": false,
+    "watering": false,
+    "combat": false,
+    "1h_slash": false,
+    "1h_backslash": false,
+    "1h_halfslash": false
+  },
+  "url": "https://liberatedpixelcup.github.io/Universal-LPC-Spritesheet-Character-Generator/#sex=muscular&head=Human_Male_brown&expression=Neutral_brown&wings=Bat_Wings_red&beard=Winter_Beard_black&hair=Natural_black&body=Body_Color_brown&weapon=Waraxe_waraxe&legs=Formal_Pants_blue&shoes_toe=Thick_Plated_Toe_gold",
+  "layers": [
+    {
+      "itemId": "wings_bat",
+      "name": "Bat Wings (red)",
+      "variant": "red",
+      "recolors": null,
+      "zPos": 5,
+      "layerNum": 2,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "body/wings/bat/adult/bg/spellcast/red.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "weapon_blunt_waraxe",
+      "name": "Waraxe (waraxe)",
+      "variant": "waraxe",
+      "recolors": null,
+      "zPos": 9,
+      "layerNum": 1,
+      "yPos": 512,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "weapon/blunt/waraxe/behind/walk/waraxe.png"
+      },
+      "supportedAnimations": [
+        "walk",
+        "hurt"
+      ]
+    },
+    {
+      "itemId": "body",
+      "name": "Body Color (brown)",
+      "variant": "",
+      "recolors": {
+        "body": "brown"
+      },
+      "zPos": 10,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "body/bodies/muscular/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "legs_formal",
+      "name": "Formal Pants (blue)",
+      "variant": "",
+      "recolors": {
+        "legs": "blue"
+      },
+      "zPos": 20,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "legs/formal/male/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "feet_plate_toe_thick",
+      "name": "Thick Plated Toe (gold)",
+      "variant": "",
+      "recolors": {
+        "shoes_toe": "gold"
+      },
+      "zPos": 27,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "feet/accessory/plate_toe_thick/male/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "heads_human_male",
+      "name": "Human Male (brown)",
+      "variant": "",
+      "recolors": {
+        "head": "brown"
+      },
+      "zPos": 100,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "head/heads/human/male/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "face_neutral",
+      "name": "Neutral (brown)",
+      "variant": "",
+      "recolors": {
+        "expression": "brown"
+      },
+      "zPos": 101,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "head/faces/male/neutral/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "wings_bat",
+      "name": "Bat Wings (red)",
+      "variant": "red",
+      "recolors": null,
+      "zPos": 105,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "body/wings/bat/adult/fg/spellcast/red.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "beards_winter",
+      "name": "Winter Beard (black)",
+      "variant": "",
+      "recolors": {
+        "beard": "black"
+      },
+      "zPos": 110,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "beards/beard/winter/male/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "hair_natural",
+      "name": "Natural (black)",
+      "variant": "",
+      "recolors": {
+        "hair": "black"
+      },
+      "zPos": 120,
+      "layerNum": 1,
+      "yPos": 0,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "hair/natural/adult/spellcast.png"
+      },
+      "supportedAnimations": [
+        "spellcast",
+        "thrust",
+        "walk",
+        "slash",
+        "shoot",
+        "hurt",
+        "climb",
+        "idle",
+        "jump",
+        "sit",
+        "emote",
+        "run",
+        "combat_idle",
+        "backslash",
+        "halfslash"
+      ]
+    },
+    {
+      "itemId": "weapon_blunt_waraxe",
+      "name": "Waraxe (waraxe)",
+      "variant": "waraxe",
+      "recolors": null,
+      "zPos": 140,
+      "layerNum": 2,
+      "yPos": 512,
+      "needsRecolor": false,
+      "source": {
+        "kind": "catalog",
+        "spritePath": "weapon/blunt/waraxe/walk/waraxe.png"
+      },
+      "supportedAnimations": [
+        "walk",
+        "hurt"
+      ]
+    }
+  ],
+  "credits": [
+    {
+      "fileName": "head/heads/human/male/watering.png",
+      "file": "head/heads/human/male",
+      "notes": "original head by Redshrike, tweaks by BenCreating, modular version by bluecarrot16",
+      "authors": [
+        "bluecarrot16",
+        "Benjamin K. Smith (BenCreating)",
+        "Stephen Challener (Redshrike)"
+      ],
+      "licenses": [
+        "OGA-BY 3.0",
+        "CC-BY-SA 3.0",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/liberated-pixel-cup-lpc-base-assets-sprites-map-tiles",
+        "https://opengameart.org/content/lpc-character-bases"
+      ]
+    },
+    {
+      "fileName": "head/faces/male/neutral/watering.png",
+      "file": "head/faces",
+      "notes": "Original by Redshrike, Expressions by ElizaWy, mapped to all frames by JaidynReiman",
+      "authors": [
+        "JaidynReiman",
+        "ElizaWy",
+        "Stephen Challener (Redshrike)"
+      ],
+      "licenses": [
+        "OGA-BY 3.0"
+      ],
+      "urls": [
+        "https://github.com/ElizaWy/LPC/tree/main/Characters/Head",
+        "https://opengameart.org/content/ulpc-expanded-expressions"
+      ]
+    },
+    {
+      "fileName": "body/wings/bat/adult/fg/watering/red.png",
+      "file": "body/wings/bat",
+      "notes": "Original by ElizaWy, added to most remaining frames by JaidynReiman",
+      "authors": [
+        "ElizaWy",
+        "JaidynReiman"
+      ],
+      "licenses": [
+        "OGA-BY 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-wings-new-animations"
+      ]
+    },
+    {
+      "fileName": "beards/beard/winter/male/watering.png",
+      "file": "beards/beard/winter",
+      "notes": "",
+      "authors": [
+        "bluecarrot16"
+      ],
+      "licenses": [
+        "CC0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-santa"
+      ]
+    },
+    {
+      "fileName": "hair/natural/adult/watering.png",
+      "file": "hair/natural",
+      "notes": "Original by bluecarrot16, animations by ElizaWy.",
+      "authors": [
+        "ElizaWy",
+        "bluecarrot16"
+      ],
+      "licenses": [
+        "CC0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-hair",
+        "https://github.com/ElizaWy/LPC/blob/main/Characters/Hair",
+        "https://opengameart.org/content/lpc-expanded-sit-run-jump-more"
+      ]
+    },
+    {
+      "fileName": "body/bodies/muscular/watering.png",
+      "file": "body/bodies/muscular",
+      "notes": "see details at https://opengameart.org/content/lpc-character-bases",
+      "authors": [
+        "bluecarrot16",
+        "JaidynReiman",
+        "Evert",
+        "TheraHedwig",
+        "MuffinElZangano",
+        "Durrani",
+        "Sander Frenken (castelonia)",
+        "Benjamin K. Smith (BenCreating)",
+        "Eliza Wyatt (ElizaWy)",
+        "dalonedrau",
+        "Stephen Challener (Redshrike)"
+      ],
+      "licenses": [
+        "CC-BY-SA 3.0",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/liberated-pixel-cup-lpc-base-assets-sprites-map-tiles",
+        "https://opengameart.org/content/lpc-barbarian-sprite-base",
+        "https://opengameart.org/content/lpc-muscular-swing-animation",
+        "https://opengameart.org/content/lpc-muscular-hurt-animation",
+        "https://opengameart.org/content/lpc-jump-expanded",
+        "https://opengameart.org/content/lpc-revised-character-basics",
+        "https://opengameart.org/content/lpc-be-seated",
+        "https://opengameart.org/content/lpc-jump-expanded",
+        "https://opengameart.org/content/lpc-character-bases",
+        "https://opengameart.org/content/lpc-male-jumping-animation-by-durrani"
+      ]
+    },
+    {
+      "fileName": "weapon/blunt/waraxe/behind/watering/waraxe.png",
+      "file": "weapon/blunt/waraxe",
+      "notes": "",
+      "authors": [
+        "Benjamin K. Smith (BenCreating)",
+        "bluecarrot16",
+        "Sander Frenken (castelonia)"
+      ],
+      "licenses": [
+        "CC-BY-SA 3.0",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-medieval-weapons"
+      ]
+    },
+    {
+      "fileName": "legs/formal/male/watering.png",
+      "file": "legs/formal",
+      "notes": "Original pants by Stephen Challener (Redshrike), thrust/shoot bases by Wulax, Formal Pants by Bluecarrot16, climb/jump/run/sit/emotes/revised combat by JaidynReiman",
+      "authors": [
+        "bluecarrot16",
+        "JaidynReiman",
+        "ElizaWy",
+        "Johannes Sjölund (wulax)",
+        "Stephen Challener (Redshrike)"
+      ],
+      "licenses": [
+        "OGA-BY 3.0",
+        "CC-BY-SA 3.0",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/liberated-pixel-cup-lpc-base-assets-sprites-map-tiles",
+        "https://opengameart.org/content/lpc-medieval-fantasy-character-sprites",
+        "https://opengameart.org/content/lpc-2-characters",
+        "https://opengameart.org/content/lpc-gentleman",
+        "https://opengameart.org/content/lpc-expanded-pants"
+      ]
+    },
+    {
+      "fileName": "feet/accessory/plate_toe_thick/male/watering.png",
+      "file": "feet/accessory/plate_toe_thick",
+      "notes": "",
+      "authors": [
+        "JaidynReiman"
+      ],
+      "licenses": [
+        "OGA-BY 3.0+",
+        "CC-BY 3.0+",
+        "GPL 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-kimono-relm",
+        "https://opengameart.org/content/lpc-expanded-socks-shoes"
+      ]
+    }
+  ]
+}
