@@ -98,8 +98,10 @@ public final class WorldGenerator {
 
         // 7. Give households initial food and money, assign workers to farms
         initializeHouseholdResources();
-        assignWorkersToFarms();
+        seedSettlementStockpiles();
         assignFarmsToHouseholds();
+        assignWorkersToFarms();
+        createInitialCaravans();
 
         System.out.println("Vertical slice generation complete");
     }
@@ -144,8 +146,19 @@ public final class WorldGenerator {
 
         farm.recipes.add(grainRecipe);
         settlement.addWorkplace(farm);
-        world.workplaces.put(farmId, farm); // Add workplace to global world state map
-        System.out.println("Created farm: " + farm.name + " (ID: " + farmId + ") in " + settlement.name);
+        world.workplaces.put(farmId, farm);
+
+        long gardenId = world.idGenerator.next();
+        Workplace garden = new Workplace(gardenId, settlement.name + " Market Garden", settlement.id);
+        garden.maxWorkers = 5;
+        java.util.EnumMap<GoodType, Integer> vegetableOutputs = new java.util.EnumMap<>(GoodType.class);
+        vegetableOutputs.put(GoodType.VEGETABLES, 8);
+        garden.recipes.add(new ProductionRecipe("Vegetable Production",
+                new java.util.EnumMap<>(GoodType.class), vegetableOutputs,
+                2.0, 5, "farming"));
+        settlement.addWorkplace(garden);
+        world.workplaces.put(gardenId, garden);
+        System.out.println("Created farm and garden in " + settlement.name);
     }
 
     /**
@@ -159,13 +172,15 @@ public final class WorldGenerator {
 
                 // Find a household in this settlement
                 for (Household h : world.households.values()) {
-                    if (h.homeSettlementId == settlement.id && h.getMemberCount() > 0) {
+                    if (h.homeSettlementId == settlement.id && h.getMemberCount() > 0
+                            && h.ownedWorkplaceId == null) {
                         // Find the head person of the household
                         Long headPersonId = h.headPersonId;
                         if (headPersonId != null) {
                             Person head = world.people.get(headPersonId);
                             if (head != null && head.alive) {
                                 workplace.ownerHouseholdId = h.id;
+                                h.ownedWorkplaceId = workplace.id;
                                 head.employerId = workplace.id;
                                 workplace.addWorker(headPersonId);
                                 break;
@@ -307,6 +322,51 @@ public final class WorldGenerator {
                 }
             }
         }
-        System.out.println("Assigned " + assigned + " workers to farms");
+        System.out.println("Assigned " + assigned + " workers to workplaces");
+    }
+
+    private void seedSettlementStockpiles() {
+        java.util.List<Settlement> settlements = new java.util.ArrayList<>(
+                world.geography.getSettlements().values());
+        settlements.sort(java.util.Comparator.comparingLong(s -> s.id));
+        for (int i = 0; i < settlements.size(); i++) {
+            Settlement settlement = settlements.get(i);
+            settlement.publicStockpile.add(GoodType.GRAIN, 40 + i * 25);
+            settlement.publicStockpile.add(GoodType.VEGETABLES, 40 + (settlements.size() - i) * 18);
+            settlement.publicStockpile.add(GoodType.TIMBER, 15 + i * 4);
+        }
+    }
+
+    private void createInitialCaravans() {
+        java.util.List<Settlement> settlements = new java.util.ArrayList<>(
+                world.geography.getSettlements().values());
+        settlements.sort(java.util.Comparator.comparingLong(s -> s.id));
+        int created = 0;
+        for (Settlement settlement : settlements) {
+            Person leader = null;
+            for (Person candidate : world.people.values()) {
+                if (candidate.alive && candidate.currentSettlementId != null
+                        && candidate.currentSettlementId == settlement.id
+                        && !candidate.isChild(0L) && !candidate.isElderly(0L)
+                        && candidate.householdId != null && candidate.employerId == null
+                        && candidate.type != Person.PersonType.MERCHANT) {
+                    leader = candidate;
+                    break;
+                }
+            }
+            if (leader == null) continue;
+            Household owner = world.households.get(leader.householdId);
+            if (owner == null) continue;
+            long caravanId = world.idGenerator.next();
+            Caravan caravan = new Caravan(caravanId, owner.id, leader.id, settlement.id,
+                    new WorldPosition(settlement.position.x, settlement.position.y));
+            long investment = Math.min(200L, owner.account.copperCoins);
+            if (investment > 0 && owner.account.subtract(investment)) caravan.cash.add(investment);
+            leader.type = Person.PersonType.MERCHANT;
+            world.caravans.put(caravanId, caravan);
+            created++;
+            if (created >= 2) break;
+        }
+        System.out.println("Created " + created + " merchant caravans");
     }
 }

@@ -46,6 +46,7 @@ public class HeadlessRunner {
         // Generate world
         WorldGenerator generator = new WorldGenerator(context);
         generator.generateVerticalSlice();
+        sim.initializeGeneratedWorld();
 
         System.out.println("World after generation:");
         System.out.println("  People: " + state.people.size());

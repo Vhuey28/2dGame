@@ -8,8 +8,11 @@ import world.economy.ProductionSystem;
 import world.economy.HouseholdConsumptionSystem;
 import world.economy.TaxSystem;
 import world.economy.FamineSystem;
+import world.economy.EmploymentSystem;
+import world.economy.HouseholdTradeSystem;
 import world.economy.Inventory;
 import world.economy.MoneyAccount;
+import world.trade.TradeSystem;
 
 /**
  * The simulation orchestrator. Advances time, processes scheduled events,
@@ -29,7 +32,10 @@ public class WorldSimulation {
     private final HouseholdConsumptionSystem householdConsumptionSystem;
     private final TaxSystem taxSystem;
     private final FamineSystem famineSystem;
-    private final DemographicSystem demographicSystem; // Also integrate demographicSystem here
+    private final DemographicSystem demographicSystem;
+    private final EmploymentSystem employmentSystem;
+    private final HouseholdTradeSystem householdTradeSystem;
+    private final TradeSystem tradeSystem;
 
     public WorldSimulation(WorldClock clock, WorldState world) {
         this.clock = clock;
@@ -42,7 +48,10 @@ public class WorldSimulation {
         this.householdConsumptionSystem = new HouseholdConsumptionSystem(world.households);
         this.taxSystem = new TaxSystem();
         this.famineSystem = new FamineSystem(world.households, world.people, world.geography, context);
-        this.demographicSystem = new DemographicSystem(context); // Initialize demographicSystem
+        this.demographicSystem = new DemographicSystem(context);
+        this.employmentSystem = new EmploymentSystem(context);
+        this.householdTradeSystem = new HouseholdTradeSystem(context);
+        this.tradeSystem = new TradeSystem(context);
     }
 
     public WorldClock getClock() {
@@ -85,6 +94,12 @@ public class WorldSimulation {
             onScheduledEvent(e, current);
         }
 
+        long prevHour = previousMinute / WorldConfig.MINUTES_PER_HOUR;
+        long currHour = current / WorldConfig.MINUTES_PER_HOUR;
+        for (long hour = prevHour + 1; hour <= currHour; hour++) {
+            tradeSystem.processHour(hour * WorldConfig.MINUTES_PER_HOUR);
+        }
+
         // Process every crossed boundary. This is important for campaign debug
         // controls, loading catch-up, and future fast-forward commands that may
         // advance more than one day at a time.
@@ -103,10 +118,25 @@ public class WorldSimulation {
         context.eventHistory.trim(current);
     }
 
-    /** Process all daily systems (production, consumption, market clearing). */
+    /** Prepare systems after a generated or loaded world has populated registries. */
+    public void initializeGeneratedWorld() {
+        long minute = clock.getWorldMinute();
+        employmentSystem.processWeek(minute);
+        tradeSystem.processWeek(minute);
+    }
+
+    /** Process all daily systems (production, trade, consumption, market clearing). */
     private void processDaySystems(long currentMinute) {
         productionSystem.processDay(world.geography.getSettlements(), world.people, world.households);
+        employmentSystem.processDay();
+        householdTradeSystem.processDay();
         householdConsumptionSystem.processDay(currentMinute);
+        tradeSystem.processDay(currentMinute);
+        long day = currentMinute / WorldConfig.MINUTES_PER_DAY;
+        if (day % 7 == 0) {
+            employmentSystem.processWeek(currentMinute);
+            tradeSystem.processWeek(currentMinute);
+        }
 
         // Clear markets at end of day using current inventories and accounts
         java.util.Map<Long, Inventory> inventories = new java.util.HashMap<>();

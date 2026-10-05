@@ -93,38 +93,51 @@ public final class FamineSystem {
         }
     }
 
-    /**
-     * Consider migration from a food-insecure household.
-     * In a full implementation, this would move people to better-supplied settlements.
-     * For now, we just remove members from the household (they become homeless).
-     */
+    /** Move a small number of adults to the best supplied reachable settlement. */
     private void considerMigration(Household household, long currentMinute) {
-        // Migration reduces household size slightly as some members leave
-        int membersToRemove = Math.max(1, household.getMemberCount() / 10); // Up to 10% leave
-        if (membersToRemove > 0 && household.getMemberCount() > 1) {
-            // Create a copy to avoid ConcurrentModificationException
-            java.util.List<Long> members = new java.util.ArrayList<>(household.memberIds);
-            // Sort by age (youngest first)
-            members.sort((id1, id2) -> {
-                Person p1 = people.get(id1);
-                Person p2 = people.get(id2);
-                int age1 = p1 != null ? p1.getAge(currentMinute) : 0;
-                int age2 = p2 != null ? p2.getAge(currentMinute) : 0;
-                return Integer.compare(age1, age2);
-            });
-
-            for (int i = 0; i < Math.min(membersToRemove, members.size()); i++) {
-                Long personId = members.get(i);
-                Person person = people.get(personId);
-                if (person != null && person.alive) {
-                    // In a full implementation, we'd move them to another settlement
-                    // For now, just remove from household (they become homeless)
-                    household.removeMember(personId);
-                    // They become homeless - set settlement to null (Person's homeSettlementId is Long)
-                    person.homeSettlementId = null;
-                    person.currentSettlementId = null;
-                }
+        if (household.getMemberCount() <= 1) return;
+        world.geography.Settlement destination = null;
+        int bestFood = -1;
+        for (world.geography.Settlement candidate : geography.getSettlements().values()) {
+            if (candidate.id == household.homeSettlementId) continue;
+            int food = candidate.publicStockpile.getQuantity(GoodType.GRAIN)
+                    + candidate.publicStockpile.getQuantity(GoodType.VEGETABLES);
+            if (food > bestFood) {
+                bestFood = food;
+                destination = candidate;
             }
         }
+        if (destination == null || bestFood <= 0) return;
+
+        java.util.List<Long> members = new java.util.ArrayList<>(household.memberIds);
+        members.sort((id1, id2) -> {
+            Person p1 = people.get(id1);
+            Person p2 = people.get(id2);
+            int age1 = p1 != null ? p1.getAge(currentMinute) : 0;
+            int age2 = p2 != null ? p2.getAge(currentMinute) : 0;
+            boolean adult1 = age1 >= 18 && age1 < 65;
+            boolean adult2 = age2 >= 18 && age2 < 65;
+            if (adult1 != adult2) return adult1 ? -1 : 1;
+            return Integer.compare(age2, age1);
+        });
+
+        int count = Math.min(Math.max(1, household.getMemberCount() / 10), members.size());
+        Household migrantHousehold = new Household(context.getWorld().idGenerator.next(),
+                destination.id, null);
+        migrantHousehold.foodSecurity = 0.5;
+        context.getWorld().households.put(migrantHousehold.id, migrantHousehold);
+        for (int i = 0; i < count; i++) {
+            Long personId = members.get(i);
+            Person person = people.get(personId);
+            if (person == null || !person.alive) continue;
+            household.removeMember(personId);
+            migrantHousehold.addMember(personId);
+            if (migrantHousehold.headPersonId == null) migrantHousehold.headPersonId = personId;
+            person.householdId = migrantHousehold.id;
+            person.homeSettlementId = destination.id;
+            person.currentSettlementId = destination.id;
+        }
+        context.eventBus.publish(new WorldEvent(context.getWorld().idGenerator.next(),
+                currentMinute, "HOUSEHOLD_MIGRATED"));
     }
 }

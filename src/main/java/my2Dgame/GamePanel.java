@@ -30,6 +30,7 @@ import tile.tileManager;
 import world.CampaignSession;
 import world.CampaignSnapshot;
 import world.WorldConfig;
+import world.economy.GoodType;
 
 public class GamePanel extends JPanel implements Runnable{
 	//Screen Settings
@@ -251,8 +252,16 @@ public class GamePanel extends JPanel implements Runnable{
 							if (code == KeyEvent.VK_3) campaignSession.setSpeed(1440);
 							if (code == KeyEvent.VK_0) campaignSession.toggleWorldPaused();
 							if (code == KeyEvent.VK_F6) campaignSession.advanceOneDayForTesting();
+							if (selectedCampaignSettlementId != null) {
+								if (code == KeyEvent.VK_B) campaignSession.buyFromSettlement(
+									selectedCampaignSettlementId, GoodType.GRAIN, 5);
+								if (code == KeyEvent.VK_V) campaignSession.sellToSettlement(
+									selectedCampaignSettlementId, GoodType.GRAIN, 5);
+								if (code == KeyEvent.VK_T) campaignSession.travelPlayerTo(selectedCampaignSettlementId);
+							}
 							campaignSnapshot = campaignSession.getSnapshot();
 							repaint();
+							if (code == KeyEvent.VK_T) return;
 						}
 					}
 					if (code == KeyEvent.VK_T) {
@@ -1944,7 +1953,7 @@ System.nanoTime();
 			g2.drawString("Chronicle Conquest - Campaign", 20, 34);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 12));
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("TAB: enter local world   1/2/3: time speed   0: pause world   F6: +1 day   P: menu", 20, 55);
+			g2.drawString("TAB local | 1/2/3 speed | 0 pause | T travel | B buy grain | V sell | F6 +day", 20, 55);
 
 			if (snapshot == null) {
 				g2.setColor(Color.WHITE);
@@ -1980,6 +1989,10 @@ System.nanoTime();
 				int radius = selectedCampaignSettlementId != null && selectedCampaignSettlementId == settlement.id ? 10 : 7;
 				Rectangle hitbox = new Rectangle(x - 12, y - 12, 24, 24);
 				campaignSettlementHitboxes.put(settlement.id, hitbox);
+				if (snapshot.player != null && snapshot.player.settlementId == settlement.id) {
+					g2.setColor(Color.CYAN);
+					g2.drawOval(x - radius - 4, y - radius - 4, radius * 2 + 8, radius * 2 + 8);
+				}
 				g2.setColor(colorForRealm(settlement.realmId));
 				g2.fillOval(x - radius, y - radius, radius * 2, radius * 2);
 				g2.setColor(Color.WHITE);
@@ -1989,6 +2002,17 @@ System.nanoTime();
 				g2.drawString(settlement.name, labelX, y - 8);
 				g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
 				g2.drawString("Pop " + settlement.population, labelX, y + 6);
+			}
+
+			for (CampaignSnapshot.CaravanView caravan : snapshot.caravans) {
+				int x = campaignMapCoordinate(caravan.worldX, bounds[0], bounds[1], mapX, mapW);
+				int y = campaignMapCoordinate(caravan.worldY, bounds[2], bounds[3], mapY, mapH);
+				g2.setColor(new Color(245, 196, 65));
+				int[] xs = {x, x + 6, x, x - 6};
+				int[] ys = {y - 6, y, y + 6, y};
+				g2.fillPolygon(xs, ys, 4);
+				g2.setColor(Color.BLACK);
+				g2.drawPolygon(xs, ys, 4);
 			}
 
 			int panelX = 535;
@@ -2005,7 +2029,17 @@ System.nanoTime();
 			g2.drawString("Households: " + snapshot.householdCount, panelX, y); y += 17;
 			g2.drawString(String.format("Food security: %.0f%%", snapshot.averageFoodSecurity * 100.0), panelX, y); y += 17;
 			g2.drawString("Armies/Caravans: " + snapshot.armyCount + "/" + snapshot.caravanCount, panelX, y); y += 17;
-			g2.drawString("Active wars: " + snapshot.warCount, panelX, y); y += 24;
+			g2.drawString("Active wars: " + snapshot.warCount, panelX, y); y += 17;
+			if (!snapshot.caravans.isEmpty()) {
+				CampaignSnapshot.CaravanView caravan = snapshot.caravans.get(0);
+				g2.drawString("Merchant: " + caravan.state + " " + caravan.cargoQuantity, panelX, y); y += 17;
+			}
+			if (snapshot.player != null) {
+				g2.setColor(new Color(245, 196, 65));
+				g2.drawString("You: " + snapshot.player.coins + "c cargo "
+					+ snapshot.player.cargoUsed + "/" + snapshot.player.cargoCapacity, panelX, y); y += 17;
+			}
+			y += 7;
 
 			g2.setColor(new Color(222, 204, 155));
 			g2.setFont(new Font("SansSerif", Font.BOLD, 13));

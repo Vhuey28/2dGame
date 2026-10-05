@@ -19,8 +19,12 @@ The repository now contains the first foundation and food-economy systems descri
 - Deterministic generation fixes for IDs, ages, settlement treasuries, and household wealth.
 - Correct processing of every crossed day/month during large time advances.
 - Initial campaign integration tests.
+- Phase 3 employment and trade: weekly job matching, wages, producer-to-market food sales, household purchasing, route finding, physical merchant caravans, cargo accounting, arrival sales, and bandit losses.
+- Visible caravan markers and trade status on the Campaign map.
+- Real migration toward better-supplied settlements instead of deleting migrants from the social model.
+- Phase 4 player foundation: a persistent adventurer person/household, personal funds, carried cargo, route-based strategic travel, and settlement grain buying/selling from the Campaign map.
 
-The military, caravan, war, diplomacy, tactical reconciliation, and complete save/load phases remain future work.
+Contracts, local-map settlement variants, political core, military, war, diplomacy, tactical reconciliation, and complete save/load remain future work.
 
 ---
 

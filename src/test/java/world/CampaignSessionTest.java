@@ -15,7 +15,7 @@ class CampaignSessionTest {
         CampaignSnapshot snapshot = session.getSnapshot();
 
         assertNotNull(snapshot);
-        assertEquals(300, snapshot.livingPopulation);
+        assertEquals(301, snapshot.livingPopulation);
         assertEquals(6, snapshot.settlements.size());
         assertEquals(2, snapshot.realms.size());
         assertFalse(snapshot.roads.isEmpty());

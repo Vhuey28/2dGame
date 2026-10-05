@@ -1,5 +1,10 @@
 package world;
 
+import world.command.CommandResult;
+import world.economy.GoodType;
+import world.geography.Road;
+import world.geography.Settlement;
+
 /**
  * Owns one playable campaign simulation and publishes immutable UI snapshots.
  * This is the integration boundary between the Swing game and the headless world.
@@ -9,6 +14,7 @@ public final class CampaignSession {
     private final WorldState world;
     private final WorldClock clock;
     private final WorldSimulation simulation;
+    private final PlayerCampaignState playerState;
     private volatile CampaignSnapshot snapshot;
     private long lastSnapshotMinute = Long.MIN_VALUE;
 
@@ -21,11 +27,37 @@ public final class CampaignSession {
 
         WorldGenerator generator = new WorldGenerator(simulation.getContext());
         generator.generateVerticalSlice();
+        this.playerState = createPlayerAdventurer();
+        simulation.initializeGeneratedWorld();
 
         // Campaign testing starts at one world hour per real second. Players can
         // select 1x, 60x, or 1440x from the campaign map.
         clock.setSpeed(60);
         refreshSnapshot();
+    }
+
+    private PlayerCampaignState createPlayerAdventurer() {
+        java.util.List<world.geography.Settlement> settlements = new java.util.ArrayList<>(
+                world.geography.getSettlements().values());
+        settlements.sort(java.util.Comparator.comparingLong(s -> s.id));
+        if (settlements.isEmpty()) throw new IllegalStateException("Campaign requires a settlement");
+        long settlementId = settlements.get(0).id;
+        long personId = world.idGenerator.next();
+        Person person = new Person(personId, "The", "Adventurer", Person.Sex.MALE,
+                -25L * WorldConfig.MINUTES_PER_YEAR);
+        person.currentSettlementId = settlementId;
+        person.homeSettlementId = settlementId;
+        world.people.put(personId, person);
+        long householdId = world.idGenerator.next();
+        Household household = new Household(householdId, settlementId, personId);
+        household.account.add(250L);
+        household.inventory.add(GoodType.GRAIN, 5);
+        household.inventory.add(GoodType.VEGETABLES, 5);
+        world.households.put(householdId, household);
+        person.householdId = householdId;
+        PlayerCampaignState state = new PlayerCampaignState(personId, householdId, settlementId);
+        world.player = state;
+        return state;
     }
 
     private void configureRandomStreams(long seed) {
@@ -45,6 +77,72 @@ public final class CampaignSession {
         if (currentMinute != lastSnapshotMinute) {
             refreshSnapshot();
         }
+    }
+
+    public CommandResult buyFromSettlement(long settlementId, GoodType good, int quantity) {
+        Settlement settlement = world.geography.getSettlement(settlementId);
+        Household household = world.households.get(playerState.householdId);
+        if (settlement == null || household == null) return CommandResult.rejected("INVALID_LOCATION", "Settlement not found");
+        if (playerState.currentSettlementId != settlementId) return CommandResult.rejected("NOT_PRESENT", "Travel to the settlement first");
+        quantity = Math.min(quantity, playerState.remainingCapacity());
+        quantity = Math.min(quantity, settlement.publicStockpile.getQuantity(good));
+        long price = Math.max(1L, settlement.market.getLastPrice(good));
+        quantity = (int) Math.min(quantity, household.account.copperCoins / price);
+        if (quantity <= 0 || !household.account.subtract(quantity * price)) {
+            return CommandResult.rejected("CANNOT_BUY", "No stock, money, or cargo space");
+        }
+        settlement.treasury.add(quantity * price);
+        settlement.publicStockpile.remove(good, quantity);
+        playerState.cargo.add(good, quantity);
+        refreshSnapshot();
+        return CommandResult.accepted();
+    }
+
+    public CommandResult sellToSettlement(long settlementId, GoodType good, int quantity) {
+        Settlement settlement = world.geography.getSettlement(settlementId);
+        Household household = world.households.get(playerState.householdId);
+        if (settlement == null || household == null) return CommandResult.rejected("INVALID_LOCATION", "Settlement not found");
+        if (playerState.currentSettlementId != settlementId) return CommandResult.rejected("NOT_PRESENT", "Travel to the settlement first");
+        quantity = Math.min(quantity, playerState.cargo.getQuantity(good));
+        long price = Math.max(1L, settlement.market.getLastPrice(good));
+        quantity = (int) Math.min(quantity, settlement.treasury.copperCoins / price);
+        if (quantity <= 0 || !settlement.treasury.subtract(quantity * price)) {
+            return CommandResult.rejected("CANNOT_SELL", "No cargo or settlement funds");
+        }
+        playerState.cargo.remove(good, quantity);
+        settlement.publicStockpile.add(good, quantity);
+        household.account.add(quantity * price);
+        refreshSnapshot();
+        return CommandResult.accepted();
+    }
+
+    public CommandResult travelPlayerTo(long settlementId) {
+        if (settlementId == playerState.currentSettlementId) return CommandResult.accepted();
+        Settlement destination = world.geography.getSettlement(settlementId);
+        if (destination == null) return CommandResult.rejected("INVALID_LOCATION", "Settlement not found");
+        java.util.List<Road> route = world.geography.getRouteGraph()
+                .findShortestRoute(playerState.currentSettlementId, settlementId);
+        if (route.isEmpty()) return CommandResult.rejected("NO_ROUTE", "No open road reaches that settlement");
+        double distance = route.stream().mapToDouble(Road::getEffectiveCostFactor).sum();
+        long travelMinutes = Math.max(60L, Math.round(distance / 10.0 * 60.0));
+        boolean paused = clock.isPaused();
+        clock.setPaused(false);
+        simulation.advanceMinutes(travelMinutes);
+        clock.setPaused(paused);
+        playerState.currentSettlementId = settlementId;
+        Person player = world.people.get(playerState.personId);
+        Household household = world.households.get(playerState.householdId);
+        if (player != null) {
+            player.currentSettlementId = settlementId;
+            player.homeSettlementId = settlementId;
+        }
+        if (household != null) household.homeSettlementId = settlementId;
+        refreshSnapshot();
+        return CommandResult.accepted();
+    }
+
+    public PlayerCampaignState getPlayerState() {
+        return playerState;
     }
 
     public void setSpeed(int speed) {

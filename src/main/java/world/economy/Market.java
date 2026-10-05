@@ -89,24 +89,21 @@ public final class Market {
                         sellerAcct != null && buyerAcct != null &&
                         sellerInv.has(good, tradeQty)) {
 
-                        // Transfer goods and money
-                        sellerInv.remove(good, tradeQty);
-                        buyerInv.add(good, tradeQty);
                         long totalCost = (long) tradeQty * tradePrice;
+                        // Validate and debit money before moving goods so a failed
+                        // purchase cannot duplicate inventory in the buyer.
                         if (buyerAcct.subtract(totalCost)) {
+                            sellerInv.remove(good, tradeQty);
+                            buyerInv.add(good, tradeQty);
                             sellerAcct.add(totalCost);
 
-                            // Update order quantities
                             buy.quantity -= tradeQty;
                             sell.quantity -= tradeQty;
-
                             totalVolume += tradeQty;
                             totalValue += totalCost;
                             lastPrice = tradePrice;
                         } else {
-                            // Buyer can't afford - revert goods and remove order
-                            sellerInv.add(good, tradeQty);
-                            buys.remove(buyIdx);
+                            buyIdx++;
                             continue;
                         }
                     } else {

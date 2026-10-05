@@ -33,6 +33,9 @@ public final class WorldState {
     /** All persistent wars. Never null after init. */
     public final java.util.Map<Long, War> wars = new java.util.HashMap<>();
 
+    /** Player's persistent adventurer state in Campaign mode, when present. */
+    public PlayerCampaignState player;
+
     public final java.util.Map<Long, world.economy.Workplace> workplaces = new java.util.HashMap<>();
 
     /** All generated IDs for validation. Never null after init. */

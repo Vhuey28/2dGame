@@ -51,6 +51,7 @@ public final class HouseholdConsumptionSystem {
             // Normal consumption
             household.inventory.remove(GoodType.GRAIN, grainNeeded);
             household.inventory.remove(GoodType.VEGETABLES, vegNeeded);
+            household.foodSecurity = Math.min(1.0, household.foodSecurity + 0.03);
         } else if (hasEnoughGrain) {
             // Only grain available - consume grain, but note vegetables shortage
             household.inventory.remove(GoodType.GRAIN, grainNeeded);

@@ -30,13 +30,16 @@ public final class CampaignSnapshot {
     public final List<RealmView> realms;
     public final List<SettlementView> settlements;
     public final List<RoadView> roads;
+    public final List<CaravanView> caravans;
+    public final PlayerView player;
     public final List<EventView> recentEvents;
 
     private CampaignSnapshot(long worldMinute, int speed, boolean paused,
             int livingPopulation, int householdCount, int armyCount,
             int caravanCount, int warCount, double averageFoodSecurity,
             List<RealmView> realms, List<SettlementView> settlements,
-            List<RoadView> roads, List<EventView> recentEvents) {
+            List<RoadView> roads, List<CaravanView> caravans, PlayerView player,
+            List<EventView> recentEvents) {
         this.worldMinute = worldMinute;
         this.speed = speed;
         this.paused = paused;
@@ -49,6 +52,8 @@ public final class CampaignSnapshot {
         this.realms = Collections.unmodifiableList(realms);
         this.settlements = Collections.unmodifiableList(settlements);
         this.roads = Collections.unmodifiableList(roads);
+        this.caravans = Collections.unmodifiableList(caravans);
+        this.player = player;
         this.recentEvents = Collections.unmodifiableList(recentEvents);
     }
 
@@ -125,6 +130,27 @@ public final class CampaignSnapshot {
                     to.position.x, to.position.y, road.dangerLevel, road.blocked));
         }
 
+        List<CaravanView> caravanViews = new ArrayList<>();
+        for (Caravan caravan : world.caravans.values()) {
+            if (caravan.position == null || caravan.state == Caravan.CaravanState.DESTROYED) continue;
+            GoodType cargoType = caravan.primaryCargo();
+            caravanViews.add(new CaravanView(caravan.id, caravan.position.x, caravan.position.y,
+                    caravan.state.toString(), cargoType == null ? "Empty" : cargoType.toString(),
+                    caravan.cargoQuantity(), caravan.cash.copperCoins, caravan.completedTrips));
+        }
+        caravanViews.sort(Comparator.comparingLong(view -> view.id));
+
+        PlayerView playerView = null;
+        if (world.player != null) {
+            Household playerHousehold = world.households.get(world.player.householdId);
+            long coins = playerHousehold == null ? 0L : playerHousehold.account.copperCoins;
+            playerView = new PlayerView(world.player.currentSettlementId, coins,
+                    world.player.cargo.getQuantity(GoodType.GRAIN),
+                    world.player.cargo.getQuantity(GoodType.VEGETABLES),
+                    world.player.cargo.totalQuantity(), world.player.cargoCapacity,
+                    world.player.reputation);
+        }
+
         List<EventView> eventViews = new ArrayList<>();
         List<WorldEvent> events = simulation.getContext().eventHistory.getRecent();
         int first = Math.max(0, events.size() - 6);
@@ -136,7 +162,7 @@ public final class CampaignSnapshot {
         return new CampaignSnapshot(minute, simulation.getClock().getSpeed(),
                 simulation.getClock().isPaused(), living, world.households.size(),
                 world.armies.size(), world.caravans.size(), world.wars.size(), averageFood,
-                realmViews, settlementViews, roadViews, eventViews);
+                realmViews, settlementViews, roadViews, caravanViews, playerView, eventViews);
     }
 
     private static int countPopulation(WorldState world, long settlementId) {
@@ -241,6 +267,50 @@ public final class CampaignSnapshot {
             this.toY = toY;
             this.danger = danger;
             this.blocked = blocked;
+        }
+    }
+
+    public static final class PlayerView {
+        public final long settlementId;
+        public final long coins;
+        public final int grain;
+        public final int vegetables;
+        public final int cargoUsed;
+        public final int cargoCapacity;
+        public final int reputation;
+
+        PlayerView(long settlementId, long coins, int grain, int vegetables,
+                int cargoUsed, int cargoCapacity, int reputation) {
+            this.settlementId = settlementId;
+            this.coins = coins;
+            this.grain = grain;
+            this.vegetables = vegetables;
+            this.cargoUsed = cargoUsed;
+            this.cargoCapacity = cargoCapacity;
+            this.reputation = reputation;
+        }
+    }
+
+    public static final class CaravanView {
+        public final long id;
+        public final double worldX;
+        public final double worldY;
+        public final String state;
+        public final String cargo;
+        public final int cargoQuantity;
+        public final long cash;
+        public final int completedTrips;
+
+        CaravanView(long id, double worldX, double worldY, String state,
+                String cargo, int cargoQuantity, long cash, int completedTrips) {
+            this.id = id;
+            this.worldX = worldX;
+            this.worldY = worldY;
+            this.state = state;
+            this.cargo = cargo;
+            this.cargoQuantity = cargoQuantity;
+            this.cash = cash;
+            this.completedTrips = completedTrips;
         }
     }
 

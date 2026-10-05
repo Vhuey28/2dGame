@@ -40,12 +40,69 @@ public final class RouteGraph {
         return roadMap.get(roadId);
     }
 
-    /** Check if a route exists between two settlements. */
+    /** Check if a direct route exists between two settlements. */
     public boolean hasRoute(long fromSettlementId, long toSettlementId) {
         for (Road road : adjacency.getOrDefault(fromSettlementId, new ArrayList<>())) {
-            if (road.toSettlementId == toSettlementId) return true;
+            if (!road.blocked && road.toSettlementId == toSettlementId) return true;
         }
         return false;
+    }
+
+    /**
+     * Find the least-cost route between two settlements using Dijkstra's
+     * algorithm. Blocked roads are excluded and danger adds a small planning
+     * premium so merchants prefer safer routes when distances are similar.
+     */
+    public List<Road> findShortestRoute(long fromSettlementId, long toSettlementId) {
+        if (fromSettlementId == toSettlementId) return new ArrayList<>();
+
+        Map<Long, Double> distance = new HashMap<>();
+        Map<Long, Road> previousRoad = new HashMap<>();
+        java.util.PriorityQueue<RouteNode> open = new java.util.PriorityQueue<>();
+        distance.put(fromSettlementId, 0.0);
+        open.add(new RouteNode(fromSettlementId, 0.0));
+
+        while (!open.isEmpty()) {
+            RouteNode node = open.poll();
+            if (node.cost > distance.getOrDefault(node.settlementId, Double.POSITIVE_INFINITY)) continue;
+            if (node.settlementId == toSettlementId) break;
+
+            for (Road road : adjacency.getOrDefault(node.settlementId, new ArrayList<>())) {
+                if (road.blocked) continue;
+                double nextCost = node.cost + road.getEffectiveCostFactor() * (1.0 + road.dangerLevel * 0.35);
+                if (nextCost < distance.getOrDefault(road.toSettlementId, Double.POSITIVE_INFINITY)) {
+                    distance.put(road.toSettlementId, nextCost);
+                    previousRoad.put(road.toSettlementId, road);
+                    open.add(new RouteNode(road.toSettlementId, nextCost));
+                }
+            }
+        }
+
+        if (!previousRoad.containsKey(toSettlementId)) return new ArrayList<>();
+        java.util.LinkedList<Road> route = new java.util.LinkedList<>();
+        long cursor = toSettlementId;
+        while (cursor != fromSettlementId) {
+            Road road = previousRoad.get(cursor);
+            if (road == null) return new ArrayList<>();
+            route.addFirst(road);
+            cursor = road.fromSettlementId;
+        }
+        return route;
+    }
+
+    private static final class RouteNode implements Comparable<RouteNode> {
+        final long settlementId;
+        final double cost;
+
+        RouteNode(long settlementId, double cost) {
+            this.settlementId = settlementId;
+            this.cost = cost;
+        }
+
+        @Override
+        public int compareTo(RouteNode other) {
+            return Double.compare(cost, other.cost);
+        }
     }
 
     /** Get all roads in the graph. */
