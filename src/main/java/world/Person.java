@@ -31,6 +31,7 @@ public final class Person {
     public Long employerId;
     public Long officeId;
     public Long regimentId;
+    public Long capturedByRealmId;
     public Long preMilitaryEmployerId;
     public PersonType preMilitaryType;
     public double militaryExperience;

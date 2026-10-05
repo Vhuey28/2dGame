@@ -31,6 +31,7 @@ public final class Army {
     public double speedPerHour = 8.0;
     public int daysWithoutFood;
     public final Set<Long> detectedArmyIds = new HashSet<>();
+    public final Set<Long> prisonerPersonIds = new HashSet<>();
 
     public Army(long id, long realmId, long commanderPersonId,
             long settlementId, WorldPosition position) {

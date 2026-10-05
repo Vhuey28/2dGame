@@ -85,7 +85,9 @@ public class HeadlessRunner {
         System.out.println("  Treaties: " + state.treaties.size());
         System.out.println("  Schemes: " + state.schemes.size());
         System.out.println("  Regiments: " + state.regiments.size());
-        System.out.println("  Battles resolved: " + state.battleReports.size());
+        System.out.println("  Battles resolved: " + state.battleReports.size()
+                + " (contexts=" + state.battleContexts.size()
+                + ", reconciled=" + state.reconciledBattleIds.size() + ")");
         System.out.println("  Wars: " + state.wars.size() + ", sieges: " + state.sieges.size()
                 + ", peace offers: " + state.peaceOffers.size());
         world.military.MilitarySystem military = sim.getMilitarySystem();

@@ -90,6 +90,10 @@ public class WorldSimulation {
         return militarySystem;
     }
 
+    public world.military.BattleBridge getBattleBridge() {
+        return militarySystem.getBattleBridge();
+    }
+
     public WarSystem getWarSystem() {
         return warSystem;
     }

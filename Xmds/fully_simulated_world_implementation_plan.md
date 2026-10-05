@@ -27,9 +27,10 @@ The repository now contains the first foundation and food-economy systems descri
 - Phase 6 diplomacy and intrigue: bilateral relations, treaties and obligations, grievances, explainable treaty AI, information quality, spy networks, and phased covert schemes.
 - Phase 7 armies and logistics: person-level recruitment, regiments, strategic army parties, physical supplies, morale, fatigue, orders, encounter detection, auto-resolution, casualties, pay, desertion, and demobilization.
 - Phase 8 wars, sieges, and peace: legal war goals, coalitions, physical objectives, occupations, stockpile-consuming sieges, civilian consequences, war score, exhaustion, enforceable peace terms, territorial transfer, and truces.
-- The Campaign map now uses separated regional geography, territory shading, collision-aware labels, occupation markers, and physical armies. Local Campaign view includes clearly labeled interactive placeholders for people and settlement services.
+- Phase 9 tactical bridge: immutable battle contexts, person-ID tactical projections, terrain/weather and equipment modifiers, player/AI battle results, wounds, deaths, prisoners, loot, experience, retreat, strategic time, and exactly-once reconciliation.
+- The Campaign map uses separated regional geography, territory shading, collision-aware labels, occupation markers, and physical armies. Local Campaign view includes clearly labeled interactive placeholders, while K opens a projected strategic battle and R reconciles it.
 
-Contracts, full local-map settlement art/content, tactical reconciliation, and complete save/load remain future work.
+Contracts, full local-map settlement art/content, complete save/load, and continent-scale optimization remain future work.
 
 ---
 

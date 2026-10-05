@@ -10,6 +10,12 @@ public class Entity {
 	public float x, y;
 	public float speed;
 
+	// Set only for combatants projected from the persistent strategic simulation.
+	// Tactical code reports these IDs back through BattleResult instead of mutating world objects.
+	public Long sourcePersonId;
+	public Long sourceRegimentId;
+	public Long sourceArmyId;
+
 	public BufferedImage up1,up2,down1,down2,left1,left2,right1,right2;
 	// Diagonal sprites (optional - if not provided, will use nearest cardinal)
 	public BufferedImage upLeft1, upLeft2, upRight1, upRight2, downLeft1, downLeft2, downRight1, downRight2;

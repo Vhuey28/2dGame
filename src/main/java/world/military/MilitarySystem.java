@@ -24,10 +24,16 @@ public final class MilitarySystem {
     private static final long RECRUITMENT_COST = 20L;
     private final SimulationContext context;
     private final WorldState world;
+    private final BattleBridge battleBridge;
 
     public MilitarySystem(SimulationContext context) {
         this.context = context;
         this.world = context.getWorld();
+        this.battleBridge = new BattleBridge(context);
+    }
+
+    public BattleBridge getBattleBridge() {
+        return battleBridge;
     }
 
     public CommandResult recruitRegiment(long realmId, long settlementId, int requested,
@@ -171,39 +177,12 @@ public final class MilitarySystem {
         Army first = world.armies.get(firstArmyId);
         Army second = world.armies.get(secondArmyId);
         if (first == null || second == null || first.realmId == second.realmId
-                || first.state == Army.ArmyState.DISBANDED || second.state == Army.ArmyState.DISBANDED) return null;
-        RegimentSummary firstSummary = summarize(first);
-        RegimentSummary secondSummary = summarize(second);
-        if (firstSummary.strength == 0 || secondSummary.strength == 0) return null;
-        first.state = Army.ArmyState.ENGAGED;
-        second.state = Army.ArmyState.ENGAGED;
-        double firstPower = combatPower(first, firstSummary);
-        double secondPower = combatPower(second, secondSummary);
-        boolean firstWins = firstPower >= secondPower;
-        int firstLosses = Math.max(1, (int) Math.round(firstSummary.strength
-                * (firstWins ? 0.08 : 0.28) * casualtyVariance()));
-        int secondLosses = Math.max(1, (int) Math.round(secondSummary.strength
-                * (firstWins ? 0.28 : 0.08) * casualtyVariance()));
-        firstLosses = Math.min(firstSummary.strength, firstLosses);
-        secondLosses = Math.min(secondSummary.strength, secondLosses);
-        applyCasualties(first, firstLosses, currentMinute);
-        applyCasualties(second, secondLosses, currentMinute);
-        Army winner = firstWins ? first : second;
-        Army loser = firstWins ? second : first;
-        winner.morale = clamp(winner.morale + 8.0);
-        winner.fatigue = clamp(winner.fatigue + 12.0);
-        winner.state = Army.ArmyState.MUSTERED;
-        loser.morale = clamp(loser.morale - 20.0);
-        loser.state = Army.ArmyState.ROUTED;
-        loser.order = Army.ArmyOrder.RETURN_HOME;
-        if (loser.homeSettlementId != null && summarize(loser).strength > 0) {
-            issueMoveOrder(loser.id, loser.homeSettlementId, Army.ArmyOrder.RETURN_HOME, currentMinute);
-        }
-        BattleReport report = new BattleReport(world.idGenerator.next(), first.id, second.id,
-                winner.id, firstLosses, secondLosses, currentMinute);
-        world.battleReports.put(report.id, report);
-        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), currentMinute, "ARMIES_CLASHED"));
-        return report;
+                || first.state == Army.ArmyState.DISBANDED || second.state == Army.ArmyState.DISBANDED
+                || strength(first) <= 0 || strength(second) <= 0) return null;
+        BattleContext battle = battleBridge.createContext(firstArmyId, secondArmyId, false, currentMinute);
+        BattleResult result = battleBridge.autoResolve(battle);
+        CommandResult reconciled = battleBridge.reconcile(result);
+        return reconciled.accepted ? world.battleReports.get(battle.battleId) : null;
     }
 
     public CommandResult demobilize(long armyId, long currentMinute) {

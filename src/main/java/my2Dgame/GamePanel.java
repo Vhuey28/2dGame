@@ -29,6 +29,8 @@ import entity.Squad;
 import tile.tileManager;
 import world.CampaignSession;
 import world.CampaignSnapshot;
+import world.military.BattleContext;
+import world.military.BattleResult;
 import world.WorldConfig;
 import world.economy.GoodType;
 
@@ -120,6 +122,7 @@ public class GamePanel extends JPanel implements Runnable{
 		private final java.util.Map<Long, Rectangle> campaignSettlementHitboxes = new java.util.HashMap<>();
 		private final java.util.List<LocalPlaceholder> campaignLocalPlaceholders = new java.util.ArrayList<>();
 		private String localInteractionMessage = "Walk near a marker and press F";
+		private BattleContext activeCampaignBattle;
 		private static final long CAMPAIGN_SEED = WorldConfig.DEFAULT_SEED;
 		private party.Party pendingEnemyParty;
 	private boolean pendingCaughtFleeing;
@@ -253,6 +256,17 @@ public class GamePanel extends JPanel implements Runnable{
 						}
 						if (currentLayer == GameLayer.OVERWORLD && code == KeyEvent.VK_F) {
 							interactWithCampaignPlaceholder();
+							repaint();
+							return;
+						}
+						if (currentLayer == GameLayer.WORLD_MAP && code == KeyEvent.VK_K) {
+							startCampaignTacticalBattle();
+							repaint();
+							return;
+						}
+						if (currentLayer == GameLayer.BATTLE && activeCampaignBattle != null
+								&& code == KeyEvent.VK_R) {
+							resolveCampaignTacticalBattle();
 							repaint();
 							return;
 						}
@@ -739,6 +753,103 @@ public class GamePanel extends JPanel implements Runnable{
 			g2.fillRoundRect(14, screenHeight - 48, screenWidth - 28, 32, 8, 8);
 			g2.setColor(Color.WHITE);
 			g2.drawString("TAB: world map | " + localInteractionMessage, 24, screenHeight - 27);
+		}
+
+		private void startCampaignTacticalBattle() {
+			if (campaignSession == null || activeCampaignBattle != null) return;
+			java.util.List<world.Army> armies = new java.util.ArrayList<>(campaignSession.getWorld().armies.values());
+			armies.removeIf(army -> army.state == world.Army.ArmyState.DISBANDED
+				|| campaignSession.getSimulation().getMilitarySystem().strength(army) <= 0);
+			armies.sort(java.util.Comparator.comparingLong(army -> army.id));
+			world.Army first = null;
+			world.Army second = null;
+			for (int i = 0; i < armies.size() && first == null; i++) {
+				for (int j = i + 1; j < armies.size(); j++) {
+					if (armies.get(i).realmId != armies.get(j).realmId) {
+						first = armies.get(i);
+						second = armies.get(j);
+						break;
+					}
+				}
+			}
+			if (first == null || second == null) return;
+			activeCampaignBattle = campaignSession.getSimulation().getBattleBridge().createContext(
+				first.id, second.id, true, campaignSnapshot.worldMinute);
+			setupMap("map1.txt");
+			enemies.clear();
+			troops.clear();
+			allySquad.members.clear();
+			enemySquad.members.clear();
+			int index = 0;
+			for (BattleContext.TacticalCombatant combatant : activeCampaignBattle.attacker.combatants) {
+				entity.Troop.Role role = combatant.role == BattleContext.TacticalRole.ARCHER
+					? entity.Troop.Role.ARCHER : entity.Troop.Role.MELEE;
+				entity.Troop troop = new entity.Troop(this, tileSize * (5 + index % 4), tileSize * (7 + index / 4), role);
+				applyStrategicSource(troop, combatant);
+				troop.maxHealth = Math.max(10, (int) Math.round(30 * combatant.defenseModifier));
+				troop.health = troop.maxHealth;
+				troops.add(troop);
+				allySquad.addMember(troop);
+				index++;
+			}
+			index = 0;
+			for (BattleContext.TacticalCombatant combatant : activeCampaignBattle.defender.combatants) {
+				Enemy enemy = new Enemy(this);
+				enemy.x = tileSize * (25 + index % 4);
+				enemy.y = tileSize * (7 + index / 4);
+				enemy.setSpawnAnchor(enemy.x, enemy.y);
+				enemy.setType(combatant.role == BattleContext.TacticalRole.ARCHER
+					? Enemy.Type.ARCHER : Enemy.Type.TROOP);
+				applyStrategicSource(enemy, combatant);
+				enemy.maxHealth = Math.max(10, (int) Math.round(25 * combatant.defenseModifier));
+				enemy.health = enemy.maxHealth;
+				enemies.add(enemy);
+				enemySquad.addMember(enemy);
+				index++;
+			}
+			teleportPlayerForMap("map1.txt");
+			currentLayer = GameLayer.BATTLE;
+		}
+
+		private void applyStrategicSource(entity.Entity entity, BattleContext.TacticalCombatant combatant) {
+			entity.sourcePersonId = combatant.sourcePersonId;
+			entity.sourceRegimentId = combatant.sourceRegimentId;
+			entity.sourceArmyId = combatant.sourceArmyId;
+		}
+
+		private void resolveCampaignTacticalBattle() {
+			if (activeCampaignBattle == null || campaignSession == null) return;
+			java.util.Map<Long, BattleResult.CasualtyOutcome> outcomes = new java.util.HashMap<>();
+			int attackerLiving = 0;
+			for (entity.Troop troop : troops) {
+				if (troop.sourcePersonId == null) continue;
+				BattleResult.CasualtyOutcome outcome;
+				if (troop.health <= 0 || troop.isMeleeDying || troop.isArcherDying) outcome = BattleResult.CasualtyOutcome.KILLED;
+				else if (troop.health < troop.maxHealth / 3) outcome = BattleResult.CasualtyOutcome.SEVERELY_WOUNDED;
+				else if (troop.health < troop.maxHealth) outcome = BattleResult.CasualtyOutcome.WOUNDED;
+				else outcome = BattleResult.CasualtyOutcome.UNHARMED;
+				if (outcome != BattleResult.CasualtyOutcome.KILLED) attackerLiving++;
+				outcomes.put(troop.sourcePersonId, outcome);
+			}
+			int defenderLiving = 0;
+			for (Enemy enemy : enemies) {
+				if (enemy.sourcePersonId == null) continue;
+				BattleResult.CasualtyOutcome outcome;
+				if (enemy.dead || enemy.health <= 0) outcome = BattleResult.CasualtyOutcome.KILLED;
+				else if (enemy.health < enemy.maxHealth / 3) outcome = BattleResult.CasualtyOutcome.SEVERELY_WOUNDED;
+				else if (enemy.health < enemy.maxHealth) outcome = BattleResult.CasualtyOutcome.WOUNDED;
+				else outcome = BattleResult.CasualtyOutcome.UNHARMED;
+				if (outcome != BattleResult.CasualtyOutcome.KILLED) defenderLiving++;
+				outcomes.put(enemy.sourcePersonId, outcome);
+			}
+			BattleResult.WinningSide winner = attackerLiving == defenderLiving ? BattleResult.WinningSide.DRAW
+				: attackerLiving > defenderLiving ? BattleResult.WinningSide.ATTACKER : BattleResult.WinningSide.DEFENDER;
+			BattleResult result = campaignSession.getSimulation().getBattleBridge().resultFromTactical(
+				activeCampaignBattle.battleId, winner, outcomes, 60L);
+			campaignSession.getSimulation().getBattleBridge().reconcile(result);
+			activeCampaignBattle = null;
+			campaignSnapshot = CampaignSnapshot.capture(campaignSession.getSimulation());
+			currentLayer = GameLayer.WORLD_MAP;
 		}
 
 		private void startSurvivalMode() {
@@ -1855,6 +1966,13 @@ System.nanoTime();
 		drawMapLinks(g2);
 		drawMiniMap(g2);
 		drawPlayerStats(g2);
+		if (gameMode == GameMode.CAMPAIGN && activeCampaignBattle != null) {
+			g2.setColor(new Color(0, 0, 0, 190));
+			g2.fillRoundRect(180, 12, 410, 30, 8, 8);
+			g2.setColor(Color.YELLOW);
+			g2.drawString("Strategic battle " + activeCampaignBattle.battleId
+				+ " - fight, then press R to reconcile exact participants", 194, 32);
+		}
 		if (currentLayer == GameLayer.DEPLOYMENT) {
 			drawDeploymentScreen(g2);
 		} else if (gamePaused) {
@@ -2047,7 +2165,7 @@ System.nanoTime();
 			g2.drawString("Chronicle Conquest - Campaign", 20, 34);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 12));
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("TAB local | 1/2/3 speed | 0 pause | T travel | B buy grain | V sell | F6 +day", 20, 55);
+			g2.drawString("TAB local | K tactical battle | 1/2/3 speed | T travel | B/V trade | F6 +day", 20, 55);
 
 			if (snapshot == null) {
 				g2.setColor(Color.WHITE);
