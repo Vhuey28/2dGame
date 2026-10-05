@@ -128,7 +128,11 @@ public final class WorldGenerator {
 
     private long createSettlement(String name, long controllingRealmId, int x, int y, long provinceId) {
         long settlementId = world.idGenerator.next();
-        Settlement settlement = new Settlement(settlementId, name, provinceId, new WorldPosition(x, y), Settlement.SettlementType.VILLAGE);
+        // Cast both coordinates so Java selects the fixed-coordinate constructor,
+        // not the (routeEdgeId, routeProgress) overload. The old overload choice
+        // put every generated settlement at 0,0 on the campaign map.
+        Settlement settlement = new Settlement(settlementId, name, provinceId,
+                new WorldPosition((double) x, (double) y), Settlement.SettlementType.VILLAGE);
         settlement.controllerRealmId = controllingRealmId;
         settlement.market = new Market(settlementId);
         settlement.publicStockpile = new Inventory();
