@@ -32,7 +32,8 @@ public class EventHistory {
         return value.contains("WAR") || value.contains("BATTLE") || value.contains("SIEGE")
                 || value.contains("PEACE") || value.contains("TREATY") || value.contains("TITLE")
                 || value.contains("SUCCESSION") || value.contains("BIRTH") || value.contains("DEATH")
-                || value.contains("SETTLEMENT_CAPTURED") || value.contains("REALM");
+                || value.contains("SETTLEMENT_CAPTURED") || value.contains("REALM")
+                || value.contains("AUTOSAVE_SAFE_POINT");
     }
 
     /** Trim events older than the retention window from the recent list. */
