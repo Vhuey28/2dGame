@@ -26,7 +26,7 @@ jobs:
           mvn -B test 2>&1 | tee maven-test.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            grep -E '^\[ERROR\]|^Tests run:|<<< (FAILURE|ERROR)' maven-test.log | tail -50 |
+            grep -E '^\[ERROR\]|^Tests run:|<<< (FAILURE|ERROR)|^[[:space:]]+at (world|java\.base)' maven-test.log | tail -50 |
               while IFS= read -r line; do echo "::error::$line"; done
           fi
           exit "$status"
