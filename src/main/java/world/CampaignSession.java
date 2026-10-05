@@ -6,6 +6,7 @@ import world.geography.Road;
 import world.geography.Settlement;
 import world.geography.WorldPosition;
 import world.save.CampaignSaveCodec;
+import world.politics.Government;
 
 /**
  * Owns one playable campaign simulation and publishes immutable UI snapshots.
@@ -228,12 +229,12 @@ public final class CampaignSession {
         return CommandResult.accepted();
     }
 
-    public CommandResult adjustKingdomLaw(world.politics.Government.LawType law, int delta) {
+    public CommandResult adjustKingdomLaw(Government.LawType law, int delta) {
         Realm realm = effectivePlayerRealm();
         if (realm == null || realm.rulerPersonId == null || realm.rulerPersonId != playerState.personId) {
             return CommandResult.rejected("NOT_RULER", "Only the kingdom's ruler can change laws");
         }
-        world.politics.Government government = world.governments.get(realm.governmentId);
+        Government government = world.governments.get(realm.governmentId);
         if (government == null) return CommandResult.rejected("NO_GOVERNMENT", "Kingdom government not found");
         government.setLawLevel(law, government.getLawLevel(law) + delta);
         refreshSnapshot();

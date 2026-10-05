@@ -19,6 +19,7 @@ import world.economy.GoodType;
 import world.economy.Inventory;
 import world.geography.Settlement;
 import world.geography.WorldPosition;
+import world.politics.Government;
 
 /** Versioned Phase 4 campaign checkpoint. Derived caches are rebuilt rather than serialized. */
 public final class CampaignSaveCodec {
@@ -97,8 +98,8 @@ public final class CampaignSaveCodec {
         for (world.Realm realm : world.realms.values()) {
             out.writeLong(realm.id);
             out.writeLong(realm.rulerPersonId == null ? -1L : realm.rulerPersonId);
-            world.politics.Government government = world.governments.get(realm.governmentId);
-            for (world.politics.Government.LawType law : world.politics.Government.LawType.values()) {
+            Government government = world.governments.get(realm.governmentId);
+            for (Government.LawType law : Government.LawType.values()) {
                 out.writeInt(government == null ? 1 : government.getLawLevel(law));
             }
         }
@@ -182,8 +183,8 @@ public final class CampaignSaveCodec {
             if (realm.rulerPersonId != null && !world.people.containsKey(realm.rulerPersonId)) {
                 throw new IOException("Save references unknown ruler " + realm.rulerPersonId);
             }
-            world.politics.Government government = world.governments.get(realm.governmentId);
-            for (world.politics.Government.LawType law : world.politics.Government.LawType.values()) {
+            Government government = world.governments.get(realm.governmentId);
+            for (Government.LawType law : Government.LawType.values()) {
                 int level = in.readInt();
                 if (government != null) government.setLawLevel(law, level);
             }
