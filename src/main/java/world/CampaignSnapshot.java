@@ -72,6 +72,7 @@ public final class CampaignSnapshot {
     public static CampaignSnapshot capture(WorldSimulation simulation) {
         WorldState world = simulation.getWorld();
         long minute = simulation.getClock().getWorldMinute();
+        world.indexes.ensureBuilt(world, minute);
 
         int living = 0;
         for (Person person : world.people.values()) {
@@ -141,8 +142,9 @@ public final class CampaignSnapshot {
             double settlementFood = 0.0;
             int grain = settlement.publicStockpile.getQuantity(GoodType.GRAIN);
             int vegetables = settlement.publicStockpile.getQuantity(GoodType.VEGETABLES);
-            for (Household household : world.households.values()) {
-                if (household.homeSettlementId == settlement.id && household.getMemberCount() > 0) {
+            for (Long householdId : world.indexes.householdsAt(settlement.id)) {
+                Household household = world.households.get(householdId);
+                if (household != null && household.getMemberCount() > 0) {
                     households++;
                     settlementFood += household.foodSecurity;
                     grain += household.inventory.getQuantity(GoodType.GRAIN);
@@ -232,14 +234,7 @@ public final class CampaignSnapshot {
     }
 
     private static int countPopulation(WorldState world, long settlementId) {
-        int count = 0;
-        for (Person person : world.people.values()) {
-            if (person.alive && person.currentSettlementId != null
-                    && person.currentSettlementId == settlementId) {
-                count++;
-            }
-        }
-        return count;
+        return world.indexes.livingPeopleAt(settlementId).size();
     }
 
     public SettlementView findSettlement(long id) {

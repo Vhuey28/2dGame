@@ -59,6 +59,9 @@ public final class WorldState {
 
     public final java.util.Map<Long, world.economy.Workplace> workplaces = new java.util.HashMap<>();
 
+    /** Rebuildable secondary indexes used by remote batched systems and snapshots. */
+    public final WorldIndexes indexes = new WorldIndexes();
+
     /** All generated IDs for validation. Never null after init. */
     public final IdGenerator idGenerator = new IdGenerator();
 }

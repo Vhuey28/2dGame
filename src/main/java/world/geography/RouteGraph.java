@@ -16,8 +16,14 @@ public final class RouteGraph {
     /** Map from route edge id to the road itself. */
     private final Map<Long, Road> roadMap = new HashMap<>();
 
+    /** Cached route IDs. Copies are returned so callers cannot mutate cache state. */
+    private final Map<RouteKey, List<Long>> routeCache = new HashMap<>();
+    private long cacheHits;
+    private long cacheMisses;
+
     /** Add a road to the graph. Roads are directed; add both directions for two-way travel. */
     public void addRoad(Road road) {
+        clearRouteCache();
         adjacency.computeIfAbsent(road.fromSettlementId, k -> new ArrayList<>()).add(road);
         roadMap.put(road.id, road);
 
@@ -55,6 +61,17 @@ public final class RouteGraph {
      */
     public List<Road> findShortestRoute(long fromSettlementId, long toSettlementId) {
         if (fromSettlementId == toSettlementId) return new ArrayList<>();
+        RouteKey key = new RouteKey(fromSettlementId, toSettlementId);
+        List<Long> cached = routeCache.get(key);
+        if (cached != null) {
+            List<Road> route = materializeUsableRoute(cached);
+            if (route != null) {
+                cacheHits++;
+                return route;
+            }
+            routeCache.remove(key);
+        }
+        cacheMisses++;
 
         Map<Long, Double> distance = new HashMap<>();
         Map<Long, Road> previousRoad = new HashMap<>();
@@ -87,7 +104,54 @@ public final class RouteGraph {
             route.addFirst(road);
             cursor = road.fromSettlementId;
         }
-        return route;
+        List<Long> routeIds = new ArrayList<>();
+        for (Road road : route) routeIds.add(road.id);
+        routeCache.put(key, routeIds);
+        return new ArrayList<>(route);
+    }
+
+    private List<Road> materializeUsableRoute(List<Long> roadIds) {
+        List<Road> roads = new ArrayList<>(roadIds.size());
+        for (Long roadId : roadIds) {
+            Road road = roadMap.get(roadId);
+            if (road == null || road.blocked) return null;
+            roads.add(road);
+        }
+        return roads;
+    }
+
+    public void setRoadBlocked(long roadId, boolean blocked) {
+        Road road = roadMap.get(roadId);
+        if (road == null) return;
+        boolean changed = road.blocked != blocked;
+        road.blocked = blocked;
+        for (Road candidate : adjacency.getOrDefault(road.toSettlementId, List.of())) {
+            if (candidate.toSettlementId == road.fromSettlementId) {
+                changed |= candidate.blocked != blocked;
+                candidate.blocked = blocked;
+            }
+        }
+        if (changed) clearRouteCache();
+    }
+
+    public void clearRouteCache() { routeCache.clear(); }
+    public long getCacheHits() { return cacheHits; }
+    public long getCacheMisses() { return cacheMisses; }
+    public int getCachedRouteCount() { return routeCache.size(); }
+
+    private static final class RouteKey {
+        final long from;
+        final long to;
+        RouteKey(long from, long to) { this.from = from; this.to = to; }
+        @Override public boolean equals(Object other) {
+            if (this == other) return true;
+            if (!(other instanceof RouteKey)) return false;
+            RouteKey key = (RouteKey) other;
+            return from == key.from && to == key.to;
+        }
+        @Override public int hashCode() {
+            return 31 * Long.hashCode(from) + Long.hashCode(to);
+        }
     }
 
     private static final class RouteNode implements Comparable<RouteNode> {

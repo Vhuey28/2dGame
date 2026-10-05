@@ -29,6 +29,7 @@ public class WorldSimulation {
     private final SimulationContext context;
     private final ScheduledEventQueue scheduledEvents = new ScheduledEventQueue();
     private double accumulatedWorldMinutes = 0.0;
+    private final SimulationProfile profile = new SimulationProfile();
 
     // New systems for Phase 2: Food Economy
     private final MarketSystem marketSystem;
@@ -98,6 +99,10 @@ public class WorldSimulation {
         return warSystem;
     }
 
+    public SimulationProfile getProfile() {
+        return profile;
+    }
+
     /** Called each render frame to accumulate elapsed real time and advance the world. */
     public void update(double realSeconds) {
         if (clock.isPaused()) return;
@@ -113,6 +118,7 @@ public class WorldSimulation {
 
     /** Advance the clock by the specified minutes and process due events. */
     public void advanceMinutes(long minutes) {
+        long profileStart = System.nanoTime();
         long previousMinute = clock.getWorldMinute();
         clock.advance(minutes);
         long current = clock.getWorldMinute();
@@ -146,6 +152,8 @@ public class WorldSimulation {
         }
 
         context.eventHistory.trim(current);
+        if (currDay > prevDay) world.indexes.rebuild(world, current);
+        profile.recordTick(System.nanoTime() - profileStart);
     }
 
     /** Prepare systems after a generated or loaded world has populated registries. */

@@ -19,6 +19,8 @@ import world.military.Regiment;
 public final class WorldGenerator {
     private final WorldState world;
     private final SimulationContext context;
+    /** Generation-time batching avoids a continent-wide household scan per person. */
+    private final java.util.Map<Long, Household> openHouseholdBySettlement = new java.util.HashMap<>();
 
     public WorldGenerator(SimulationContext context) {
         this.context = context;
@@ -124,6 +126,60 @@ public final class WorldGenerator {
         createDiplomaticCore();
 
         System.out.println("Vertical slice generation complete");
+    }
+
+    /**
+     * Generate an opt-in synthetic continent for profiling. It deliberately
+     * avoids the bespoke vertical-slice story setup and leaves that default unchanged.
+     */
+    public void generateScale(WorldGenerationScale scale) {
+        if (!world.realms.isEmpty() || !world.geography.getSettlements().isEmpty()) {
+            throw new IllegalStateException("Scale generation requires an empty world");
+        }
+        java.util.List<Long> realmIds = new java.util.ArrayList<>();
+        java.util.List<Long> provinceIds = new java.util.ArrayList<>();
+        java.util.List<Long> settlementIds = new java.util.ArrayList<>();
+        for (int i = 0; i < scale.realms; i++) {
+            long realmId = world.idGenerator.next();
+            Realm realm = new Realm(realmId, "Realm " + (i + 1));
+            realm.treasury = new MoneyAccount(10_000L);
+            world.realms.put(realmId, realm);
+            realmIds.add(realmId);
+
+            long provinceId = world.idGenerator.next();
+            Province province = new Province(provinceId, "Province " + (i + 1), "scale_" + i,
+                    Province.TerrainType.PLAINS, Province.ClimateType.TEMPERATE);
+            province.controllerRealmId = realmId;
+            world.geography.addProvince(province);
+            realm.controlledProvinceIds.add(provinceId);
+            provinceIds.add(provinceId);
+        }
+        int columns = Math.max(1, (int) Math.ceil(Math.sqrt(scale.settlements)));
+        for (int i = 0; i < scale.settlements; i++) {
+            int owner = i % scale.realms;
+            long settlementId = createSettlement("Settlement " + (i + 1), realmIds.get(owner),
+                    80 + (i % columns) * 70, 80 + (i / columns) * 70, provinceIds.get(owner));
+            settlementIds.add(settlementId);
+            world.geography.getProvince(provinceIds.get(owner)).settlementIds.add(settlementId);
+            Realm realm = world.realms.get(realmIds.get(owner));
+            if (realm.capitalSettlementId == null) realm.capitalSettlementId = settlementId;
+            createFarmsForSettlement(world.geography.getSettlement(settlementId));
+            if (i > 0) createRoadBetween(settlementIds.get(i - 1), settlementId);
+            if (i >= columns) createRoadBetween(settlementIds.get(i - columns), settlementId);
+        }
+        for (int i = 0; i < scale.people; i++) {
+            long personId = world.idGenerator.next();
+            int age = context.getRandom("GENERATION").nextInt(1, 76);
+            Person person = new Person(personId, "Citizen" + personId, "Scale", i % 2 == 0
+                    ? Person.Sex.FEMALE : Person.Sex.MALE, -((long) age * WorldConfig.MINUTES_PER_YEAR));
+            person.homeSettlementId = settlementIds.get(i % settlementIds.size());
+            person.currentSettlementId = person.homeSettlementId;
+            person.type = age < 18 ? Person.PersonType.CHILD : Person.PersonType.CITIZEN;
+            world.people.put(personId, person);
+            assignToHousehold(person);
+        }
+        initializeHouseholdResources();
+        world.indexes.rebuild(world, context.getClock().getWorldMinute());
     }
 
     private long createSettlement(String name, long controllingRealmId, int x, int y, long provinceId) {
@@ -274,31 +330,18 @@ public final class WorldGenerator {
     }
 
     private void assignToHousehold(Person person) {
-        // Find or create a household for this person's settlement
         long settlementId = person.homeSettlementId;
-        Household household = null;
-
-        // Look for existing household in this settlement
-        for (Household h : world.households.values()) {
-            if (h.homeSettlementId == settlementId && h.getMemberCount() < 5) { // Max 5 per household for simplicity
-                household = h;
-                break;
-            }
-        }
-
-        // If no household found, create a new one
-        if (household == null) {
+        Household household = openHouseholdBySettlement.get(settlementId);
+        if (household == null || household.getMemberCount() >= 5) {
             long householdId = world.idGenerator.next();
             household = new Household(householdId, settlementId, person.id);
             world.households.put(householdId, household);
+            openHouseholdBySettlement.put(settlementId, household);
         }
-
-        // Add person to household
         household.addMember(person.id);
         person.householdId = household.id;
-        if (household.headPersonId == null) {
-            household.headPersonId = person.id;
-        }
+        if (household.headPersonId == null) household.headPersonId = person.id;
+        if (household.getMemberCount() >= 5) openHouseholdBySettlement.remove(settlementId);
     }
 
     /**

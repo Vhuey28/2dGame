@@ -12,6 +12,7 @@ public class HeadlessRunner {
 
         long seed = WorldConfig.DEFAULT_SEED;
         int years = 1;
+        boolean targetScale = args.length >= 3 && "target".equalsIgnoreCase(args[2]);
 
         if (args.length >= 1) {
             try {
@@ -28,7 +29,8 @@ public class HeadlessRunner {
             }
         }
 
-        System.out.println("Seed: " + seed + ", Years: " + years);
+        System.out.println("Seed: " + seed + ", Years: " + years
+                + ", Scale: " + (targetScale ? "target continent" : "vertical slice"));
 
         // Setup
         WorldClock clock = new WorldClock(0L);
@@ -46,7 +48,8 @@ public class HeadlessRunner {
 
         // Generate world
         WorldGenerator generator = new WorldGenerator(context);
-        generator.generateVerticalSlice();
+        if (targetScale) generator.generateScale(WorldGenerationScale.TARGET_CONTINENT);
+        else generator.generateVerticalSlice();
         sim.initializeGeneratedWorld();
 
         System.out.println("World after generation:");
@@ -132,6 +135,16 @@ public class HeadlessRunner {
             }
         }
         System.out.println("  People without household: " + invalidPeople);
+        WorldInvariantValidator.Report invariants = new WorldInvariantValidator().validate(state);
+        SimulationProfile profile = sim.getProfile();
+        System.out.println("Scale diagnostics:");
+        System.out.println("  Invariants: " + invariants);
+        System.out.println("  Average tick ms: " + String.format("%.3f", profile.getAverageTickMillis()));
+        System.out.println("  Slowest tick ms: " + String.format("%.3f", profile.getSlowestTickMillis()));
+        System.out.println("  Heap used MiB: " + String.format("%.1f", profile.getHeapUsedBytes() / 1048576.0));
+        System.out.println("  Route cache hits/misses: "
+                + state.geography.getRouteGraph().getCacheHits() + "/"
+                + state.geography.getRouteGraph().getCacheMisses());
 
         System.out.println("Headless run complete.");
     }

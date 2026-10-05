@@ -120,6 +120,7 @@ public final class MilitarySystem {
         for (Army army : new ArrayList<>(world.armies.values())) {
             if (army.state == Army.ArmyState.TRAVELING) moveOneHour(army, currentMinute);
         }
+        world.geography.getSpatialIndex().rebuildDynamic(world);
         detectEncounters(currentMinute);
     }
 
@@ -325,12 +326,14 @@ public final class MilitarySystem {
     private void detectEncounters(long minute) {
         List<Army> armies = new ArrayList<>(world.armies.values());
         armies.sort(Comparator.comparingLong(army -> army.id));
-        for (int i = 0; i < armies.size(); i++) {
-            Army first = armies.get(i);
+        for (Army first : armies) {
             if (!active(first)) continue;
-            for (int j = i + 1; j < armies.size(); j++) {
-                Army second = armies.get(j);
-                if (!active(second) || first.realmId == second.realmId || distance(first, second) > 12.0) continue;
+            for (Long nearbyId : world.geography.getSpatialIndex()
+                    .queryArmyIds(first.position.x, first.position.y, 12.0)) {
+                if (nearbyId <= first.id) continue; // each pair once
+                Army second = world.armies.get(nearbyId);
+                if (second == null || !active(second) || first.realmId == second.realmId
+                        || distance(first, second) > 12.0) continue;
                 first.detectedArmyIds.add(second.id);
                 second.detectedArmyIds.add(first.id);
                 context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "ARMY_DETECTED"));

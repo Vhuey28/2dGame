@@ -13,6 +13,7 @@ public final class GeographySystem {
     private final Map<Long, Building> buildings = new HashMap<>();
     private final Map<Long, District> districts = new HashMap<>();
     private final RouteGraph routeGraph = new RouteGraph();
+    private final WorldSpatialIndex spatialIndex = new WorldSpatialIndex(160.0);
 
     public void addProvince(Province province) {
         if (province == null) throw new IllegalArgumentException("Province cannot be null");
@@ -30,6 +31,7 @@ public final class GeographySystem {
     public void addSettlement(Settlement settlement) {
         if (settlement == null) throw new IllegalArgumentException("Settlement cannot be null");
         settlements.put(settlement.id, settlement);
+        spatialIndex.addSettlement(settlement);
     }
 
     public Settlement getSettlement(long settlementId) {
@@ -68,6 +70,10 @@ public final class GeographySystem {
 
     public RouteGraph getRouteGraph() {
         return routeGraph;
+    }
+
+    public WorldSpatialIndex getSpatialIndex() {
+        return spatialIndex;
     }
 
     /** Get the total number of settlements. */

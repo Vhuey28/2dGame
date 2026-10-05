@@ -2349,6 +2349,19 @@ Each phase must compile, run, and have tests before proceeding.
 - Target continent meets defined CPU, memory, save-size, and frame-rate budgets.
 - A 100-year soak test completes without invariant violations.
 
+### Implemented scale-up infrastructure (Phase 10)
+
+- `SimulationProfile` records average/slowest tick and heap diagnostics without feeding timing data back into deterministic decisions.
+- `ScaleBudgets` defines the target (24 realms, 240 settlements, 24,000 people), 50 ms average day tick, 512 MiB heap, 64 MiB save, and 60 FPS render budgets.
+- `RouteGraph` caches immutable route-ID plans, returns defensive route copies, invalidates on graph changes, and revalidates mutable road blocking.
+- `WorldSpatialIndex` indexes settlements and moving armies/caravans; army encounter candidate discovery now uses nearby grid buckets rather than all pairs.
+- `WorldIndexes` batches living-population, home-population, household, and workplace lookup by settlement. Campaign snapshots and generation use the derived indexes/batches instead of repeated continent-wide scans.
+- Historical event retention distinguishes routine/recent events from capped durable history.
+- `WorldGenerationScale` provides opt-in synthetic benchmark generation while preserving the six-settlement campaign default.
+- `WorldInvariantValidator` and `SoakRunner` provide reusable headless validation; focused CI coverage executes a 100-year empty-world clock/system soak plus generated-world consistency checks.
+
+Target-continent budget certification remains measurement-dependent: run the opt-in target scale on release hardware and report CPU, heap, serialized save size, and render FPS against `ScaleBudgets` before claiming certification.
+
 ---
 
 # 25. Detailed vertical-slice specification
