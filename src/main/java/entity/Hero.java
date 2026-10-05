@@ -24,7 +24,8 @@ public class Hero extends Entity {
         ROGUE("Rogue", "High crit/dodge melee DPS", 75, 18, 15, 10),
         PALADIN("Paladin", "Holy warrior with defensive auras", 110, 16, 8, 30),
         NECROMANCER("Necromancer", "Summons undead minions", 65, 8, 4, 90),
-        DRUID("Druid", "Hybrid shapeshifter/nature magic", 85, 14, 7, 60);
+        DRUID("Druid", "Hybrid shapeshifter/nature magic", 85, 14, 7, 60),
+        ADVENTURER("Adventurer", "The original player character", 100, 12, 5, 100);
 
         public final String displayName;
         public final String description;
@@ -216,9 +217,14 @@ public class Hero extends Entity {
                 abilities.add(new Ability("Entangling Roots", "Root enemies", 20, 35, Ability.AbilityType.CC));
                 abilities.add(new Ability("Wild Growth", "Heal over time AoE", 30, 50, Ability.AbilityType.AOE_HEAL));
                break;
+            case ADVENTURER:
+                abilities.add(new Ability("Fire Bolt", "Launch a fire projectile", 15, 60, Ability.AbilityType.PROJECTILE));
+                abilities.add(new Ability("Conqueror Field", "Damage and stun nearby enemies", 25, 120, Ability.AbilityType.AOE_DAMAGE));
+                abilities.add(new Ability("Healing Field", "Restore nearby allies", 20, 180, Ability.AbilityType.AOE_HEAL));
+                break;
         }
 
-        // Hero hotkeys 4/5/6 map directly to the first three class abilities.
+        // Hero hotkeys 1/2/3 map directly to the first three class abilities.
         for (int i = 1; i < abilities.size() && i <= 3; i++) {
             unlockedAbilities.add(abilities.get(i));
         }
@@ -323,6 +329,8 @@ private String getAssetFolderForClass() {
         case MAGE:
         case NECROMANCER:
             return "/player/triss/";
+        case ADVENTURER:
+            return "/player/sword_animations/";
         case WARRIOR:
         case ARCHER:
         case CLERIC:

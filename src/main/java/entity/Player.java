@@ -340,7 +340,7 @@ public class Player extends Entity{
 			performMeleeAttack();
 		}
 		
-		if (keyH.num1Pressed && mana >= 15) {
+		if (gp.activeHero == null && keyH.num1Pressed && mana >= 15) {
 			mana -= 15;
 			// spawn red triangle projectile
 			int dirX = 0, dirY = 0;
@@ -372,11 +372,11 @@ public class Player extends Entity{
 				}
 			}
 		}
-		if (keyH.num2Pressed && mana >= 25) {
+		if (gp.activeHero == null && keyH.num2Pressed && mana >= 25) {
 			mana -= 25;
 			areas.add(new AreaEffect(x + gp.tileSize/2f, y + gp.tileSize/2f, gp.tileSize*3, 120, AreaEffect.Type.STUN_AND_DAMAGE, true, this, conqurs));
 		}
-		if (keyH.num3Pressed && mana >= 20) {
+		if (gp.activeHero == null && keyH.num3Pressed && mana >= 20) {
 			mana -= 20;
 			areas.add(new AreaEffect(x + gp.tileSize/2f, y + gp.tileSize/2f, gp.tileSize*3, 180, AreaEffect.Type.HEAL,false, this, heals));
 		}

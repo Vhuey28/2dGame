@@ -19,6 +19,12 @@ class HeroAnimationResourcesTest {
         assertAnimation("/player/triss/standard/spellcast", 7);
     }
 
+    @Test
+    void adventurerCompanionHasCompleteWalkAndSlashAnimations() {
+        assertAnimation("/player/sword_animations/standard/walk", 9);
+        assertAnimation("/player/sword_animations/standard/slash", 6);
+    }
+
     private void assertAnimation(String basePath, int frameCount) {
         for (String direction : DIRECTIONS) {
             for (int frame = 1; frame <= frameCount; frame++) {

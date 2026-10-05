@@ -121,6 +121,7 @@ public class GamePanel extends JPanel implements Runnable{
 	// public java.util.List<entity.NPC> npcs = new java.util.ArrayList<>();
 	public java.util.List<Hero> heroes = new java.util.ArrayList<>();
 	public Hero activeHero = null;
+	private Hero adventurerCompanion;
 	public final java.util.List<HeroAbilityEffect> heroAbilityEffects = new java.util.ArrayList<>();
 	private Hero pendingPortalHero;
 	private Float portalEntranceX, portalEntranceY, portalExitX, portalExitY;
@@ -3935,6 +3936,7 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 	}
 
 	private void setActiveHero(Hero hero) {
+		boolean leavingAdventurer = activeHero == null && hero != null;
 		if (activeHero != null) {
 			activeHero.health = player.health;
 			activeHero.x = player.x;
@@ -3945,6 +3947,14 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 			storedPlayerMaxHealth = player.maxHealth;
 			storedPlayerMeleeDamage = player.meleeDamage;
 			storedPlayerProjectileDamage = player.projectileDamage;
+		}
+		if (leavingAdventurer) {
+			// Preserve any health or progression changes made while controlling the starter.
+			storedPlayerHealth = player.health;
+			storedPlayerMaxHealth = player.maxHealth;
+			storedPlayerMeleeDamage = player.meleeDamage;
+			storedPlayerProjectileDamage = player.projectileDamage;
+			showAdventurerCompanion();
 		}
 		activeHero = hero;
 		if (hero != null) {
@@ -3957,16 +3967,45 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 			player.meleeDamage = hero.attack;
 			player.projectileDamage = Math.max(6, hero.attack);
 		} else {
+			if (adventurerCompanion != null) {
+				storedPlayerHealth = adventurerCompanion.health;
+				storedPlayerMaxHealth = adventurerCompanion.maxHealth;
+				hideAdventurerCompanion();
+			}
 			player.maxHealth = storedPlayerMaxHealth;
-			player.health = Math.min(storedPlayerMaxHealth, storedPlayerHealth);
+			player.health = Math.max(1, Math.min(storedPlayerMaxHealth, storedPlayerHealth));
 			player.meleeDamage = storedPlayerMeleeDamage;
 			player.projectileDamage = storedPlayerProjectileDamage;
 		}
 	}
 
+	private void showAdventurerCompanion() {
+		if (adventurerCompanion == null) {
+			adventurerCompanion = new Hero(this, "Adventurer", Hero.HeroClass.ADVENTURER,
+					(int) player.x, (int) player.y);
+			adventurerCompanion.isRecruited = true;
+			adventurerCompanion.companionRole = Hero.CompanionRole.HYBRID;
+			adventurerCompanion.usePlayerAbilities = false;
+		}
+		adventurerCompanion.x = player.x;
+		adventurerCompanion.y = player.y;
+		adventurerCompanion.health = Math.max(1, storedPlayerHealth);
+		adventurerCompanion.maxHealth = storedPlayerMaxHealth;
+		adventurerCompanion.attack = storedPlayerMeleeDamage;
+		adventurerCompanion.activePlayerReference = player;
+		adventurerCompanion.isActivePlayer = false;
+		if (!heroes.contains(adventurerCompanion)) heroes.add(adventurerCompanion);
+		if (!recruitedHeroes.contains(adventurerCompanion)) recruitedHeroes.add(adventurerCompanion);
+	}
+
+	private void hideAdventurerCompanion() {
+		heroes.remove(adventurerCompanion);
+		recruitedHeroes.remove(adventurerCompanion);
+	}
+
 	private void switchActiveHero() {
 		java.util.List<Hero> recruited = new java.util.ArrayList<>();
-		for (Hero h : heroes) if (h.isRecruited) recruited.add(h);
+		for (Hero h : heroes) if (h.isRecruited && h != adventurerCompanion) recruited.add(h);
 		if (recruited.isEmpty()) { setActiveHero(null); return; }
 		if (activeHero == null) setActiveHero(recruited.get(0));
 		else {
@@ -4059,8 +4098,8 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 
 		Hero hero = activeHero;
 
-		// Key 4 - first unlocked ability
-		if (keyH.num4Pressed) {
+		// Key 1 - first class ability
+		if (keyH.num1Pressed) {
 			if (!hero.unlockedAbilities.isEmpty()) {
 				Hero.Ability ability = hero.unlockedAbilities.get(0);
 				Enemy target = findNearestEnemyToHero(hero);
@@ -4068,11 +4107,11 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 					hero.useAbility(ability, target);
 				}
 			}
-			keyH.num4Pressed = false; // Consume press
+			keyH.num1Pressed = false; // Consume press
 		}
 
-		// Key 5 - second unlocked ability
-		if (keyH.num5Pressed) {
+		// Key 2 - second class ability
+		if (keyH.num2Pressed) {
 			if (hero.unlockedAbilities.size() > 1) {
 				Hero.Ability ability = hero.unlockedAbilities.get(1);
 				Enemy target = findNearestEnemyToHero(hero);
@@ -4080,11 +4119,11 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 					hero.useAbility(ability, target);
 				}
 			}
-			keyH.num5Pressed = false; // Consume press
+			keyH.num2Pressed = false; // Consume press
 		}
 
-		// Key 6 - third unlocked ability
-		if (keyH.num6Pressed) {
+		// Key 3 - third class ability
+		if (keyH.num3Pressed) {
 			if (hero.unlockedAbilities.size() > 2) {
 				Hero.Ability ability = hero.unlockedAbilities.get(2);
 				Enemy target = findNearestEnemyToHero(hero);
@@ -4092,7 +4131,7 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 					hero.useAbility(ability, target);
 				}
 			}
-			keyH.num6Pressed = false; // Consume press
+			keyH.num3Pressed = false; // Consume press
 		}
 	}
 
@@ -4202,13 +4241,17 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 
 		y += spacing;
 		g2.drawString("Gold: " + gold, x + 6, y + height - 4);
+		g2.setFont(new Font("SansSerif", Font.PLAIN, 11));
 		if (activeHero != null && activeHero.isActivePlayer) {
-			g2.setFont(new Font("SansSerif", Font.PLAIN, 11));
 			for (int i = 0; i < activeHero.unlockedAbilities.size() && i < 3; i++) {
 				Hero.Ability ability = activeHero.unlockedAbilities.get(i);
 				String cooldown = ability.cooldown > 0 ? " [" + ability.cooldown + "]" : "";
-				g2.drawString((i + 4) + ": " + ability.name + cooldown, x + 6, y + 30 + i * 14);
+				g2.drawString((i + 1) + ": " + ability.name + cooldown, x + 6, y + 30 + i * 14);
 			}
+		} else {
+			g2.drawString("1: Fire Bolt", x + 6, y + 30);
+			g2.drawString("2: Conqueror Field", x + 6, y + 44);
+			g2.drawString("3: Healing Field", x + 6, y + 58);
 		}
 
 		// Inventory button - hide in survival mode
