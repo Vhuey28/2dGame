@@ -15,6 +15,7 @@ import world.politics.Government;
 import world.politics.PoliticalFaction;
 import world.diplomacy.DiplomaticState;
 import world.diplomacy.Treaty;
+import world.military.Siege;
 
 /**
  * Immutable presentation snapshot of the simulated campaign world.
@@ -221,8 +222,8 @@ public final class CampaignSnapshot {
         int activeWars = 0;
         for (War war : world.wars.values()) if (war.state == War.WarState.ACTIVE) activeWars++;
         int activeSieges = 0;
-        for (world.military.Siege siege : world.sieges.values()) {
-            if (siege.state == world.military.Siege.SiegeState.ACTIVE) activeSieges++;
+        for (Siege siege : world.sieges.values()) {
+            if (siege.state == Siege.SiegeState.ACTIVE) activeSieges++;
         }
         return new CampaignSnapshot(minute, simulation.getClock().getSpeed(),
                 simulation.getClock().isPaused(), living, world.households.size(),
