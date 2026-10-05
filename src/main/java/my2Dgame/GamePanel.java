@@ -2049,7 +2049,9 @@ System.nanoTime();
 				g2.setColor(colorForRealm(realm.id));
 				g2.drawString(realm.name, panelX, y); y += 13;
 				g2.setColor(Color.LIGHT_GRAY);
-				g2.drawString(" pop " + realm.population + "  treasury " + realm.treasury, panelX, y); y += 14;
+				g2.drawString(" " + realm.rulerName + "  leg " + Math.round(realm.legitimacy), panelX, y); y += 13;
+				g2.drawString(" pop " + realm.population + " treasury " + realm.treasury, panelX, y); y += 13;
+				g2.drawString(" " + realm.successionLaw + " factions " + realm.factionCount, panelX, y); y += 14;
 			}
 
 			y += 5;

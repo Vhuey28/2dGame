@@ -13,6 +13,7 @@ import world.economy.HouseholdTradeSystem;
 import world.economy.Inventory;
 import world.economy.MoneyAccount;
 import world.trade.TradeSystem;
+import world.politics.PoliticsSystem;
 
 /**
  * The simulation orchestrator. Advances time, processes scheduled events,
@@ -36,6 +37,7 @@ public class WorldSimulation {
     private final EmploymentSystem employmentSystem;
     private final HouseholdTradeSystem householdTradeSystem;
     private final TradeSystem tradeSystem;
+    private final PoliticsSystem politicsSystem;
 
     public WorldSimulation(WorldClock clock, WorldState world) {
         this.clock = clock;
@@ -46,12 +48,13 @@ public class WorldSimulation {
         this.marketSystem = new MarketSystem(world.geography.getSettlements());
         this.productionSystem = new ProductionSystem(this.marketSystem);
         this.householdConsumptionSystem = new HouseholdConsumptionSystem(world.households);
-        this.taxSystem = new TaxSystem();
+        this.taxSystem = new TaxSystem(context);
         this.famineSystem = new FamineSystem(world.households, world.people, world.geography, context);
         this.demographicSystem = new DemographicSystem(context);
         this.employmentSystem = new EmploymentSystem(context);
         this.householdTradeSystem = new HouseholdTradeSystem(context);
         this.tradeSystem = new TradeSystem(context);
+        this.politicsSystem = new PoliticsSystem(context);
     }
 
     public WorldClock getClock() {
@@ -152,7 +155,8 @@ public class WorldSimulation {
     private void processMonthSystems(long currentMinute) {
         taxSystem.processMonth(world.geography.getSettlements(), world.households, world.people, currentMinute);
         famineSystem.processMonth(currentMinute);
-        demographicSystem.processMonth(); // Use world time for births/aging/deaths
+        demographicSystem.processMonth();
+        politicsSystem.processMonth(currentMinute);
     }
 
     private void onScheduledEvent(ScheduledEvent event, long currentMinute) {

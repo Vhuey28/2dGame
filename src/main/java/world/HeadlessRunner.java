@@ -77,6 +77,15 @@ public class HeadlessRunner {
         System.out.println("  Settlements: " + state.geography.getSettlementCount());
         System.out.println("  Realms: " + state.realms.size());
         System.out.println("  Workplaces: " + state.workplaces.size());
+        System.out.println("  Governments: " + state.governments.size());
+        System.out.println("  Titles: " + state.titles.size());
+        System.out.println("  Political factions: " + state.politicalFactions.size());
+        for (Realm realm : state.realms.values()) {
+            Person ruler = realm.rulerPersonId == null ? null : state.people.get(realm.rulerPersonId);
+            System.out.println("  " + realm.name + " ruler: "
+                    + (ruler == null ? "VACANT" : ruler.givenName + " " + ruler.familyName)
+                    + ", legitimacy=" + String.format("%.1f", realm.legitimacy));
+        }
 
         // Report on food economy
         System.out.println("Food economy status:");

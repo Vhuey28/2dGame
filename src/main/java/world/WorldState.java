@@ -33,6 +33,13 @@ public final class WorldState {
     /** All persistent wars. Never null after init. */
     public final java.util.Map<Long, War> wars = new java.util.HashMap<>();
 
+    /** Political institutions and legal state. */
+    public final java.util.Map<Long, world.politics.Government> governments = new java.util.HashMap<>();
+    public final java.util.Map<Long, world.politics.Title> titles = new java.util.HashMap<>();
+    public final java.util.Map<Long, world.politics.Office> offices = new java.util.HashMap<>();
+    public final java.util.Map<Long, world.politics.PoliticalFaction> politicalFactions = new java.util.HashMap<>();
+    public final java.util.Map<Long, world.politics.Claim> claims = new java.util.HashMap<>();
+
     /** Player's persistent adventurer state in Campaign mode, when present. */
     public PlayerCampaignState player;
 

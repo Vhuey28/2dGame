@@ -14,6 +14,7 @@ public final class Realm {
     public String name;
     public long governmentId;
     public long rulerTitleId;
+    public Long rulerPersonId;
     public Long capitalSettlementId;
     public Set<Long> controlledProvinceIds = new HashSet<>();
     public Set<Long> vassalRealmIds = new HashSet<>();

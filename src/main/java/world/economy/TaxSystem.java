@@ -2,7 +2,10 @@ package world.economy;
 
 import world.Household;
 import world.Person;
-import world.WorldConfig;
+import world.Realm;
+import world.SimulationContext;
+import world.WorldState;
+import world.politics.Government;
 
 import java.util.Map;
 
@@ -11,9 +14,12 @@ import java.util.Map;
  * Called monthly by the simulation.
  */
 public final class TaxSystem {
-    private final double taxRate = 0.10; // 10% tax on household income
-    private final double rentRate = 0.05; // 5% of household wealth as rent
-    private final double wagePerWorkerPerDay = 2.0; // base daily wages in copper coins
+    private final double rentRate = 0.05;
+    private final WorldState world;
+
+    public TaxSystem(SimulationContext context) {
+        this.world = context.getWorld();
+    }
 
     /**
      * Process monthly taxes, wages, and rent for all households.
@@ -22,56 +28,10 @@ public final class TaxSystem {
                              Map<Long, Household> households,
                              Map<Long, Person> people,
                              long currentMinute) {
-        // 1. Pay wages from workplaces to workers
-        payWages(settlements, people, households, currentMinute);
-
-        // 2. Collect rent from households (to settlement treasury)
+        // EmploymentSystem pays daily wages. This monthly pass handles rent
+        // and law-driven taxation without paying workers a second time.
         collectRent(settlements, households, currentMinute);
-
-        // 3. Collect taxes from households (to settlement treasury as realm proxy)
         collectTaxes(settlements, households, currentMinute);
-    }
-
-    /**
-     * Pay wages to workers from workplace output value.
-     * Wages are paid from the workplace owner's account to workers.
-     */
-    private void payWages(Map<Long, world.geography.Settlement> settlements,
-                          Map<Long, Person> people,
-                          Map<Long, Household> households,
-                          long currentMinute) {
-        for (world.geography.Settlement settlement : settlements.values()) {
-            for (Workplace workplace : settlement.workplaces) {
-                if (workplace.ownerHouseholdId == null) continue;
-
-                Household ownerHousehold = households.get(workplace.ownerHouseholdId);
-                if (ownerHousehold == null) continue;
-
-                int workerCount = workplace.getWorkerCount();
-                if (workerCount == 0) continue;
-
-                // Calculate total wage bill (daily wage * days in month)
-                int daysInMonth = WorldConfig.DAYS_PER_MONTH;
-                long totalWages = (long) (wagePerWorkerPerDay * workerCount * daysInMonth);
-
-                // Check if owner can pay
-                if (ownerHousehold.account.subtract(totalWages)) {
-
-                    // Distribute wages to workers
-                    long wagePerWorker = totalWages / workerCount;
-                    for (Long workerId : workplace.workerIds) {
-                        Person worker = people.get(workerId);
-                        if (worker != null && worker.alive) {
-                            // Add wage to worker's household
-                            Household workerHousehold = households.get(worker.householdId);
-                            if (workerHousehold != null) {
-                                workerHousehold.account.add(wagePerWorker);
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 
     /**
@@ -118,9 +78,23 @@ public final class TaxSystem {
                 wealth += (long) (household.inventory.getQuantity(good) * GoodsCatalog.getBasePrice(good));
             }
 
-            long tax = (long) (wealth * taxRate);
+            Realm realm = world.realms.get(settlement.controllerRealmId);
+            Government government = realm == null ? null : world.governments.get(realm.governmentId);
+            int lawLevel = government == null ? 1
+                    : government.getLawLevel(Government.LawType.TAXATION);
+            double taxRate = switch (lawLevel) {
+                case 0 -> 0.03;
+                case 1 -> 0.07;
+                case 2 -> 0.12;
+                default -> 0.18;
+            };
+            long assessedTax = (long) (wealth * taxRate);
+            long tax = Math.min(assessedTax, household.account.copperCoins);
             if (tax > 0 && household.account.subtract(tax)) {
-                settlement.treasury.add(tax);
+                long localShare = tax * 40 / 100;
+                settlement.treasury.add(localShare);
+                if (realm != null) realm.treasury.add(tax - localShare);
+                else settlement.treasury.add(tax - localShare);
             }
         }
     }

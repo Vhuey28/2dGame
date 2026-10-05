@@ -11,6 +11,8 @@ import world.economy.GoodType;
 import world.event.WorldEvent;
 import world.geography.Road;
 import world.geography.Settlement;
+import world.politics.Government;
+import world.politics.PoliticalFaction;
 
 /**
  * Immutable presentation snapshot of the simulated campaign world.
@@ -86,10 +88,27 @@ public final class CampaignSnapshot {
                     realmPopulation += countPopulation(world, settlement.id);
                 }
             }
+            Person ruler = realm.rulerPersonId == null ? null : world.people.get(realm.rulerPersonId);
+            Government government = world.governments.get(realm.governmentId);
+            String strongestFaction = "None";
+            double strongestSupport = 0.0;
+            int factionCount = 0;
+            for (PoliticalFaction faction : world.politicalFactions.values()) {
+                if (faction.realmId != realm.id || !faction.active) continue;
+                factionCount++;
+                if (faction.support >= strongestSupport) {
+                    strongestSupport = faction.support;
+                    strongestFaction = faction.goal.toString();
+                }
+            }
             realmViews.add(new RealmView(realm.id, realm.name,
                     realm.treasury == null ? 0L : realm.treasury.copperCoins,
                     realmPopulation, realmSettlements, realm.stability,
-                    realm.legitimacy, realm.warExhaustion));
+                    realm.legitimacy, realm.warExhaustion,
+                    ruler == null ? "Vacant" : ruler.givenName + " " + ruler.familyName,
+                    government == null ? "Unknown" : government.type.toString(),
+                    government == null ? "Unknown" : government.successionLaw.toString(),
+                    factionCount, strongestFaction, strongestSupport));
         }
         realmViews.sort(Comparator.comparing(view -> view.name));
 
@@ -201,10 +220,18 @@ public final class CampaignSnapshot {
         public final double stability;
         public final double legitimacy;
         public final double warExhaustion;
+        public final String rulerName;
+        public final String governmentType;
+        public final String successionLaw;
+        public final int factionCount;
+        public final String strongestFaction;
+        public final double strongestFactionSupport;
 
         RealmView(long id, String name, long treasury, int population,
                 int settlementCount, double stability, double legitimacy,
-                double warExhaustion) {
+                double warExhaustion, String rulerName, String governmentType,
+                String successionLaw, int factionCount, String strongestFaction,
+                double strongestFactionSupport) {
             this.id = id;
             this.name = name;
             this.treasury = treasury;
@@ -213,6 +240,12 @@ public final class CampaignSnapshot {
             this.stability = stability;
             this.legitimacy = legitimacy;
             this.warExhaustion = warExhaustion;
+            this.rulerName = rulerName;
+            this.governmentType = governmentType;
+            this.successionLaw = successionLaw;
+            this.factionCount = factionCount;
+            this.strongestFaction = strongestFaction;
+            this.strongestFactionSupport = strongestFactionSupport;
         }
     }
 

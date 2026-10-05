@@ -7,6 +7,7 @@ import world.economy.Workplace;
 import world.economy.GoodType;
 import world.economy.ProductionRecipe;
 import world.geography.*;
+import world.politics.*;
 
 /**
  * Generates an initial world for testing and vertical slice.
@@ -102,6 +103,7 @@ public final class WorldGenerator {
         assignFarmsToHouseholds();
         assignWorkersToFarms();
         createInitialCaravans();
+        createPoliticalCore();
 
         System.out.println("Vertical slice generation complete");
     }
@@ -368,5 +370,116 @@ public final class WorldGenerator {
             if (created >= 2) break;
         }
         System.out.println("Created " + created + " merchant caravans");
+    }
+
+    private void createPoliticalCore() {
+        java.util.List<Realm> realms = new java.util.ArrayList<>(world.realms.values());
+        realms.sort(java.util.Comparator.comparingLong(realm -> realm.id));
+        java.util.List<Title> createdTitles = new java.util.ArrayList<>();
+
+        for (int realmIndex = 0; realmIndex < realms.size(); realmIndex++) {
+            Realm realm = realms.get(realmIndex);
+            Government.SuccessionLaw succession = realmIndex == 0
+                    ? Government.SuccessionLaw.HEREDITARY
+                    : Government.SuccessionLaw.ELECTIVE;
+            Government.GovernmentType governmentType = realmIndex == 0
+                    ? Government.GovernmentType.FEUDAL_MONARCHY
+                    : Government.GovernmentType.ELECTIVE_MONARCHY;
+            Government government = new Government(world.idGenerator.next(), realm.id,
+                    governmentType, succession);
+            government.setLawLevel(Government.LawType.TAXATION, realmIndex == 0 ? 2 : 1);
+            government.setLawLevel(Government.LawType.CONSCRIPTION, 1);
+            government.setLawLevel(Government.LawType.TARIFFS, realmIndex == 0 ? 1 : 2);
+            world.governments.put(government.id, government);
+            realm.governmentId = government.id;
+
+            java.util.List<Person> candidates = realmResidents(realm.id);
+            if (candidates.isEmpty()) continue;
+            Person ruler = candidates.get(0);
+            ruler.type = Person.PersonType.NOBLE;
+            ruler.givenName = realmIndex == 0 ? "Alaric" : "Mira";
+            ruler.familyName = realmIndex == 0 ? "Arden" : "Balor";
+            ruler.skills.stewardship = 55 + realmIndex * 5;
+            ruler.skills.diplomacy = 45 + realmIndex * 10;
+            ruler.skills.leadership = 60;
+            ruler.personality.ambition = 65.0;
+
+            Title title = new Title(world.idGenerator.next(),
+                    realmIndex == 0 ? "Crown of Arden" : "Crown of Balor",
+                    Title.Rank.KINGDOM, realm.id);
+            title.installHolder(ruler.id, 0L, "FOUNDING_RULER");
+            world.titles.put(title.id, title);
+            createdTitles.add(title);
+            realm.rulerTitleId = title.id;
+            realm.rulerPersonId = ruler.id;
+
+            Office rulerOffice = new Office(world.idGenerator.next(), realm.id,
+                    Office.OfficeType.RULER, ruler.id, 0L);
+            world.offices.put(rulerOffice.id, rulerOffice);
+            ruler.officeId = rulerOffice.id;
+
+            Office.OfficeType[] councilTypes = {Office.OfficeType.STEWARD,
+                    Office.OfficeType.MARSHAL, Office.OfficeType.CHANCELLOR,
+                    Office.OfficeType.SPYMASTER};
+            for (int i = 0; i < councilTypes.length; i++) {
+                Person holder = candidates.get(Math.min(i + 1, candidates.size() - 1));
+                holder.type = Person.PersonType.NOBLE;
+                holder.skills.stewardship = 25 + context.getRandom("POLITICS").nextInt(51);
+                holder.skills.martial = 25 + context.getRandom("POLITICS").nextInt(51);
+                holder.skills.diplomacy = 25 + context.getRandom("POLITICS").nextInt(51);
+                holder.skills.intrigue = 25 + context.getRandom("POLITICS").nextInt(51);
+                Office office = new Office(world.idGenerator.next(), realm.id,
+                        councilTypes[i], holder.id, 0L);
+                world.offices.put(office.id, office);
+                holder.officeId = office.id;
+            }
+
+            PoliticalFaction taxFaction = new PoliticalFaction(world.idGenerator.next(), realm.id,
+                    PoliticalFaction.FactionGoal.LOWER_TAXES);
+            PoliticalFaction powerFaction = new PoliticalFaction(world.idGenerator.next(), realm.id,
+                    realmIndex == 0 ? PoliticalFaction.FactionGoal.NOBLE_PRIVILEGES
+                            : PoliticalFaction.FactionGoal.MERCHANT_PRIVILEGES);
+            for (int i = 1; i < Math.min(10, candidates.size()); i++) {
+                PoliticalFaction faction = i % 2 == 0 ? taxFaction : powerFaction;
+                faction.memberPersonIds.add(candidates.get(i).id);
+                candidates.get(i).personality.ambition = 40.0
+                        + context.getRandom("POLITICS").nextInt(51);
+            }
+            taxFaction.leaderPersonId = taxFaction.memberPersonIds.stream().findFirst().orElse(ruler.id);
+            powerFaction.leaderPersonId = powerFaction.memberPersonIds.stream().findFirst().orElse(ruler.id);
+            world.politicalFactions.put(taxFaction.id, taxFaction);
+            world.politicalFactions.put(powerFaction.id, powerFaction);
+        }
+
+        if (!createdTitles.isEmpty()) {
+            for (Province province : world.geography.getProvinces().values()) {
+                if (province.legalTitleId == null) province.legalTitleId = createdTitles.get(0).id;
+            }
+        }
+        if (createdTitles.size() >= 2) {
+            for (int i = 0; i < createdTitles.size(); i++) {
+                Title target = createdTitles.get((i + 1) % createdTitles.size());
+                Realm claimantRealm = realms.get(i);
+                if (claimantRealm.rulerPersonId == null) continue;
+                Claim claim = new Claim(world.idGenerator.next(), claimantRealm.rulerPersonId,
+                        target.id, 20.0, Claim.ClaimSource.GRANT, 0L);
+                world.claims.put(claim.id, claim);
+                target.claimIds.add(claim.id);
+            }
+        }
+        System.out.println("Created governments, crowns, councils, claims, and factions");
+    }
+
+    private java.util.List<Person> realmResidents(long realmId) {
+        java.util.List<Person> residents = new java.util.ArrayList<>();
+        for (Person person : world.people.values()) {
+            if (!person.alive || person.currentSettlementId == null
+                    || person.isChild(0L) || person.isElderly(0L)) continue;
+            Settlement settlement = world.geography.getSettlement(person.currentSettlementId);
+            if (settlement != null && settlement.controllerRealmId != null
+                    && settlement.controllerRealmId == realmId) residents.add(person);
+        }
+        residents.sort(java.util.Comparator.comparingLong(person -> person.id));
+        return residents;
     }
 }
