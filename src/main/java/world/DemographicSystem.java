@@ -94,6 +94,12 @@ public final class DemographicSystem {
         if (person.officeId != null) {
             person.officeId = null;
         }
+        if (person.regimentId != null) {
+            world.military.Regiment regiment = world.regiments.get(person.regimentId);
+            if (regiment != null) regiment.soldierPersonIds.remove(Long.valueOf(person.id));
+            person.regimentId = null;
+            person.travelingPartyId = null;
+        }
 
         // Dead people remain in world.people for history and family links, but
         // they must not continue consuming household food.

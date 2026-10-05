@@ -1,6 +1,7 @@
 package world.economy;
 
 import world.Household;
+import world.Person;
 
 import java.util.Map;
 
@@ -14,9 +15,11 @@ public final class HouseholdConsumptionSystem {
     private static final int VEGETABLE_DAILY_REQUIREMENT = 1;
 
     private final Map<Long, Household> households;
+    private final Map<Long, Person> people;
 
-    public HouseholdConsumptionSystem(Map<Long, Household> households) {
+    public HouseholdConsumptionSystem(Map<Long, Household> households, Map<Long, Person> people) {
         this.households = households;
+        this.people = people;
     }
 
     /**
@@ -33,7 +36,11 @@ public final class HouseholdConsumptionSystem {
      * Process food consumption for one household.
      */
     private void consumeForHousehold(Household household, long currentMinute) {
-        int memberCount = household.getMemberCount();
+        int memberCount = 0;
+        for (Long personId : household.memberIds) {
+            Person person = people.get(personId);
+            if (person != null && person.alive && person.regimentId == null) memberCount++;
+        }
         if (memberCount == 0) return;
 
         // Calculate daily food requirements

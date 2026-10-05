@@ -19,16 +19,27 @@ public final class HouseholdTradeSystem {
     public void processDay() {
         for (Household household : world.households.values()) {
             Settlement settlement = world.geography.getSettlement(household.homeSettlementId);
-            if (settlement == null || household.getMemberCount() == 0) continue;
-            sellSurplus(household, settlement, GoodType.GRAIN, household.getMemberCount() * 7);
-            sellSurplus(household, settlement, GoodType.VEGETABLES, household.getMemberCount() * 4);
+            int civilians = civilianMembers(household);
+            if (settlement == null || civilians == 0) continue;
+            sellSurplus(household, settlement, GoodType.GRAIN, civilians * 7);
+            sellSurplus(household, settlement, GoodType.VEGETABLES, civilians * 4);
         }
         for (Household household : world.households.values()) {
             Settlement settlement = world.geography.getSettlement(household.homeSettlementId);
-            if (settlement == null || household.getMemberCount() == 0) continue;
-            buyTowardTarget(household, settlement, GoodType.GRAIN, household.getMemberCount() * 3);
-            buyTowardTarget(household, settlement, GoodType.VEGETABLES, household.getMemberCount() * 2);
+            int civilians = civilianMembers(household);
+            if (settlement == null || civilians == 0) continue;
+            buyTowardTarget(household, settlement, GoodType.GRAIN, civilians * 3);
+            buyTowardTarget(household, settlement, GoodType.VEGETABLES, civilians * 2);
         }
+    }
+
+    private int civilianMembers(Household household) {
+        int count = 0;
+        for (Long personId : household.memberIds) {
+            world.Person person = world.people.get(personId);
+            if (person != null && person.alive && person.regimentId == null) count++;
+        }
+        return count;
     }
 
     private void sellSurplus(Household household, Settlement settlement,

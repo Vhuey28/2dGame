@@ -24,8 +24,10 @@ public final class WorldState {
     /** All persistent realms (kingdoms). Never null after init. */
     public final java.util.Map<Long, Realm> realms = new java.util.HashMap<>();
 
-    /** All persistent armies. Never null after init. */
+    /** Persistent armies, their person-level regiments, and resolved encounters. */
     public final java.util.Map<Long, Army> armies = new java.util.HashMap<>();
+    public final java.util.Map<Long, world.military.Regiment> regiments = new java.util.HashMap<>();
+    public final java.util.Map<Long, world.military.BattleReport> battleReports = new java.util.HashMap<>();
 
     /** All persistent caravans. Never null after init. */
     public final java.util.Map<Long, Caravan> caravans = new java.util.HashMap<>();

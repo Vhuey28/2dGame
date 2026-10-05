@@ -25,6 +25,8 @@ public final class EmploymentSystem {
                 if (person.alive && person.currentSettlementId != null
                         && person.currentSettlementId == settlement.id
                         && person.employerId == null
+                        && person.regimentId == null
+                        && person.travelingPartyId == null
                         && !person.isChild(currentMinute)
                         && !person.isElderly(currentMinute)) {
                     candidates.add(person);

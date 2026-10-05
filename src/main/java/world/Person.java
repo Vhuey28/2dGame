@@ -30,6 +30,10 @@ public final class Person {
     public Long travelingPartyId;
     public Long employerId;
     public Long officeId;
+    public Long regimentId;
+    public Long preMilitaryEmployerId;
+    public PersonType preMilitaryType;
+    public double militaryExperience;
 
     public PersonSkills skills = new PersonSkills();
     public PersonNeeds needs = new PersonNeeds();

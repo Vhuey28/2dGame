@@ -36,6 +36,7 @@ public final class CampaignSnapshot {
     public final List<SettlementView> settlements;
     public final List<RoadView> roads;
     public final List<CaravanView> caravans;
+    public final List<ArmyView> armies;
     public final PlayerView player;
     public final List<EventView> recentEvents;
 
@@ -43,8 +44,8 @@ public final class CampaignSnapshot {
             int livingPopulation, int householdCount, int armyCount,
             int caravanCount, int warCount, int activeTreatyCount, double averageFoodSecurity,
             List<RealmView> realms, List<SettlementView> settlements,
-            List<RoadView> roads, List<CaravanView> caravans, PlayerView player,
-            List<EventView> recentEvents) {
+            List<RoadView> roads, List<CaravanView> caravans, List<ArmyView> armies,
+            PlayerView player, List<EventView> recentEvents) {
         this.worldMinute = worldMinute;
         this.speed = speed;
         this.paused = paused;
@@ -59,6 +60,7 @@ public final class CampaignSnapshot {
         this.settlements = Collections.unmodifiableList(settlements);
         this.roads = Collections.unmodifiableList(roads);
         this.caravans = Collections.unmodifiableList(caravans);
+        this.armies = Collections.unmodifiableList(armies);
         this.player = player;
         this.recentEvents = Collections.unmodifiableList(recentEvents);
     }
@@ -175,6 +177,20 @@ public final class CampaignSnapshot {
         }
         caravanViews.sort(Comparator.comparingLong(view -> view.id));
 
+        List<ArmyView> armyViews = new ArrayList<>();
+        for (Army army : world.armies.values()) {
+            if (army.position == null || army.state == Army.ArmyState.DISBANDED) continue;
+            int strength = 0;
+            for (Long regimentId : army.regimentIds) {
+                world.military.Regiment regiment = world.regiments.get(regimentId);
+                if (regiment != null) strength += regiment.livingStrength(world);
+            }
+            armyViews.add(new ArmyView(army.id, army.realmId, army.position.x, army.position.y,
+                    strength, army.morale, army.fatigue,
+                    army.supplies.getQuantity(GoodType.GRAIN), army.order.toString(), army.state.toString()));
+        }
+        armyViews.sort(Comparator.comparingLong(view -> view.id));
+
         PlayerView playerView = null;
         if (world.player != null) {
             Household playerHousehold = world.households.get(world.player.householdId);
@@ -200,8 +216,8 @@ public final class CampaignSnapshot {
         }
         return new CampaignSnapshot(minute, simulation.getClock().getSpeed(),
                 simulation.getClock().isPaused(), living, world.households.size(),
-                world.armies.size(), world.caravans.size(), world.wars.size(), activeTreaties, averageFood,
-                realmViews, settlementViews, roadViews, caravanViews, playerView, eventViews);
+                armyViews.size(), world.caravans.size(), world.wars.size(), activeTreaties, averageFood,
+                realmViews, settlementViews, roadViews, caravanViews, armyViews, playerView, eventViews);
     }
 
     private static int countPopulation(WorldState world, long settlementId) {
@@ -368,6 +384,33 @@ public final class CampaignSnapshot {
             this.cargoQuantity = cargoQuantity;
             this.cash = cash;
             this.completedTrips = completedTrips;
+        }
+    }
+
+    public static final class ArmyView {
+        public final long id;
+        public final long realmId;
+        public final double worldX;
+        public final double worldY;
+        public final int strength;
+        public final double morale;
+        public final double fatigue;
+        public final int grain;
+        public final String order;
+        public final String state;
+
+        ArmyView(long id, long realmId, double worldX, double worldY, int strength,
+                double morale, double fatigue, int grain, String order, String state) {
+            this.id = id;
+            this.realmId = realmId;
+            this.worldX = worldX;
+            this.worldY = worldY;
+            this.strength = strength;
+            this.morale = morale;
+            this.fatigue = fatigue;
+            this.grain = grain;
+            this.order = order;
+            this.state = state;
         }
     }
 

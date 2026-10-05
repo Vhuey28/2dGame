@@ -76,7 +76,8 @@ public final class FamineSystem {
 
         for (Long personId : currentMembers) {
             Person person = people.get(personId);
-            if (person == null || !person.alive) continue;
+            // Active soldiers consume army supplies and face military attrition instead.
+            if (person == null || !person.alive || person.regimentId != null) continue;
 
             // Children and elderly are more vulnerable
             boolean isVulnerable = person.isChild(currentMinute) || person.isElderly(currentMinute);
@@ -111,6 +112,11 @@ public final class FamineSystem {
         if (destination == null || bestFood <= 0) return;
 
         java.util.List<Long> members = new java.util.ArrayList<>(household.memberIds);
+        members.removeIf(personId -> {
+            Person person = people.get(personId);
+            return person == null || !person.alive || person.regimentId != null;
+        });
+        if (members.isEmpty()) return;
         members.sort((id1, id2) -> {
             Person p1 = people.get(id1);
             Person p2 = people.get(id2);

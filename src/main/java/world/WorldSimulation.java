@@ -15,6 +15,7 @@ import world.economy.MoneyAccount;
 import world.trade.TradeSystem;
 import world.politics.PoliticsSystem;
 import world.diplomacy.DiplomacySystem;
+import world.military.MilitarySystem;
 
 /**
  * The simulation orchestrator. Advances time, processes scheduled events,
@@ -40,6 +41,7 @@ public class WorldSimulation {
     private final TradeSystem tradeSystem;
     private final PoliticsSystem politicsSystem;
     private final DiplomacySystem diplomacySystem;
+    private final MilitarySystem militarySystem;
 
     public WorldSimulation(WorldClock clock, WorldState world) {
         this.clock = clock;
@@ -49,7 +51,7 @@ public class WorldSimulation {
         // Initialize new systems
         this.marketSystem = new MarketSystem(world.geography.getSettlements());
         this.productionSystem = new ProductionSystem(this.marketSystem);
-        this.householdConsumptionSystem = new HouseholdConsumptionSystem(world.households);
+        this.householdConsumptionSystem = new HouseholdConsumptionSystem(world.households, world.people);
         this.taxSystem = new TaxSystem(context);
         this.famineSystem = new FamineSystem(world.households, world.people, world.geography, context);
         this.demographicSystem = new DemographicSystem(context);
@@ -58,6 +60,7 @@ public class WorldSimulation {
         this.tradeSystem = new TradeSystem(context);
         this.politicsSystem = new PoliticsSystem(context);
         this.diplomacySystem = new DiplomacySystem(context);
+        this.militarySystem = new MilitarySystem(context);
     }
 
     public WorldClock getClock() {
@@ -78,6 +81,10 @@ public class WorldSimulation {
 
     public DiplomacySystem getDiplomacySystem() {
         return diplomacySystem;
+    }
+
+    public MilitarySystem getMilitarySystem() {
+        return militarySystem;
     }
 
     /** Called each render frame to accumulate elapsed real time and advance the world. */
@@ -107,7 +114,9 @@ public class WorldSimulation {
         long prevHour = previousMinute / WorldConfig.MINUTES_PER_HOUR;
         long currHour = current / WorldConfig.MINUTES_PER_HOUR;
         for (long hour = prevHour + 1; hour <= currHour; hour++) {
-            tradeSystem.processHour(hour * WorldConfig.MINUTES_PER_HOUR);
+            long hourMinute = hour * WorldConfig.MINUTES_PER_HOUR;
+            tradeSystem.processHour(hourMinute);
+            militarySystem.processHour(hourMinute);
         }
 
         // Process every crossed boundary. This is important for campaign debug
@@ -142,6 +151,7 @@ public class WorldSimulation {
         householdTradeSystem.processDay();
         householdConsumptionSystem.processDay(currentMinute);
         tradeSystem.processDay(currentMinute);
+        militarySystem.processDay(currentMinute);
         long day = currentMinute / WorldConfig.MINUTES_PER_DAY;
         if (day % 7 == 0) {
             employmentSystem.processWeek(currentMinute);
@@ -160,6 +170,7 @@ public class WorldSimulation {
 
     /** Process all monthly systems (taxes, famine, demographics). */
     private void processMonthSystems(long currentMinute) {
+        militarySystem.processMonth(currentMinute);
         taxSystem.processMonth(world.geography.getSettlements(), world.households, world.people, currentMinute);
         famineSystem.processMonth(currentMinute);
         demographicSystem.processMonth();

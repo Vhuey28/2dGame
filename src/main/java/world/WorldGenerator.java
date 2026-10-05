@@ -9,6 +9,8 @@ import world.economy.ProductionRecipe;
 import world.geography.*;
 import world.politics.*;
 import world.diplomacy.*;
+import world.military.MilitarySystem;
+import world.military.Regiment;
 
 /**
  * Generates an initial world for testing and vertical slice.
@@ -105,6 +107,7 @@ public final class WorldGenerator {
         assignWorkersToFarms();
         createInitialCaravans();
         createPoliticalCore();
+        createInitialArmies();
         createDiplomaticCore();
 
         System.out.println("Vertical slice generation complete");
@@ -338,6 +341,8 @@ public final class WorldGenerator {
             settlement.publicStockpile.add(GoodType.GRAIN, 40 + i * 25);
             settlement.publicStockpile.add(GoodType.VEGETABLES, 40 + (settlements.size() - i) * 18);
             settlement.publicStockpile.add(GoodType.TIMBER, 15 + i * 4);
+            settlement.publicStockpile.add(GoodType.WEAPONS, 16);
+            settlement.publicStockpile.add(GoodType.ARMOR, 8);
         }
     }
 
@@ -470,6 +475,20 @@ public final class WorldGenerator {
             }
         }
         System.out.println("Created governments, crowns, councils, claims, and factions");
+    }
+
+    private void createInitialArmies() {
+        MilitarySystem military = new MilitarySystem(context);
+        java.util.List<Realm> realms = new java.util.ArrayList<>(world.realms.values());
+        realms.sort(java.util.Comparator.comparingLong(realm -> realm.id));
+        int created = 0;
+        for (Realm realm : realms) {
+            if (realm.capitalSettlementId == null) continue;
+            world.command.CommandResult result = military.recruitRegiment(realm.id,
+                    realm.capitalSettlementId, 12, Regiment.RegimentType.LEVY_INFANTRY, 0L);
+            if (result.accepted) created++;
+        }
+        System.out.println("Created " + created + " person-level armies");
     }
 
     private void createDiplomaticCore() {

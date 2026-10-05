@@ -84,6 +84,14 @@ public class HeadlessRunner {
         System.out.println("  Diplomatic relations: " + state.diplomaticStates.size());
         System.out.println("  Treaties: " + state.treaties.size());
         System.out.println("  Schemes: " + state.schemes.size());
+        System.out.println("  Regiments: " + state.regiments.size());
+        System.out.println("  Battles resolved: " + state.battleReports.size());
+        world.military.MilitarySystem military = sim.getMilitarySystem();
+        for (Army army : state.armies.values()) {
+            System.out.println("  Army " + army.id + ": " + military.strength(army)
+                    + " soldiers, morale=" + Math.round(army.morale)
+                    + ", food=" + army.supplies.getQuantity(GoodType.GRAIN));
+        }
         for (Realm realm : state.realms.values()) {
             Person ruler = realm.rulerPersonId == null ? null : state.people.get(realm.rulerPersonId);
             System.out.println("  " + realm.name + " ruler: "

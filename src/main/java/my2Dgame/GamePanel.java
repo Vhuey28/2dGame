@@ -2004,6 +2004,16 @@ System.nanoTime();
 				g2.drawString("Pop " + settlement.population, labelX, y + 6);
 			}
 
+			for (CampaignSnapshot.ArmyView army : snapshot.armies) {
+				int x = campaignMapCoordinate(army.worldX, bounds[0], bounds[1], mapX, mapW);
+				int y = campaignMapCoordinate(army.worldY, bounds[2], bounds[3], mapY, mapH);
+				g2.setColor(colorForRealm(army.realmId));
+				g2.fillRect(x - 6, y - 6, 12, 12);
+				g2.setColor(Color.WHITE);
+				g2.drawRect(x - 6, y - 6, 12, 12);
+				g2.drawString(Integer.toString(army.strength), x + 8, y + 4);
+			}
+
 			for (CampaignSnapshot.CaravanView caravan : snapshot.caravans) {
 				int x = campaignMapCoordinate(caravan.worldX, bounds[0], bounds[1], mapX, mapW);
 				int y = campaignMapCoordinate(caravan.worldY, bounds[2], bounds[3], mapY, mapH);
@@ -2030,6 +2040,10 @@ System.nanoTime();
 			g2.drawString(String.format("Food security: %.0f%%", snapshot.averageFoodSecurity * 100.0), panelX, y); y += 17;
 			g2.drawString("Armies/Caravans: " + snapshot.armyCount + "/" + snapshot.caravanCount, panelX, y); y += 17;
 			g2.drawString("Wars/Treaties: " + snapshot.warCount + "/" + snapshot.activeTreatyCount, panelX, y); y += 17;
+			if (!snapshot.armies.isEmpty()) {
+				CampaignSnapshot.ArmyView army = snapshot.armies.get(0);
+				g2.drawString("Army: " + army.strength + " " + army.order + " food " + army.grain, panelX, y); y += 17;
+			}
 			if (!snapshot.caravans.isEmpty()) {
 				CampaignSnapshot.CaravanView caravan = snapshot.caravans.get(0);
 				g2.drawString("Merchant: " + caravan.state + " " + caravan.cargoQuantity, panelX, y); y += 17;
