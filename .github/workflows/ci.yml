@@ -21,4 +21,12 @@ jobs:
           java-version: "17"
           cache: maven
       - name: Compile and test
-        run: mvn -B test
+        run: |
+          set -o pipefail
+          mvn -B test 2>&1 | tee maven-test.log
+      - name: Upload Maven test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maven-test-log
+          path: maven-test.log
