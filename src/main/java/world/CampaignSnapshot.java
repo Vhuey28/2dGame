@@ -40,6 +40,8 @@ public final class CampaignSnapshot {
     public final List<CaravanView> caravans;
     public final List<ArmyView> armies;
     public final List<ContractView> contracts;
+    public final List<PersonView> people;
+    public final List<CrimeView> crimes;
     public final PlayerView player;
     public final List<EventView> recentEvents;
 
@@ -49,7 +51,8 @@ public final class CampaignSnapshot {
             double averageFoodSecurity,
             List<RealmView> realms, List<SettlementView> settlements,
             List<RoadView> roads, List<CaravanView> caravans, List<ArmyView> armies,
-            List<ContractView> contracts, PlayerView player, List<EventView> recentEvents) {
+            List<ContractView> contracts, List<PersonView> people, List<CrimeView> crimes,
+            PlayerView player, List<EventView> recentEvents) {
         this.worldMinute = worldMinute;
         this.speed = speed;
         this.paused = paused;
@@ -67,6 +70,8 @@ public final class CampaignSnapshot {
         this.caravans = Collections.unmodifiableList(caravans);
         this.armies = Collections.unmodifiableList(armies);
         this.contracts = Collections.unmodifiableList(contracts);
+        this.people = Collections.unmodifiableList(people);
+        this.crimes = Collections.unmodifiableList(crimes);
         this.player = player;
         this.recentEvents = Collections.unmodifiableList(recentEvents);
     }
@@ -212,6 +217,23 @@ public final class CampaignSnapshot {
         }
         contractViews.sort(Comparator.comparingLong(view -> view.id));
 
+        List<PersonView> personViews = new ArrayList<>();
+        for (Person person : world.people.values()) {
+            if (!person.alive) continue;
+            personViews.add(new PersonView(person.id, person.givenName + " " + person.familyName,
+                    person.currentSettlementId, person.type.toString(), person.currentActivity.toString(),
+                    person.employerId, person.travelingPartyId));
+        }
+        personViews.sort(Comparator.comparingLong(view -> view.id));
+
+        List<CrimeView> crimeViews = new ArrayList<>();
+        for (CrimeIncident incident : world.crimeIncidents.values()) {
+            crimeViews.add(new CrimeView(incident.id, incident.settlementId, incident.offenderPersonId,
+                    incident.victimPersonId, incident.type.toString(), incident.minute,
+                    incident.discovered, incident.severity));
+        }
+        crimeViews.sort(Comparator.comparingLong(view -> view.minute));
+
         PlayerView playerView = null;
         if (world.player != null) {
             Household playerHousehold = world.households.get(world.player.householdId);
@@ -221,7 +243,8 @@ public final class CampaignSnapshot {
                     world.player.cargo.getQuantity(GoodType.GRAIN),
                     world.player.cargo.getQuantity(GoodType.VEGETABLES),
                     world.player.cargo.totalQuantity(), world.player.cargoCapacity,
-                    world.player.reputation, playerParty == null ? 1 : playerParty.memberPersonIds.size(),
+                    world.player.reputation, playerParty == null ? java.util.List.of(world.player.personId)
+                            : new ArrayList<>(playerParty.memberPersonIds),
                     world.player.acceptedContractIds.size());
         }
 
@@ -247,7 +270,7 @@ public final class CampaignSnapshot {
                 simulation.getClock().isPaused(), living, world.households.size(),
                 armyViews.size(), world.caravans.size(), activeWars, activeTreaties, activeSieges, averageFood,
                 realmViews, settlementViews, roadViews, caravanViews, armyViews,
-                contractViews, playerView, eventViews);
+                contractViews, personViews, crimeViews, playerView, eventViews);
     }
 
     private static int countPopulation(WorldState world, long settlementId) {
@@ -381,10 +404,12 @@ public final class CampaignSnapshot {
         public final int cargoCapacity;
         public final int reputation;
         public final int partySize;
+        public final List<Long> partyMemberIds;
         public final int activeContracts;
 
         PlayerView(long settlementId, long coins, int grain, int vegetables,
-                int cargoUsed, int cargoCapacity, int reputation, int partySize, int activeContracts) {
+                int cargoUsed, int cargoCapacity, int reputation,
+                List<Long> partyMemberIds, int activeContracts) {
             this.settlementId = settlementId;
             this.coins = coins;
             this.grain = grain;
@@ -392,8 +417,53 @@ public final class CampaignSnapshot {
             this.cargoUsed = cargoUsed;
             this.cargoCapacity = cargoCapacity;
             this.reputation = reputation;
-            this.partySize = partySize;
+            this.partyMemberIds = Collections.unmodifiableList(new ArrayList<>(partyMemberIds));
+            this.partySize = partyMemberIds.size();
             this.activeContracts = activeContracts;
+        }
+    }
+
+    public static final class PersonView {
+        public final long id;
+        public final String name;
+        public final Long settlementId;
+        public final String type;
+        public final String activity;
+        public final Long employerId;
+        public final Long partyId;
+
+        PersonView(long id, String name, Long settlementId, String type, String activity,
+                Long employerId, Long partyId) {
+            this.id = id;
+            this.name = name;
+            this.settlementId = settlementId;
+            this.type = type;
+            this.activity = activity;
+            this.employerId = employerId;
+            this.partyId = partyId;
+        }
+    }
+
+    public static final class CrimeView {
+        public final long id;
+        public final long settlementId;
+        public final long offenderPersonId;
+        public final Long victimPersonId;
+        public final String type;
+        public final long minute;
+        public final boolean discovered;
+        public final int severity;
+
+        CrimeView(long id, long settlementId, long offenderPersonId, Long victimPersonId,
+                String type, long minute, boolean discovered, int severity) {
+            this.id = id;
+            this.settlementId = settlementId;
+            this.offenderPersonId = offenderPersonId;
+            this.victimPersonId = victimPersonId;
+            this.type = type;
+            this.minute = minute;
+            this.discovered = discovered;
+            this.severity = severity;
         }
     }
 

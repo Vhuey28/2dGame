@@ -35,6 +35,8 @@ public final class Person {
     public Long preMilitaryEmployerId;
     public PersonType preMilitaryType;
     public double militaryExperience;
+    public PersonActivity currentActivity = PersonActivity.IDLE;
+    public int scheduleOffsetHours;
 
     public PersonSkills skills = new PersonSkills();
     public PersonNeeds needs = new PersonNeeds();
@@ -62,6 +64,7 @@ public final class Person {
         this.sex = sex;
         this.birthMinute = birthMinute;
         this.alive = true;
+        this.scheduleOffsetHours = (int) Math.floorMod(id, 3L) - 1;
     }
 
     /** Age in years at the given world minute. */

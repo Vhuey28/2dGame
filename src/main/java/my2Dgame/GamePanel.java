@@ -119,6 +119,11 @@ public class GamePanel extends JPanel implements Runnable{
 		private CampaignSession campaignSession;
 		private volatile CampaignSnapshot campaignSnapshot;
 		private Long selectedCampaignSettlementId;
+		private Long hoveredCampaignSettlementId;
+		private java.awt.Point campaignMousePoint = new java.awt.Point();
+		private enum CampaignTab { OVERVIEW, INVENTORY, PARTY, CONTRACTS, PEOPLE, CRIME }
+		private CampaignTab activeCampaignTab = CampaignTab.OVERVIEW;
+		private final java.util.Map<CampaignTab, Rectangle> campaignTabHitboxes = new java.util.EnumMap<>(CampaignTab.class);
 		private final java.util.Map<Long, Rectangle> campaignSettlementHitboxes = new java.util.HashMap<>();
 		private final java.util.List<LocalPlaceholder> campaignLocalPlaceholders = new java.util.ArrayList<>();
 		private String localInteractionMessage = "Walk near a marker and press F";
@@ -393,28 +398,29 @@ public class GamePanel extends JPanel implements Runnable{
 		this.addMouseListener(new MouseAdapter() {
 			@Override
 			public void mouseClicked(MouseEvent e) {
+				java.awt.Point point = toGamePoint(e.getPoint());
 				if (currentLayer == GameLayer.DEPLOYMENT) {
-					if (formationLineButton.contains(e.getPoint())) {
+					if (formationLineButton.contains(point)) {
 						selectedFormation = entity.Formation.Type.LINE;
 						return;
 					}
-					if (formationWedgeButton.contains(e.getPoint())) {
+					if (formationWedgeButton.contains(point)) {
 						selectedFormation = entity.Formation.Type.WEDGE;
 						return;
 					}
-					if (formationCircleButton.contains(e.getPoint())) {
+					if (formationCircleButton.contains(point)) {
 						selectedFormation = entity.Formation.Type.CIRCLE;
 						return;
 					}
-					if (formationScatteredButton.contains(e.getPoint())) {
+					if (formationScatteredButton.contains(point)) {
 						selectedFormation = entity.Formation.Type.SCATTERED;
 						return;
 					}
-					if (beginBattleButton.contains(e.getPoint())) {
+					if (beginBattleButton.contains(point)) {
 						startBattle(pendingEnemyParty, pendingCaughtFleeing, selectedFormation);
 						return;
 					}
-					if (retreatButton.contains(e.getPoint())) {
+					if (retreatButton.contains(point)) {
 						attemptRetreat();
 						return;
 					}
@@ -422,22 +428,22 @@ public class GamePanel extends JPanel implements Runnable{
 				}
 				
 				if (!gameStarted) {
-					handleStartMenuClick(e.getPoint());
+					handleStartMenuClick(point);
 					return;
 				}
 				if (gameMode == GameMode.CAMPAIGN && currentLayer == GameLayer.WORLD_MAP && !gamePaused) {
-					handleCampaignMapClick(e.getPoint());
+					handleCampaignMapClick(point);
 					return;
 				}
 				if (gamePaused && settingsMenuOpen && !survivalPowerUpMenuOpen) {
 					BindingManager.Action[] actions = BindingManager.Action.values();
 					for (int i = 0; i < actions.length; i++) {
-						try{if (settingsRowRects[i][0].contains(e.getPoint())) {
+						try{if (settingsRowRects[i][0].contains(point)) {
 							awaitingRebindAction = actions[i];
 							awaitingRebindIsController = false;
 							return;
 						} }catch (ArrayIndexOutOfBoundsException ex) { /* ignore */ }
-						if (settingsRowRects[i][1].contains(e.getPoint())) {
+						if (settingsRowRects[i][1].contains(point)) {
 							awaitingRebindAction = actions[i];
 							awaitingRebindIsController = true;
 							return;
@@ -445,23 +451,23 @@ public class GamePanel extends JPanel implements Runnable{
 					}
 					return; // swallow other clicks while settings screen is open
 				}
-				if (gamePaused && !settingsMenuOpen && settingsButtonRect.contains(e.getPoint())) {
+				if (gamePaused && !settingsMenuOpen && settingsButtonRect.contains(point)) {
 					settingsMenuOpen = true;
 					return;
 				}
 				if (gamePaused) {
-					if (getRestartButtonRect().contains(e.getPoint())) {
+					if (getRestartButtonRect().contains(point)) {
 						restartGame();
 						return;
 					}
-					if(getQuitButtonRect().contains(e.getPoint())){
+					if(getQuitButtonRect().contains(point)){
 						quitSurvival();
 						return;
 					}
 					// Handle power-up menu clicks in survival mode
 					if (gameMode == GameMode.SURVIVAL && survivalPowerUpMenuOpen && powerUpButtons != null) {
 						for (int i = 0; i < powerUpButtons.length; i++) {
-							if (powerUpButtons[i] != null && powerUpButtons[i].contains(e.getPoint()) && i < currentPowerUpChoices.length && currentPowerUpChoices[i] != null) {
+							if (powerUpButtons[i] != null && powerUpButtons[i].contains(point) && i < currentPowerUpChoices.length && currentPowerUpChoices[i] != null) {
 								applyPowerUp(currentPowerUpChoices[i]);
 								survivalPowerUpMenuOpen = false;
 								gamePaused = false;
@@ -474,14 +480,14 @@ public class GamePanel extends JPanel implements Runnable{
 					
 					
 				}
-				if (gameMode != GameMode.SURVIVAL && inventoryButton.contains(e.getPoint())) {
+				if (gameMode != GameMode.SURVIVAL && inventoryButton.contains(point)) {
 					inventoryOpen = !inventoryOpen;
 					selectedInventoryIndex = -1;
 					repaint();
 					return;
 				}
 				if (inventoryOpen) {
-					handleInventoryClick(e.getPoint());
+					handleInventoryClick(point);
 				}
 			}
 			@Override
@@ -493,8 +499,33 @@ public class GamePanel extends JPanel implements Runnable{
    			 }
 			
 		});
+		this.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+			@Override public void mouseMoved(MouseEvent e) {
+				campaignMousePoint = toGamePoint(e.getPoint());
+				hoveredCampaignSettlementId = null;
+				if (gameMode == GameMode.CAMPAIGN && currentLayer == GameLayer.WORLD_MAP) {
+					for (java.util.Map.Entry<Long, Rectangle> entry : campaignSettlementHitboxes.entrySet()) {
+						if (entry.getValue().contains(campaignMousePoint)) {
+							hoveredCampaignSettlementId = entry.getKey();
+							break;
+						}
+					}
+				}
+				repaint();
+			}
+		});
 		this.setFocusable(true);
 		setupMap("map1.txt");
+	}
+
+	private java.awt.Point toGamePoint(java.awt.Point componentPoint) {
+		double sx = getWidth() / (double) screenWidth;
+		double sy = getHeight() / (double) screenHeight;
+		double renderScale = Math.max(0.0001, Math.min(sx, sy));
+		int offsetX = (int) ((getWidth() - screenWidth * renderScale) / 2.0);
+		int offsetY = (int) ((getHeight() - screenHeight * renderScale) / 2.0);
+		return new java.awt.Point((int) ((componentPoint.x - offsetX) / renderScale),
+			(int) ((componentPoint.y - offsetY) / renderScale));
 	}
 	
 
@@ -740,16 +771,11 @@ public class GamePanel extends JPanel implements Runnable{
 			enemies.clear();
 			troops.clear();
 			teleportPlayerForMap(localMap);
-			campaignLocalPlayerState = campaignSession.enterLocalScene();
+			campaignLocalPlayerState = campaignSession.enterLocalScene(
+				getCurrentMapWidthTiles() * tileSize, getCurrentMapHeightTiles() * tileSize);
 			player.health = campaignLocalPlayerState.health;
 			campaignLocalPlaceholders.clear();
 			String place = settlement == null ? "Settlement" : settlement.name;
-			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 8, tileSize * 7,
-				LocalPlaceholder.Type.PERSON, "Villager", "Welcome to " + place + "."));
-			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 13, tileSize * 8,
-				LocalPlaceholder.Type.PERSON, "Merchant", "I trade using the settlement's real market stock."));
-			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 18, tileSize * 11,
-				LocalPlaceholder.Type.PERSON, "Guard", "The roads and gates are being watched."));
 			String marketText = settlement == null ? "Market unavailable" : "Grain "
 				+ settlement.grainPrice + "c, vegetables " + settlement.vegetablePrice + "c";
 			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 11, tileSize * 14,
@@ -786,6 +812,44 @@ public class GamePanel extends JPanel implements Runnable{
 			} else {
 				localInteractionMessage = nearest.label + ": " + nearest.interactionText;
 			}
+		}
+
+		private void drawCampaignLocalActors(Graphics2D g2) {
+			if (gameMode != GameMode.CAMPAIGN || currentLayer != GameLayer.OVERWORLD
+					|| campaignSession == null) return;
+			for (world.local.LocalActor actor : campaignSession.getLocalActors()) {
+				int x = (int) actor.x - (int) cameraX;
+				int y = (int) actor.y - (int) cameraY;
+				switch (actor.kind) {
+					case CARAVAN -> {
+						g2.setColor(new Color(215, 155, 52));
+						g2.fillRoundRect(x - 14, y - 9, 28, 18, 5, 5);
+					}
+					case ARMY -> {
+						g2.setColor(new Color(180, 65, 55));
+						g2.fillRect(x - 12, y - 12, 24, 24);
+					}
+					default -> {
+						g2.setColor(actor.companion ? Color.CYAN : colorForActivity(actor.activity));
+						g2.fillOval(x - 7, y - 11, 14, 22);
+					}
+				}
+				if (Math.hypot(player.x - actor.x, player.y - actor.y) < tileSize * 2.0) {
+					g2.setColor(Color.WHITE);
+					g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+					g2.drawString(actor.label + " · " + actor.activity, x - 18, y - 16);
+				}
+			}
+		}
+
+		private Color colorForActivity(world.PersonActivity activity) {
+			return switch (activity) {
+				case WORKING, COMMUTING -> new Color(90, 155, 220);
+				case SHOPPING -> new Color(235, 185, 70);
+				case GUARDING, PATROLLING -> new Color(190, 80, 75);
+				case SLEEPING -> new Color(105, 105, 145);
+				default -> new Color(105, 195, 135);
+			};
 		}
 
 		private void drawCampaignLocalPlaceholders(Graphics2D g2) {
@@ -1440,6 +1504,10 @@ System.nanoTime();
 			if (gameMode == GameMode.CAMPAIGN && campaignSession != null) {
 				campaignSession.update(1.0 / FPS);
 				campaignSnapshot = campaignSession.getSnapshot();
+				if (currentLayer == GameLayer.OVERWORLD) {
+					campaignSession.updateLocalScene(1.0 / FPS,
+						getCurrentMapWidthTiles() * tileSize, getCurrentMapHeightTiles() * tileSize);
+				}
 				if (currentLayer == GameLayer.WORLD_MAP) {
 					return;
 				}
@@ -1999,7 +2067,8 @@ System.nanoTime();
 		 for (entity.Troop t : troopsSnapshot) {
 			t.draw(g2, (int)cameraX, (int)cameraY);
 		}
-		// draw hero companions
+		// Draw canonical local projections before interaction landmarks and companions.
+		drawCampaignLocalActors(g2);
 		drawCampaignLocalPlaceholders(g2);
 		for (Hero hero : heroesSnapshot) {
 			if (hero.isRecruited) {
@@ -2204,6 +2273,13 @@ System.nanoTime();
 	}
 
 		private void handleCampaignMapClick(java.awt.Point point) {
+			for (java.util.Map.Entry<CampaignTab, Rectangle> entry : campaignTabHitboxes.entrySet()) {
+				if (entry.getValue().contains(point)) {
+					activeCampaignTab = entry.getKey();
+					repaint();
+					return;
+				}
+			}
 			for (java.util.Map.Entry<Long, Rectangle> entry : campaignSettlementHitboxes.entrySet()) {
 				if (entry.getValue().contains(point)) {
 					selectedCampaignSettlementId = entry.getKey();
@@ -2403,6 +2479,109 @@ System.nanoTime();
 					if (y > screenHeight - 10) break;
 				}
 			}
+
+			drawCampaignTabs(g2, snapshot);
+			drawSettlementHoverCard(g2, snapshot);
+		}
+
+		private void drawCampaignTabs(Graphics2D g2, CampaignSnapshot snapshot) {
+			int barY = screenHeight - 32;
+			g2.setColor(new Color(10, 15, 21, 238));
+			g2.fillRect(0, barY, screenWidth, 32);
+			campaignTabHitboxes.clear();
+			CampaignTab[] tabs = CampaignTab.values();
+			int width = screenWidth / tabs.length;
+			for (int i = 0; i < tabs.length; i++) {
+				Rectangle rect = new Rectangle(i * width, barY, i == tabs.length - 1 ? screenWidth - i * width : width, 32);
+				campaignTabHitboxes.put(tabs[i], rect);
+				g2.setColor(tabs[i] == activeCampaignTab ? new Color(174, 132, 58) : new Color(42, 54, 64));
+				g2.fillRoundRect(rect.x + 2, rect.y + 3, rect.width - 4, rect.height - 5, 7, 7);
+				g2.setColor(Color.WHITE);
+				g2.setFont(new Font("SansSerif", Font.BOLD, 10));
+				String label = tabs[i].toString();
+				g2.drawString(label, rect.x + (rect.width - g2.getFontMetrics().stringWidth(label)) / 2, rect.y + 20);
+			}
+			if (activeCampaignTab == CampaignTab.OVERVIEW) return;
+			int panelY = screenHeight - 205;
+			g2.setColor(new Color(12, 18, 25, 242));
+			g2.fillRoundRect(18, panelY, screenWidth - 36, 166, 12, 12);
+			g2.setColor(new Color(205, 178, 112));
+			g2.drawRoundRect(18, panelY, screenWidth - 36, 166, 12, 12);
+			g2.setFont(new Font("Serif", Font.BOLD, 17));
+			g2.drawString(activeCampaignTab.toString(), 32, panelY + 24);
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+			g2.setColor(Color.WHITE);
+			int y = panelY + 44;
+			switch (activeCampaignTab) {
+				case INVENTORY -> {
+					if (snapshot.player != null) {
+						g2.drawString("Coins: " + snapshot.player.coins + "   Capacity: "
+							+ snapshot.player.cargoUsed + "/" + snapshot.player.cargoCapacity, 32, y); y += 16;
+						g2.drawString("Grain: " + snapshot.player.grain + "   Vegetables: " + snapshot.player.vegetables, 32, y);
+					}
+				}
+				case PARTY -> {
+					if (snapshot.player != null) for (Long memberId : snapshot.player.partyMemberIds) {
+						CampaignSnapshot.PersonView person = findPerson(snapshot, memberId);
+						if (person != null) { g2.drawString(person.name + "  " + person.type + "  " + person.activity, 32, y); y += 15; }
+					}
+				}
+				case CONTRACTS -> {
+					for (CampaignSnapshot.ContractView contract : snapshot.contracts) {
+						if ("EXPIRED".equals(contract.status)) continue;
+						g2.drawString("#" + contract.id + " " + contract.type + " " + contract.status
+							+ " reward " + contract.rewardCoins + "c", 32, y); y += 15;
+						if (y > panelY + 150) break;
+					}
+				}
+				case PEOPLE -> {
+					long settlementId = selectedCampaignSettlementId == null && snapshot.player != null
+						? snapshot.player.settlementId : selectedCampaignSettlementId == null ? -1 : selectedCampaignSettlementId;
+					for (CampaignSnapshot.PersonView person : snapshot.people) {
+						if (person.settlementId != null && person.settlementId == settlementId) {
+							g2.drawString(person.name + "  " + person.type + "  " + person.activity, 32, y); y += 15;
+							if (y > panelY + 150) break;
+						}
+					}
+				}
+				case CRIME -> {
+					for (int i = snapshot.crimes.size() - 1; i >= 0 && y <= panelY + 150; i--) {
+						CampaignSnapshot.CrimeView crime = snapshot.crimes.get(i);
+						g2.drawString(crime.type + " at settlement " + crime.settlementId + " severity "
+							+ crime.severity + (crime.discovered ? " discovered" : " hidden"), 32, y); y += 15;
+					}
+				}
+				default -> { }
+			}
+		}
+
+		private CampaignSnapshot.PersonView findPerson(CampaignSnapshot snapshot, long id) {
+			for (CampaignSnapshot.PersonView person : snapshot.people) if (person.id == id) return person;
+			return null;
+		}
+
+		private void drawSettlementHoverCard(Graphics2D g2, CampaignSnapshot snapshot) {
+			if (hoveredCampaignSettlementId == null) return;
+			CampaignSnapshot.SettlementView settlement = snapshot.findSettlement(hoveredCampaignSettlementId);
+			if (settlement == null) return;
+			int width = 220;
+			int x = Math.min(screenWidth - width - 8, campaignMousePoint.x + 14);
+			int y = Math.min(screenHeight - 150, campaignMousePoint.y + 14);
+			g2.setColor(new Color(8, 13, 18, 235));
+			g2.fillRoundRect(x, y, width, 132, 10, 10);
+			g2.setColor(new Color(225, 194, 120));
+			g2.drawRoundRect(x, y, width, 132, 10, 10);
+			g2.setFont(new Font("Serif", Font.BOLD, 15));
+			g2.drawString(settlement.name, x + 10, y + 20);
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+			g2.setColor(Color.WHITE);
+			g2.drawString("Population " + settlement.population + "  households " + settlement.households, x + 10, y + 39);
+			g2.drawString("Treasury " + settlement.treasury + "c", x + 10, y + 55);
+			g2.drawString("Grain " + settlement.grain + " @ " + settlement.grainPrice + "c", x + 10, y + 71);
+			g2.drawString("Vegetables " + settlement.vegetables + " @ " + settlement.vegetablePrice + "c", x + 10, y + 87);
+			g2.drawString(String.format("Security %.0f%%  unrest %.0f%%", settlement.security * 100, settlement.unrest * 100), x + 10, y + 103);
+			long crimeCount = snapshot.crimes.stream().filter(crime -> crime.settlementId == settlement.id).count();
+			g2.drawString("Recorded crime " + crimeCount + "  food " + Math.round(settlement.foodSecurity * 100) + "%", x + 10, y + 119);
 		}
 
 		private Rectangle placeCampaignLabel(int x, int y, int width, int height,

@@ -19,6 +19,7 @@ public final class WorldInvariantValidator {
         validateRegistry("realm", world.realms, violations);
         validateRegistry("party", world.parties, violations);
         validateRegistry("contract", world.contracts, violations);
+        validateRegistry("crime", world.crimeIncidents, violations);
 
         Set<Long> householdMembers = new HashSet<>();
         for (Household household : world.households.values()) {
@@ -63,6 +64,13 @@ public final class WorldInvariantValidator {
             if (contract.takerPartyId != null && !world.parties.containsKey(contract.takerPartyId)) {
                 violations.add("contract " + contract.id + " has missing taker party");
             }
+        }
+        for (CrimeIncident crime : world.crimeIncidents.values()) {
+            if (!world.people.containsKey(crime.offenderPersonId)) violations.add("crime " + crime.id + " has missing offender");
+            if (crime.victimPersonId != null && !world.people.containsKey(crime.victimPersonId)) {
+                violations.add("crime " + crime.id + " has missing victim");
+            }
+            if (world.geography.getSettlement(crime.settlementId) == null) violations.add("crime " + crime.id + " has missing settlement");
         }
         for (Road road : world.geography.getRouteGraph().getAllRoads()) {
             if (world.geography.getSettlement(road.fromSettlementId) == null

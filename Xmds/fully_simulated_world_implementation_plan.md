@@ -2372,6 +2372,20 @@ Each phase must compile, run, and have tests before proceeding.
 
 Target-continent budget certification remains measurement-dependent: run the opt-in target scale on release hardware and report CPU, heap, serialized save size, and render FPS against `ScaleBudgets` before claiming certification.
 
+## Phase 11 — Regional/local simulation fidelity
+
+### Implemented
+
+- Every living resident in a loaded settlement is projected by stable source ID into a moving local actor; the controlled player remains canonical and is not duplicated.
+- Persistent companions, docked caravans, and stationed armies receive distinct physical local representations.
+- `ScheduleSystem` assigns remote and loaded people sleeping, commuting, working, shopping, social, guard, patrol, and travel activities by world hour.
+- Local actors deterministically move between activity zones while strategic simulation continues.
+- `CrimeSystem` creates persistent individual offenses and applies theft, treasury, security, and unrest consequences to the canonical world.
+- Campaign snapshots expose people, schedules, and crime records for UI without direct registry iteration.
+- Campaign-map settlement hover cards show population, treasury, market, security, unrest, food, and crime information.
+- Bottom campaign tabs expose overview, inventory, party, contracts, people, and crime views.
+- Fullscreen uses a reliable F11 borderless/exclusive toggle, restores window bounds, retains keyboard focus, and maps scaled mouse input back to virtual coordinates.
+
 ---
 
 # 25. Detailed vertical-slice specification

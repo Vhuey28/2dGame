@@ -23,6 +23,7 @@ public final class SimulationContext {
         randomStreams.put("MILITARY", new SeededRandom(WorldConfig.DEFAULT_SEED + 4));
         randomStreams.put("GENERATION", new SeededRandom(WorldConfig.DEFAULT_SEED + 5));
         randomStreams.put("DIPLOMACY", new SeededRandom(WorldConfig.DEFAULT_SEED + 6));
+        randomStreams.put("CRIME", new SeededRandom(WorldConfig.DEFAULT_SEED + 7));
     }
 
     public WorldClock getClock() {

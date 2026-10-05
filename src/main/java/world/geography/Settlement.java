@@ -43,6 +43,10 @@ public final class Settlement {
         this.market = new Market(id); // Market ID is same as settlement for simplicity for now
         this.publicStockpile = new Inventory();
         this.treasury = new MoneyAccount();
+        this.security = 0.65;
+        this.sanitation = 0.55;
+        this.prosperity = 0.50;
+        this.unrest = 0.10;
     }
 
     /** Add a workplace to this settlement. */

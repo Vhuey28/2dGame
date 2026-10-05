@@ -18,6 +18,7 @@ public final class CampaignSession {
     private final WorldSimulation simulation;
     private final PlayerCampaignState playerState;
     private final ContractSystem contractSystem;
+    private world.local.LocalSceneSimulation localScene;
     private volatile CampaignSnapshot snapshot;
     private long lastSnapshotMinute = Long.MIN_VALUE;
 
@@ -87,6 +88,7 @@ public final class CampaignSession {
         context.randomStreams.put("MILITARY", new SeededRandom(seed + 4));
         context.randomStreams.put("GENERATION", new SeededRandom(seed + 5));
         context.randomStreams.put("DIPLOMACY", new SeededRandom(seed + 6));
+        context.randomStreams.put("CRIME", new SeededRandom(seed + 7));
     }
 
     public void update(double realSeconds) {
@@ -209,11 +211,25 @@ public final class CampaignSession {
     }
 
     public LocalPlayerState enterLocalScene() {
+        return enterLocalScene(1600, 1200);
+    }
+
+    public LocalPlayerState enterLocalScene(int localWidth, int localHeight) {
         WorldParty party = world.parties.get(playerState.partyId);
         if (party != null) party.state = WorldParty.PartyState.LOCAL_SCENE;
+        localScene = new world.local.LocalSceneSimulation(world, playerState.currentSettlementId,
+                localWidth, localHeight);
         Person person = world.people.get(playerState.personId);
         return new LocalPlayerState(person == null ? 100 : (int) Math.round(person.health.healthLevel),
                 playerState.currentSettlementId);
+    }
+
+    public void updateLocalScene(double seconds, int localWidth, int localHeight) {
+        if (localScene != null) localScene.update(seconds, clock.getWorldMinute(), localWidth, localHeight);
+    }
+
+    public java.util.List<world.local.LocalActor> getLocalActors() {
+        return localScene == null ? java.util.List.of() : localScene.getActors();
     }
 
     public void leaveLocalScene(LocalPlayerState local) {
@@ -225,6 +241,7 @@ public final class CampaignSession {
         }
         WorldParty party = world.parties.get(playerState.partyId);
         if (party != null) party.state = WorldParty.PartyState.AT_SETTLEMENT;
+        localScene = null;
         refreshSnapshot();
     }
 

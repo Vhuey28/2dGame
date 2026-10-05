@@ -45,6 +45,8 @@ public class WorldSimulation {
     private final DiplomacySystem diplomacySystem;
     private final MilitarySystem militarySystem;
     private final WarSystem warSystem;
+    private final ScheduleSystem scheduleSystem;
+    private final CrimeSystem crimeSystem;
 
     public WorldSimulation(WorldClock clock, WorldState world) {
         this.clock = clock;
@@ -65,6 +67,8 @@ public class WorldSimulation {
         this.diplomacySystem = new DiplomacySystem(context);
         this.militarySystem = new MilitarySystem(context);
         this.warSystem = new WarSystem(context, militarySystem);
+        this.scheduleSystem = new ScheduleSystem(world);
+        this.crimeSystem = new CrimeSystem(context);
     }
 
     public WorldClock getClock() {
@@ -132,6 +136,7 @@ public class WorldSimulation {
         long currHour = current / WorldConfig.MINUTES_PER_HOUR;
         for (long hour = prevHour + 1; hour <= currHour; hour++) {
             long hourMinute = hour * WorldConfig.MINUTES_PER_HOUR;
+            scheduleSystem.processHour(hourMinute);
             tradeSystem.processHour(hourMinute);
             militarySystem.processHour(hourMinute);
         }
@@ -161,6 +166,8 @@ public class WorldSimulation {
         long minute = clock.getWorldMinute();
         employmentSystem.processWeek(minute);
         tradeSystem.processWeek(minute);
+        scheduleSystem.processHour(minute);
+        world.indexes.rebuild(world, minute);
     }
 
     /** Process all daily systems (production, trade, consumption, market clearing). */
@@ -172,6 +179,8 @@ public class WorldSimulation {
         tradeSystem.processDay(currentMinute);
         militarySystem.processDay(currentMinute);
         warSystem.processDay(currentMinute);
+        world.indexes.rebuild(world, currentMinute);
+        crimeSystem.processDay(currentMinute);
         long day = currentMinute / WorldConfig.MINUTES_PER_DAY;
         if (day % 7 == 0) {
             employmentSystem.processWeek(currentMinute);

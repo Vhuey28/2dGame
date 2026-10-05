@@ -23,7 +23,7 @@ import world.geography.WorldPosition;
 /** Versioned Phase 4 campaign checkpoint. Derived caches are rebuilt rather than serialized. */
 public final class CampaignSaveCodec {
     private static final int MAGIC = 0x43435134; // CCQ4
-    private static final int VERSION = 1;
+    private static final int VERSION = 2;
 
     private CampaignSaveCodec() {}
 
@@ -96,6 +96,10 @@ public final class CampaignSaveCodec {
         for (Settlement settlement : world.geography.getSettlements().values()) {
             out.writeLong(settlement.id);
             out.writeLong(settlement.treasury.copperCoins);
+            out.writeDouble(settlement.security);
+            out.writeDouble(settlement.sanitation);
+            out.writeDouble(settlement.prosperity);
+            out.writeDouble(settlement.unrest);
             writeInventory(out, settlement.publicStockpile);
         }
 
@@ -163,6 +167,10 @@ public final class CampaignSaveCodec {
             Settlement settlement = world.geography.getSettlement(id);
             if (settlement == null) throw new IOException("Save references unknown settlement " + id);
             settlement.treasury.copperCoins = in.readLong();
+            settlement.security = in.readDouble();
+            settlement.sanitation = in.readDouble();
+            settlement.prosperity = in.readDouble();
+            settlement.unrest = in.readDouble();
             readInventory(in, settlement.publicStockpile);
         }
 
