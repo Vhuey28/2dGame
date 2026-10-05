@@ -518,7 +518,11 @@ public class GamePanel extends JPanel implements Runnable{
 								return;
 							}
 						}
-						return; // never fall through to restart/quit while choosing a power-up
+						if (getQuitButtonRect().contains(point)) {
+							quitSurvival();
+							return;
+						}
+						return; // never fall through to restart while choosing a power-up
 					}
 					if (getRestartButtonRect().contains(point)) {
 						restartGame();
@@ -593,7 +597,11 @@ public class GamePanel extends JPanel implements Runnable{
 		menuStage = MenuStage.MODE_SELECT;
 		survivalWaveNumber = 0;
 		survivalEnemyCountForWave = 10;
+		survivalWaveTransition = false;
 		survivalPowerUpMenuOpen = false;
+		survivalPortal = null;
+		survivalHeroChoice = SurvivalHeroChoice.NONE;
+		survivalAllyChoice = AllyChoice.NONE;
 		setActiveHero(null);
 		heroes.clear();
 		recruitedHeroes.clear();
@@ -1656,6 +1664,7 @@ System.nanoTime();
 			activeHero.y = player.y;
 			activeHero.health = player.health;
 			activeHero.direction = player.direction;
+			activeHero.syncControlledAttack(player.isAttacking, player.attackAnimationFrame, 6);
 		}
 		if (redBox != null) {
 			redBox.update(player);
@@ -3112,6 +3121,8 @@ System.nanoTime();
 		String controls = "Controls: WASD Move, SPACE Melee, 1/2/3 Magic, E Dodge";
 		int cw = g2.getFontMetrics().stringWidth(controls);
 		g2.drawString(controls, x + (width - cw) / 2, y + 200);
+
+		if (gameMode == GameMode.SURVIVAL) drawQuitSurvivalButton(g2);
 	}
 
 	// private void drawSettingsMenu(Graphics2D g2) {
@@ -3229,7 +3240,10 @@ System.nanoTime();
 			int textW = g2.getFontMetrics().stringWidth(currentPowerUpChoices[i]);
 			g2.drawString(currentPowerUpChoices[i], btn.x + (btn.width - textW) / 2, btn.y + 36);
 		}
-		// Quit Survival Mode button
+		drawQuitSurvivalButton(g2);
+	}
+
+	private void drawQuitSurvivalButton(Graphics2D g2) {
 		Rectangle quitBtn = getQuitButtonRect();
 		g2.setColor(new Color(128, 0, 0, 220));
 		g2.fillRoundRect(quitBtn.x, quitBtn.y, quitBtn.width, quitBtn.height, 12, 12);
@@ -3238,7 +3252,7 @@ System.nanoTime();
 		g2.setFont(new Font("Arial", Font.BOLD, 20));
 		String quitText = "Quit Survival Mode";
 		int quitTw = g2.getFontMetrics().stringWidth(quitText);
-		g2.drawString(quitText, quitBtn.x + (quitBtn.width - quitTw) / 2, quitBtn.y + 25);
+		g2.drawString(quitText, quitBtn.x + (quitBtn.width - quitTw) / 2, quitBtn.y + 32);
 	}
 
 	private void drawCrashMenu(Graphics2D g2) {

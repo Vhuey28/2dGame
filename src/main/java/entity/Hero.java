@@ -127,7 +127,7 @@ public class Hero extends Entity {
     public KingdomAffairs kingdomAffairs;
     
     private java.util.Map<String, BufferedImage[]> walkFrames = new java.util.HashMap<>();
-    private int spriteNumForWalk = 1;
+    private int spriteNumForWalk = 0;
 
     // ===== CONSTRUCTORS =====
     public Hero(GamePanel gp, String name, HeroClass heroClass, int startX, int startY) {
@@ -257,79 +257,54 @@ public class Hero extends Entity {
 
   
 
-        private void loadSprite() {
-            String[] dirs = {"up", "down", "left", "right"};
-            String walkSubPath = "standard/walk/";
-            String attackSubPath = "custom/slash_oversize/"; // pick ONE canonical subfolder per animation type — see note below
-            String basePath = getAssetFolderForClass();
-            boolean anyFrameLoaded = false;
+    private void loadSprite() {
+        String[] directions = {"up", "down", "left", "right"};
+        String basePath = getAssetFolderForClass();
+        String primaryAttack = heroClass == HeroClass.MAGE
+                ? "standard/spellcast/"
+                : "standard/slash/";
+        String fallbackAttack = heroClass == HeroClass.MAGE
+                ? "standard/slash/"
+                : "custom/slash_oversize/";
 
-            try {
-                for (String dir : dirs) {
-                    BufferedImage[] frames = new BufferedImage[10];
-                    for (int i = 1; i <= 9; i++) {
-                        String fullPath = basePath + walkSubPath + dir + "/" + i + ".png";
-                        InputStream is = getClass().getResourceAsStream(fullPath);
-                        if (is != null) {
-                            frames[i] = ImageIO.read(is);
-                            anyFrameLoaded = true;
-                        } else {
-                            System.out.println("Hero walk sprite missing: " + fullPath);
-                        }
-                    }
-                    walkFrames.put(dir, frames); // now only called ONCE per direction — nothing left to overwrite it
-                }
+        for (String facing : directions) {
+            BufferedImage[] walking = loadSequentialFrames(basePath, "standard/walk/", facing);
+            if (walking.length > 0) walkFrames.put(facing, walking);
 
-                for (String dir : dirs) {
-                    BufferedImage[] frames = new BufferedImage[8];
-                    for (int i = 1; i <= 7; i++) {
-                        String fullPath = basePath + attackSubPath + dir + "/" + i + ".png";
-                        InputStream is = getClass().getResourceAsStream(fullPath);
-                        if (is != null) {
-                            frames[i] = ImageIO.read(is);
-                        } else {
-                            System.out.println("Hero attack sprite missing: " + fullPath);
-                        }
-                    }
-                    attackFrames.put(dir, frames);
-                }
-
-                InputStream portraitStream = getClass().getResourceAsStream(basePath + "portrait.png");
-                portrait = (portraitStream != null) ? ImageIO.read(portraitStream) : null;
-            } catch (IOException e) {
-                e.printStackTrace();
+            BufferedImage[] attacking = loadSequentialFrames(basePath, primaryAttack, facing);
+            if (attacking.length == 0) {
+                attacking = loadSequentialFrames(basePath, fallbackAttack, facing);
             }
-
-            if (!anyFrameLoaded) {
-                buildFallbackSquare();
-            } else {
-                BufferedImage[] downFrames = walkFrames.get("down");
-                spriteSheet = (downFrames != null && downFrames[1] != null) ? downFrames[1] : null;
-                if (spriteSheet == null) buildFallbackSquare();
-            }
-            if (portrait == null) portrait = spriteSheet;
+            if (attacking.length > 0) attackFrames.put(facing, attacking);
         }
 
-        private BufferedImage[] loadFramesTryingSubpaths(String basePath, String[] candidateSubPaths, String dir, int frameCount) {
-            for (String subPath : candidateSubPaths) {
-                BufferedImage[] frames = new BufferedImage[frameCount + 1];
-                boolean foundAny = false;
-                for (int i = 1; i <= frameCount; i++) {
-                    String fullPath = basePath + subPath + dir + "/" + i + ".png";
-                    InputStream is = getClass().getResourceAsStream(fullPath);
-                    if (is != null) {
-                        try {
-                            frames[i] = ImageIO.read(is);
-                            foundAny = true;
-                        } catch (IOException e) {
-                            e.printStackTrace();
-                        }
-                    }
-                }
-                if (foundAny) return frames; // stop at the first subPath that actually produced data
-            }
-            return new BufferedImage[frameCount + 1]; // all-null array — caller's existing null checks handle this safely
+        portrait = loadOptionalImage(basePath + "portrait.png");
+        BufferedImage[] downFrames = walkFrames.get("down");
+        spriteSheet = downFrames != null && downFrames.length > 0 ? downFrames[0] : null;
+        if (spriteSheet == null) buildFallbackSquare();
+        if (portrait == null) portrait = spriteSheet;
+    }
+
+    /** Loads numbered animation PNGs into zero-based playback slots. */
+    private BufferedImage[] loadSequentialFrames(String basePath, String actionPath, String facing) {
+        java.util.List<BufferedImage> frames = new java.util.ArrayList<>();
+        for (int sourceFrame = 1; ; sourceFrame++) {
+            BufferedImage image = loadOptionalImage(
+                    basePath + actionPath + facing + "/" + sourceFrame + ".png");
+            if (image == null) break;
+            frames.add(image);
         }
+        return frames.toArray(new BufferedImage[0]);
+    }
+
+    private BufferedImage loadOptionalImage(String path) {
+        try (InputStream stream = getClass().getResourceAsStream(path)) {
+            return stream == null ? null : ImageIO.read(stream);
+        } catch (IOException e) {
+            System.err.println("Unable to load hero sprite " + path + ": " + e.getMessage());
+            return null;
+        }
+    }
 
 private void buildFallbackSquare() {
     spriteSheet = new BufferedImage(gp.tileSize, gp.tileSize, BufferedImage.TYPE_INT_ARGB);
@@ -340,64 +315,29 @@ private void buildFallbackSquare() {
     portrait = spriteSheet;
 }
 
-// You need to tell me the ACTUAL folder name for each hero class's assets —
-// I don't have that information, so this is a placeholder mapping to fill in:
 private String getAssetFolderForClass() {
-    String s= "";
     switch (heroClass) {
-        case WARRIOR: 
-            s ="/player/vince/"; // <-- fill in your real warrior asset folder
-            break;
-
-        case MAGE : 
-            s ="/player/triss/";
-            break;
-
-        case ARCHER : 
-            s = "/player/???/";
-            break;
-
-        case CLERIC :
-            s = "/player/???/";
-            break;
-        case ROGUE :
-            s = "/player/???/";
-            break;
-
-        case PALADIN : 
-            s =  "/player/???/";
-            break;
-
-        case NECROMANCER :
-            s=  "/player/???/";
-            break;
-
-        case DRUID :
-            s = "/player/???/";
-            break;
-    };
-    return s;
+        case MAGE:
+        case NECROMANCER:
+            return "/player/triss/";
+        case WARRIOR:
+        case ARCHER:
+        case CLERIC:
+        case ROGUE:
+        case PALADIN:
+        case DRUID:
+        default:
+            return "/player/vince/";
+    }
 }
 
-private String getAssetDirection(){
-    String s= "";
-    switch (direction) {
-            case "up" : 
-                s ="up";
-                break;
-            case "down" :
-                s=  "down";
-                break;
-            case "left" :
-                s=  "left";
-                break;
-            case "right" : 
-                s= "right";
-                break;
-            default: 
-                s="up";
-            };
-        return s;
+private String getAssetDirection() {
+    if ("down".equals(direction) || "downLeft".equals(direction) || "downRight".equals(direction)) {
+        return "down";
+    }
+    if ("left".equals(direction)) return "left";
+    if ("right".equals(direction)) return "right";
+    return "up";
 }
 
     private Color getClassColor() {
@@ -465,10 +405,11 @@ private String getAssetDirection(){
     }
 
     private void animateWalk() {
+        BufferedImage[] frames = walkFrames.get(getAssetDirection());
+        if (frames == null || frames.length == 0) return;
         spriteCounter++;
         if (spriteCounter > 12) {
-            spriteNumForWalk++;
-            if (spriteNumForWalk > 9) spriteNumForWalk = 1;
+            spriteNumForWalk = (spriteNumForWalk + 1) % frames.length;
             spriteCounter = 0;
         }
     }
@@ -788,13 +729,16 @@ private String getAssetDirection(){
         // The active hero is driven by GamePanel's player-control proxy. Other
         // recruited heroes remain autonomous companions.
         if (!isActivePlayer) updateCompanionAI();
+        else animateWalk();
 
-        if (isAttacking) {
+        if (isAttacking && !isActivePlayer) {
             attackAnimationCounter++;
             if (attackAnimationCounter > 4) {
                 attackAnimationFrame++;
                 attackAnimationCounter = 0;
-                if (attackAnimationFrame >= 7) { // match your actual frame count
+                BufferedImage[] frames = attackFrames.get(getAssetDirection());
+                int frameCount = frames == null ? 0 : frames.length;
+                if (frameCount == 0 || attackAnimationFrame >= frameCount) {
                     attackAnimationFrame = 0;
                     isAttacking = false;
                 }
@@ -812,6 +756,24 @@ private String getAssetDirection(){
     }
     private void updatePlayerControls() {
         // Movement handled by KeyHandler in GamePanel
+    }
+
+    /** Keeps the selected hero's class animation aligned with the proxy Player attack. */
+    public void syncControlledAttack(boolean attacking, int sourceFrame, int sourceFrameCount) {
+        isAttacking = attacking;
+        if (!attacking) {
+            attackAnimationFrame = 0;
+            return;
+        }
+        BufferedImage[] frames = attackFrames.get(getAssetDirection());
+        if (frames == null || frames.length == 0) {
+            attackAnimationFrame = 0;
+            return;
+        }
+        int sourceLast = Math.max(1, sourceFrameCount - 1);
+        float progress = Math.max(0, Math.min(sourceFrame, sourceLast)) / (float) sourceLast;
+        attackAnimationFrame = Math.min(frames.length - 1,
+                Math.round(progress * (frames.length - 1)));
     }
 
     public void gainExperience(int exp) {
@@ -907,18 +869,18 @@ private String getAssetDirection(){
         return s;
     }
     private BufferedImage getCurrentSpriteFrame() {
+        String facing = getAssetDirection();
         if (isAttacking) {
-            BufferedImage[] frames = attackFrames.get(direction);
-            if (frames != null && attackAnimationFrame < frames.length && frames[attackAnimationFrame] != null) {
-                return frames[attackAnimationFrame];
+            BufferedImage[] frames = attackFrames.get(facing);
+            if (frames != null && frames.length > 0) {
+                return frames[Math.floorMod(attackAnimationFrame, frames.length)];
             }
         }
-        BufferedImage[] walk = walkFrames.get(direction);
-        if (walk != null && spriteNumForWalk < walk.length && walk[spriteNumForWalk] != null) {
-            return walk[spriteNumForWalk];
+        BufferedImage[] walk = walkFrames.get(facing);
+        if (walk != null && walk.length > 0) {
+            return walk[Math.floorMod(spriteNumForWalk, walk.length)];
         }
         return spriteSheet;
-		
     }
 
     private void drawNameplate(Graphics2D g2, int cameraX, int cameraY) {

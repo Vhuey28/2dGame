@@ -2390,7 +2390,8 @@ Target-continent budget certification remains measurement-dependent: run the opt
 - Recruited heroes are linked to persistent campaign people, can fight autonomously or be selected with Q as the controlled character, and survival setup offers playable or AI-companion warrior/mage choices.
 - Market stalls, notice boards, and the current-settlement campaign marker open clear contextual menus for trading, accepting work, local entry, and settlement information.
 - The contract tab now shows active work only; the encyclopedia tab summarizes world population, activity, kingdoms, rulers, governments, and political state.
-- Survival power-up selection is processed before overlapping pause controls, preventing the center choice from restarting or exiting the mode.
+- Survival power-up selection is processed before overlapping pause controls, preventing the center choice from restarting; its dedicated Quit Survival Mode button remains actionable and fully clears Survival state.
+- Playable and companion heroes load zero-based directional animations from class-specific resources: Vince walk/slash frames for warriors and Triss walk/spellcast frames for mages, with controlled attacks synchronized to the proxy player.
 
 ---
 
