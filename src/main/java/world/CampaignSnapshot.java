@@ -31,6 +31,7 @@ public final class CampaignSnapshot {
     public final int caravanCount;
     public final int warCount;
     public final int activeTreatyCount;
+    public final int activeSiegeCount;
     public final double averageFoodSecurity;
     public final List<RealmView> realms;
     public final List<SettlementView> settlements;
@@ -42,7 +43,8 @@ public final class CampaignSnapshot {
 
     private CampaignSnapshot(long worldMinute, int speed, boolean paused,
             int livingPopulation, int householdCount, int armyCount,
-            int caravanCount, int warCount, int activeTreatyCount, double averageFoodSecurity,
+            int caravanCount, int warCount, int activeTreatyCount, int activeSiegeCount,
+            double averageFoodSecurity,
             List<RealmView> realms, List<SettlementView> settlements,
             List<RoadView> roads, List<CaravanView> caravans, List<ArmyView> armies,
             PlayerView player, List<EventView> recentEvents) {
@@ -55,6 +57,7 @@ public final class CampaignSnapshot {
         this.caravanCount = caravanCount;
         this.warCount = warCount;
         this.activeTreatyCount = activeTreatyCount;
+        this.activeSiegeCount = activeSiegeCount;
         this.averageFoodSecurity = averageFoodSecurity;
         this.realms = Collections.unmodifiableList(realms);
         this.settlements = Collections.unmodifiableList(settlements);
@@ -147,7 +150,8 @@ public final class CampaignSnapshot {
             }
             double food = households == 0 ? 0.0 : settlementFood / households;
             settlementViews.add(new SettlementView(settlement.id, settlement.name,
-                    settlement.controllerRealmId, settlement.position.x, settlement.position.y,
+                    settlement.controllerRealmId, settlement.occupyingRealmId,
+                    settlement.position.x, settlement.position.y,
                     population, households, settlement.treasury.copperCoins, grain,
                     vegetables, food, settlement.security, settlement.unrest));
         }
@@ -214,9 +218,15 @@ public final class CampaignSnapshot {
         for (Treaty treaty : world.treaties.values()) {
             if (treaty.isActiveAt(minute)) activeTreaties++;
         }
+        int activeWars = 0;
+        for (War war : world.wars.values()) if (war.state == War.WarState.ACTIVE) activeWars++;
+        int activeSieges = 0;
+        for (world.military.Siege siege : world.sieges.values()) {
+            if (siege.state == world.military.Siege.SiegeState.ACTIVE) activeSieges++;
+        }
         return new CampaignSnapshot(minute, simulation.getClock().getSpeed(),
                 simulation.getClock().isPaused(), living, world.households.size(),
-                armyViews.size(), world.caravans.size(), world.wars.size(), activeTreaties, averageFood,
+                armyViews.size(), world.caravans.size(), activeWars, activeTreaties, activeSieges, averageFood,
                 realmViews, settlementViews, roadViews, caravanViews, armyViews, playerView, eventViews);
     }
 
@@ -293,6 +303,7 @@ public final class CampaignSnapshot {
         public final long id;
         public final String name;
         public final Long realmId;
+        public final Long occupyingRealmId;
         public final double worldX;
         public final double worldY;
         public final int population;
@@ -304,13 +315,14 @@ public final class CampaignSnapshot {
         public final double security;
         public final double unrest;
 
-        SettlementView(long id, String name, Long realmId, double worldX,
-                double worldY, int population, int households, long treasury,
+        SettlementView(long id, String name, Long realmId, Long occupyingRealmId,
+                double worldX, double worldY, int population, int households, long treasury,
                 int grain, int vegetables, double foodSecurity,
                 double security, double unrest) {
             this.id = id;
             this.name = name;
             this.realmId = realmId;
+            this.occupyingRealmId = occupyingRealmId;
             this.worldX = worldX;
             this.worldY = worldY;
             this.population = population;

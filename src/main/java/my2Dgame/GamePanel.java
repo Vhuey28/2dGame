@@ -118,6 +118,8 @@ public class GamePanel extends JPanel implements Runnable{
 		private volatile CampaignSnapshot campaignSnapshot;
 		private Long selectedCampaignSettlementId;
 		private final java.util.Map<Long, Rectangle> campaignSettlementHitboxes = new java.util.HashMap<>();
+		private final java.util.List<LocalPlaceholder> campaignLocalPlaceholders = new java.util.ArrayList<>();
+		private String localInteractionMessage = "Walk near a marker and press F";
 		private static final long CAMPAIGN_SEED = WorldConfig.DEFAULT_SEED;
 		private party.Party pendingEnemyParty;
 	private boolean pendingCaughtFleeing;
@@ -241,8 +243,16 @@ public class GamePanel extends JPanel implements Runnable{
 					}
 					if (gameStarted && gameMode == GameMode.CAMPAIGN) {
 						if (code == KeyEvent.VK_TAB) {
-							currentLayer = currentLayer == GameLayer.WORLD_MAP
-								? GameLayer.OVERWORLD : GameLayer.WORLD_MAP;
+							if (currentLayer == GameLayer.WORLD_MAP) {
+								enterCampaignLocalView();
+							} else {
+								currentLayer = GameLayer.WORLD_MAP;
+							}
+							repaint();
+							return;
+						}
+						if (currentLayer == GameLayer.OVERWORLD && code == KeyEvent.VK_F) {
+							interactWithCampaignPlaceholder();
 							repaint();
 							return;
 						}
@@ -665,6 +675,72 @@ public class GamePanel extends JPanel implements Runnable{
 			teleportPlayerForMap("map1.txt");
 		}
 
+		private void enterCampaignLocalView() {
+			if (campaignSession == null || campaignSnapshot == null || campaignSnapshot.player == null) return;
+			CampaignSnapshot.SettlementView settlement = campaignSnapshot.findSettlement(
+				campaignSnapshot.player.settlementId);
+			setupMap("map1.txt");
+			enemies.clear();
+			troops.clear();
+			teleportPlayerForMap("map1.txt");
+			campaignLocalPlaceholders.clear();
+			String place = settlement == null ? "Settlement" : settlement.name;
+			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 8, tileSize * 7,
+				LocalPlaceholder.Type.PERSON, "Villager", "Welcome to " + place + "."));
+			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 13, tileSize * 8,
+				LocalPlaceholder.Type.PERSON, "Merchant", "I trade using the settlement's real market stock."));
+			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 18, tileSize * 11,
+				LocalPlaceholder.Type.PERSON, "Guard", "The roads and gates are being watched."));
+			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 11, tileSize * 14,
+				LocalPlaceholder.Type.MARKET, "Market Stall", "Press B/V on the world map to trade grain."));
+			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 21, tileSize * 7,
+				LocalPlaceholder.Type.INN, "Inn", "Rooms and contracts will be connected in a later phase."));
+			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 16, tileSize * 17,
+				LocalPlaceholder.Type.NOTICE_BOARD, "Notice Board", "Local jobs and war news placeholder."));
+			localInteractionMessage = place + " local view - placeholder interactions are active";
+			currentLayer = GameLayer.OVERWORLD;
+		}
+
+		private void interactWithCampaignPlaceholder() {
+			LocalPlaceholder nearest = null;
+			double best = tileSize * 3.0;
+			for (LocalPlaceholder placeholder : campaignLocalPlaceholders) {
+				double distance = Math.hypot(player.x - placeholder.worldX, player.y - placeholder.worldY);
+				if (distance < best) {
+					best = distance;
+					nearest = placeholder;
+				}
+			}
+			localInteractionMessage = nearest == null
+				? "Move closer to a highlighted person or location"
+				: nearest.label + ": " + nearest.interactionText;
+		}
+
+		private void drawCampaignLocalPlaceholders(Graphics2D g2) {
+			if (gameMode != GameMode.CAMPAIGN || currentLayer != GameLayer.OVERWORLD) return;
+			for (LocalPlaceholder placeholder : campaignLocalPlaceholders) {
+				int x = placeholder.worldX - (int) cameraX;
+				int y = placeholder.worldY - (int) cameraY;
+				g2.setColor(placeholder.type == LocalPlaceholder.Type.PERSON
+					? new Color(75, 190, 220) : new Color(245, 196, 65));
+				if (placeholder.type == LocalPlaceholder.Type.PERSON) g2.fillOval(x - 10, y - 14, 20, 28);
+				else g2.fillRoundRect(x - 14, y - 14, 28, 28, 6, 6);
+				g2.setColor(Color.BLACK);
+				g2.drawOval(x - 3, y - 8, 3, 3);
+				g2.setColor(Color.WHITE);
+				g2.setFont(new Font("SansSerif", Font.BOLD, 10));
+				g2.drawString(placeholder.label, x - 18, y - 20);
+				if (Math.hypot(player.x - placeholder.worldX, player.y - placeholder.worldY) < tileSize * 3.0) {
+					g2.setColor(Color.YELLOW);
+					g2.drawString("[F] interact", x - 22, y + 28);
+				}
+			}
+			g2.setColor(new Color(0, 0, 0, 180));
+			g2.fillRoundRect(14, screenHeight - 48, screenWidth - 28, 32, 8, 8);
+			g2.setColor(Color.WHITE);
+			g2.drawString("TAB: world map | " + localInteractionMessage, 24, screenHeight - 27);
+		}
+
 		private void startSurvivalMode() {
 		survivalWaveNumber = 1;
 		survivalEnemyCountForWave = 10;
@@ -990,6 +1066,23 @@ public class GamePanel extends JPanel implements Runnable{
 			enemies.add(commander);
 			enemySquad.addMember(commander);
 			enemySquad.setCommander(commander);   // only for the commander line specifically
+		}
+	}
+
+	private static final class LocalPlaceholder {
+		enum Type { PERSON, MARKET, INN, NOTICE_BOARD, GATE }
+		final int worldX;
+		final int worldY;
+		final Type type;
+		final String label;
+		final String interactionText;
+
+		LocalPlaceholder(int worldX, int worldY, Type type, String label, String interactionText) {
+			this.worldX = worldX;
+			this.worldY = worldY;
+			this.type = type;
+			this.label = label;
+			this.interactionText = interactionText;
 		}
 	}
 
@@ -1738,6 +1831,7 @@ System.nanoTime();
 			t.draw(g2, (int)cameraX, (int)cameraY);
 		}
 		// draw hero companions
+		drawCampaignLocalPlaceholders(g2);
 		for (Hero hero : heroesSnapshot) {
 			if (hero.isRecruited) {
 					hero.draw(g2, (int)cameraX, (int)cameraY);
@@ -1971,6 +2065,15 @@ System.nanoTime();
 			g2.drawRoundRect(mapX, mapY, mapW, mapH, 14, 14);
 
 			double[] bounds = getCampaignBounds(snapshot);
+			// Soft territory fields make the two regional clusters readable before
+			// roads and symbols are drawn.
+			for (CampaignSnapshot.SettlementView settlement : snapshot.settlements) {
+				int x = campaignMapCoordinate(settlement.worldX, bounds[0], bounds[1], mapX, mapW);
+				int y = campaignMapCoordinate(settlement.worldY, bounds[2], bounds[3], mapY, mapH);
+				Color realmColor = colorForRealm(settlement.realmId);
+				g2.setColor(new Color(realmColor.getRed(), realmColor.getGreen(), realmColor.getBlue(), 28));
+				g2.fillOval(x - 78, y - 62, 156, 124);
+			}
 			for (CampaignSnapshot.RoadView road : snapshot.roads) {
 				int x1 = campaignMapCoordinate(road.fromX, bounds[0], bounds[1], mapX, mapW);
 				int y1 = campaignMapCoordinate(road.fromY, bounds[2], bounds[3], mapY, mapH);
@@ -1983,6 +2086,7 @@ System.nanoTime();
 			g2.setStroke(new BasicStroke(1f));
 
 			campaignSettlementHitboxes.clear();
+			java.util.List<Rectangle> occupiedMapLabels = new java.util.ArrayList<>();
 			for (CampaignSnapshot.SettlementView settlement : snapshot.settlements) {
 				int x = campaignMapCoordinate(settlement.worldX, bounds[0], bounds[1], mapX, mapW);
 				int y = campaignMapCoordinate(settlement.worldY, bounds[2], bounds[3], mapY, mapH);
@@ -1997,11 +2101,25 @@ System.nanoTime();
 				g2.fillOval(x - radius, y - radius, radius * 2, radius * 2);
 				g2.setColor(Color.WHITE);
 				g2.drawOval(x - radius, y - radius, radius * 2, radius * 2);
-				int labelX = x > mapX + mapW - 120 ? x - 105 : x + 10;
+				if (settlement.occupyingRealmId != null) {
+					g2.setColor(colorForRealm(settlement.occupyingRealmId));
+					g2.setStroke(new BasicStroke(3f));
+					g2.drawRect(x - radius - 4, y - radius - 4, radius * 2 + 8, radius * 2 + 8);
+					g2.setStroke(new BasicStroke(1f));
+				}
 				g2.setFont(new Font("SansSerif", Font.BOLD, 11));
-				g2.drawString(settlement.name, labelX, y - 8);
-				g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
-				g2.drawString("Pop " + settlement.population, labelX, y + 6);
+				int labelWidth = Math.max(g2.getFontMetrics().stringWidth(settlement.name), 66) + 8;
+				Rectangle label = placeCampaignLabel(x, y, labelWidth, 29,
+					mapX + 4, mapY + 4, mapX + mapW - 4, mapY + mapH - 4, occupiedMapLabels);
+				occupiedMapLabels.add(label);
+				g2.setColor(new Color(9, 16, 22, 205));
+				g2.fillRoundRect(label.x, label.y, label.width, label.height, 6, 6);
+				g2.setColor(new Color(205, 205, 190));
+				g2.drawLine(x, y, label.x + label.width / 2, label.y + label.height / 2);
+				g2.setColor(Color.WHITE);
+				g2.drawString(settlement.name, label.x + 4, label.y + 11);
+				g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+				g2.drawString("Pop " + settlement.population, label.x + 4, label.y + 23);
 			}
 
 			for (CampaignSnapshot.ArmyView army : snapshot.armies) {
@@ -2039,7 +2157,8 @@ System.nanoTime();
 			g2.drawString("Households: " + snapshot.householdCount, panelX, y); y += 17;
 			g2.drawString(String.format("Food security: %.0f%%", snapshot.averageFoodSecurity * 100.0), panelX, y); y += 17;
 			g2.drawString("Armies/Caravans: " + snapshot.armyCount + "/" + snapshot.caravanCount, panelX, y); y += 17;
-			g2.drawString("Wars/Treaties: " + snapshot.warCount + "/" + snapshot.activeTreatyCount, panelX, y); y += 17;
+			g2.drawString("Wars/Sieges/Treaties: " + snapshot.warCount + "/"
+				+ snapshot.activeSiegeCount + "/" + snapshot.activeTreatyCount, panelX, y); y += 17;
 			if (!snapshot.armies.isEmpty()) {
 				CampaignSnapshot.ArmyView army = snapshot.armies.get(0);
 				g2.drawString("Army: " + army.strength + " " + army.order + " food " + army.grain, panelX, y); y += 17;
@@ -2083,7 +2202,9 @@ System.nanoTime();
 				g2.drawString("Households: " + selected.households, panelX, y); y += 14;
 				g2.drawString("Treasury: " + selected.treasury, panelX, y); y += 14;
 				g2.drawString("Grain / veg: " + selected.grain + " / " + selected.vegetables, panelX, y); y += 14;
-				g2.drawString(String.format("Food security: %.0f%%", selected.foodSecurity * 100.0), panelX, y); y += 18;
+				g2.drawString(String.format("Food security: %.0f%%", selected.foodSecurity * 100.0), panelX, y); y += 14;
+				g2.setColor(new Color(245, 196, 65));
+				g2.drawString("Travel here, then TAB for local view", panelX, y); y += 18;
 			}
 
 			g2.setColor(new Color(222, 204, 155));
@@ -2100,6 +2221,30 @@ System.nanoTime();
 					if (y > screenHeight - 10) break;
 				}
 			}
+		}
+
+		private Rectangle placeCampaignLabel(int x, int y, int width, int height,
+				int minX, int minY, int maxX, int maxY, java.util.List<Rectangle> occupied) {
+			int[][] offsets = {{12, -34}, {12, 10}, {-width - 12, -34}, {-width - 12, 10},
+				{-width / 2, -52}, {-width / 2, 18}};
+			Rectangle best = null;
+			int bestOverlap = Integer.MAX_VALUE;
+			for (int[] offset : offsets) {
+				int px = Math.max(minX, Math.min(maxX - width, x + offset[0]));
+				int py = Math.max(minY, Math.min(maxY - height, y + offset[1]));
+				Rectangle candidate = new Rectangle(px, py, width, height);
+				int overlap = 0;
+				for (Rectangle other : occupied) {
+					Rectangle intersection = candidate.intersection(other);
+					if (!intersection.isEmpty()) overlap += intersection.width * intersection.height;
+				}
+				if (overlap < bestOverlap) {
+					best = candidate;
+					bestOverlap = overlap;
+					if (overlap == 0) break;
+				}
+			}
+			return best == null ? new Rectangle(x + 10, y - 20, width, height) : best;
 		}
 
 		private double[] getCampaignBounds(CampaignSnapshot snapshot) {

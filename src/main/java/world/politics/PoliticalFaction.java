@@ -23,6 +23,6 @@ public final class PoliticalFaction {
 
     public enum FactionGoal {
         LOWER_TAXES, MERCHANT_PRIVILEGES, NOBLE_PRIVILEGES,
-        REPLACE_RULER, LOCAL_AUTONOMY, END_WAR
+        REPLACE_RULER, LOCAL_AUTONOMY, INDEPENDENCE, END_WAR, CONTINUE_WAR
     }
 }

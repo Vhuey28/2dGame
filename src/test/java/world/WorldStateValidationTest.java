@@ -43,6 +43,8 @@ class WorldStateValidationTest {
         assertNotNull(world.battleReports);
         assertNotNull(world.caravans);
         assertNotNull(world.wars);
+        assertNotNull(world.sieges);
+        assertNotNull(world.peaceOffers);
         assertNotNull(world.governments);
         assertNotNull(world.titles);
         assertNotNull(world.offices);
@@ -64,6 +66,8 @@ class WorldStateValidationTest {
         assertTrue(world.battleReports.isEmpty());
         assertTrue(world.caravans.isEmpty());
         assertTrue(world.wars.isEmpty());
+        assertTrue(world.sieges.isEmpty());
+        assertTrue(world.peaceOffers.isEmpty());
         assertTrue(world.governments.isEmpty());
         assertTrue(world.titles.isEmpty());
         assertTrue(world.offices.isEmpty());

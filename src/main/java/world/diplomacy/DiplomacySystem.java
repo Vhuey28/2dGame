@@ -5,6 +5,7 @@ import world.Realm;
 import world.SimulationContext;
 import world.WorldConfig;
 import world.WorldState;
+import world.War;
 import world.command.CommandResult;
 import world.event.WorldEvent;
 import world.politics.Claim;
@@ -83,6 +84,11 @@ public final class DiplomacySystem {
         }
         DiplomaticState state = findState(proposerRealmId, recipientRealmId);
         if (state == null) return CommandResult.rejected("NO_DIPLOMATIC_CHANNEL", "No bilateral state exists");
+        boolean atWar = world.wars.values().stream().anyMatch(war -> war.state == War.WarState.ACTIVE
+                && war.opposing(proposerRealmId, recipientRealmId));
+        if (atWar && type != Treaty.TreatyType.TRUCE) {
+            return CommandResult.rejected("REALMS_AT_WAR", "Only peace processing may create a truce during war");
+        }
         if (hasActiveTreaty(proposerRealmId, recipientRealmId, type, currentMinute)) {
             return CommandResult.rejected("DUPLICATE_TREATY", "That treaty is already active");
         }

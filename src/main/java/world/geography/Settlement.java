@@ -16,6 +16,7 @@ public final class Settlement {
     public String name;
     public long provinceId;
     public Long controllerRealmId;
+    public Long occupyingRealmId;
     public WorldPosition position;
     public SettlementType type;
 

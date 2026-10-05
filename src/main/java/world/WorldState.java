@@ -32,8 +32,10 @@ public final class WorldState {
     /** All persistent caravans. Never null after init. */
     public final java.util.Map<Long, Caravan> caravans = new java.util.HashMap<>();
 
-    /** All persistent wars. Never null after init. */
+    /** Wars, physical sieges, and enforceable peace offers. */
     public final java.util.Map<Long, War> wars = new java.util.HashMap<>();
+    public final java.util.Map<Long, world.military.Siege> sieges = new java.util.HashMap<>();
+    public final java.util.Map<Long, world.military.PeaceOffer> peaceOffers = new java.util.HashMap<>();
 
     /** Political institutions and legal state. */
     public final java.util.Map<Long, world.politics.Government> governments = new java.util.HashMap<>();

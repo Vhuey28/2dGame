@@ -16,6 +16,7 @@ import world.trade.TradeSystem;
 import world.politics.PoliticsSystem;
 import world.diplomacy.DiplomacySystem;
 import world.military.MilitarySystem;
+import world.military.WarSystem;
 
 /**
  * The simulation orchestrator. Advances time, processes scheduled events,
@@ -42,6 +43,7 @@ public class WorldSimulation {
     private final PoliticsSystem politicsSystem;
     private final DiplomacySystem diplomacySystem;
     private final MilitarySystem militarySystem;
+    private final WarSystem warSystem;
 
     public WorldSimulation(WorldClock clock, WorldState world) {
         this.clock = clock;
@@ -61,6 +63,7 @@ public class WorldSimulation {
         this.politicsSystem = new PoliticsSystem(context);
         this.diplomacySystem = new DiplomacySystem(context);
         this.militarySystem = new MilitarySystem(context);
+        this.warSystem = new WarSystem(context, militarySystem);
     }
 
     public WorldClock getClock() {
@@ -85,6 +88,10 @@ public class WorldSimulation {
 
     public MilitarySystem getMilitarySystem() {
         return militarySystem;
+    }
+
+    public WarSystem getWarSystem() {
+        return warSystem;
     }
 
     /** Called each render frame to accumulate elapsed real time and advance the world. */
@@ -152,6 +159,7 @@ public class WorldSimulation {
         householdConsumptionSystem.processDay(currentMinute);
         tradeSystem.processDay(currentMinute);
         militarySystem.processDay(currentMinute);
+        warSystem.processDay(currentMinute);
         long day = currentMinute / WorldConfig.MINUTES_PER_DAY;
         if (day % 7 == 0) {
             employmentSystem.processWeek(currentMinute);
@@ -176,6 +184,7 @@ public class WorldSimulation {
         demographicSystem.processMonth();
         politicsSystem.processMonth(currentMinute);
         diplomacySystem.processMonth(currentMinute);
+        warSystem.processMonth(currentMinute);
     }
 
     private void onScheduledEvent(ScheduledEvent event, long currentMinute) {

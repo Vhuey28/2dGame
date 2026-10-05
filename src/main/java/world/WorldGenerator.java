@@ -47,31 +47,44 @@ public final class WorldGenerator {
         world.realms.put(realmBId, realmB);
         System.out.println("Created realms: " + realmA.name + " (ID: " + realmAId + ") and " + realmB.name + " (ID: " + realmBId + ")");
 
-        // 2. Create a disputed border province
-        long disputedProvinceId = world.idGenerator.next();
-        Province disputedProvince = new Province(disputedProvinceId, "Border Hills", "border_hills_region",
+        // 2. Create distinct homelands and a disputed frontier. Separate provinces
+        // provide meaningful war objectives and a readable strategic map.
+        long ardenProvinceId = world.idGenerator.next();
+        long borderProvinceId = world.idGenerator.next();
+        long balorProvinceId = world.idGenerator.next();
+        Province ardenProvince = new Province(ardenProvinceId, "Arden Heartland", "arden_heartland",
+                Province.TerrainType.PLAINS, Province.ClimateType.TEMPERATE);
+        Province borderProvince = new Province(borderProvinceId, "Border Hills", "border_hills_region",
                 Province.TerrainType.HILLS, Province.ClimateType.TEMPERATE);
-        disputedProvince.controllerRealmId = realmAId; // Initially controlled by Realm A
-        world.geography.addProvince(disputedProvince);
-        System.out.println("Created disputed province: Border Hills (ID: " + disputedProvinceId + ") controlled by " + realmA.name);
+        Province balorProvince = new Province(balorProvinceId, "Balor March", "balor_march",
+                Province.TerrainType.FORESTS, Province.ClimateType.TEMPERATE);
+        ardenProvince.controllerRealmId = realmAId;
+        borderProvince.controllerRealmId = realmAId;
+        balorProvince.controllerRealmId = realmBId;
+        ardenProvince.neighborProvinceIds.add(borderProvinceId);
+        borderProvince.neighborProvinceIds.add(ardenProvinceId);
+        borderProvince.neighborProvinceIds.add(balorProvinceId);
+        balorProvince.neighborProvinceIds.add(borderProvinceId);
+        world.geography.addProvince(ardenProvince);
+        world.geography.addProvince(borderProvince);
+        world.geography.addProvince(balorProvince);
 
-        // 3. Create settlements: 3 per realm (total 6)
-        // Realm A settlements
-        long settlementA1 = createSettlement("Arden Vale", realmAId, 100, 100, disputedProvinceId);
-        long settlementA2 = createSettlement("Eastwatch", realmAId, 200, 150, disputedProvinceId);
-        long settlementA3 = createSettlement("Northhold", realmAId, 150, 200, disputedProvinceId);
+        // 3. Create six widely separated settlements in two regional clusters.
+        long settlementA1 = createSettlement("Arden Vale", realmAId, 100, 100, ardenProvinceId);
+        long settlementA2 = createSettlement("Eastwatch", realmAId, 390, 270, borderProvinceId);
+        long settlementA3 = createSettlement("Northhold", realmAId, 120, 520, ardenProvinceId);
+        long settlementB1 = createSettlement("Balor's Rest", realmBId, 920, 100, balorProvinceId);
+        long settlementB2 = createSettlement("Southford", realmBId, 650, 330, balorProvinceId);
+        long settlementB3 = createSettlement("Westwatch", realmBId, 930, 540, balorProvinceId);
 
-        // Realm B settlements
-        long settlementB1 = createSettlement("Balor's Rest", realmBId, 400, 100, disputedProvinceId);
-        long settlementB2 = createSettlement("Southford", realmBId, 350, 200, disputedProvinceId);
-        long settlementB3 = createSettlement("Westwatch", realmBId, 300, 300, disputedProvinceId);
-
-        disputedProvince.settlementIds.addAll(java.util.Arrays.asList(
-                settlementA1, settlementA2, settlementA3,
-                settlementB1, settlementB2, settlementB3));
+        ardenProvince.settlementIds.addAll(java.util.Arrays.asList(settlementA1, settlementA3));
+        borderProvince.settlementIds.add(settlementA2);
+        balorProvince.settlementIds.addAll(java.util.Arrays.asList(settlementB1, settlementB2, settlementB3));
         realmA.capitalSettlementId = settlementA1;
         realmB.capitalSettlementId = settlementB1;
-        realmA.controlledProvinceIds.add(disputedProvinceId);
+        realmA.controlledProvinceIds.add(ardenProvinceId);
+        realmA.controlledProvinceIds.add(borderProvinceId);
+        realmB.controlledProvinceIds.add(balorProvinceId);
         System.out.println("Created 6 settlements");
 
         // 3.1 Create initial workplaces (farms) for each settlement
@@ -460,7 +473,12 @@ public final class WorldGenerator {
 
         if (!createdTitles.isEmpty()) {
             for (Province province : world.geography.getProvinces().values()) {
-                if (province.legalTitleId == null) province.legalTitleId = createdTitles.get(0).id;
+                if (province.legalTitleId != null || province.controllerRealmId == null) continue;
+                createdTitles.stream().filter(title -> title.realmId == province.controllerRealmId)
+                        .findFirst().ifPresent(title -> {
+                            province.legalTitleId = title.id;
+                            if (title.deJureProvinceId == null) title.deJureProvinceId = province.id;
+                        });
             }
         }
         if (createdTitles.size() >= 2) {

@@ -160,6 +160,8 @@ public final class PoliticsSystem {
             case LOWER_TAXES -> pressure += government.getLawLevel(Government.LawType.TAXATION) * 12.0;
             case LOCAL_AUTONOMY -> pressure += (3 - government.getLawLevel(Government.LawType.LOCAL_AUTONOMY)) * 10.0;
             case END_WAR -> pressure += realm.warExhaustion * 0.5;
+            case CONTINUE_WAR -> pressure += Math.max(0.0, 50.0 - realm.warExhaustion) * 0.35;
+            case INDEPENDENCE -> pressure += (100.0 - realm.stability) * 0.45;
             case REPLACE_RULER -> pressure += 100.0 - realm.legitimacy;
             case MERCHANT_PRIVILEGES -> pressure += government.getLawLevel(Government.LawType.TARIFFS) * 8.0;
             case NOBLE_PRIVILEGES -> pressure += government.getLawLevel(Government.LawType.CONSCRIPTION) * 7.0;

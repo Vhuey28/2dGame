@@ -78,6 +78,7 @@ public class tileManager {
 				BufferedReader br = new BufferedReader(new InputStreamReader(is));
 				String line;
 				int row = 0;
+				int widestRow = 0;
 				while (row < gp.maxWorldRow && (line = br.readLine()) != null) {
 					line = line.trim();
 					if (line.isEmpty()) {
@@ -85,6 +86,7 @@ public class tileManager {
 					}
 
 					String[] tokens = line.split("[\\s,]+");
+					widestRow = Math.max(widestRow, Math.min(gp.maxWorldCol, tokens.length));
 					for (int col = 0; col < gp.maxWorldCol && col < tokens.length; col++) {
 						try {
 							mapTileNum[col][row] = Integer.parseInt(tokens[col]);
@@ -94,6 +96,8 @@ public class tileManager {
 					}
 					row++;
 				}
+				currentMapWidth = Math.max(1, widestRow);
+				currentMapHeight = Math.max(1, row);
 				br.close();
 			} catch (Exception e) {
 				e.printStackTrace();
