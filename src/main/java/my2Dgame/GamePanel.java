@@ -2029,7 +2029,7 @@ System.nanoTime();
 			g2.drawString("Households: " + snapshot.householdCount, panelX, y); y += 17;
 			g2.drawString(String.format("Food security: %.0f%%", snapshot.averageFoodSecurity * 100.0), panelX, y); y += 17;
 			g2.drawString("Armies/Caravans: " + snapshot.armyCount + "/" + snapshot.caravanCount, panelX, y); y += 17;
-			g2.drawString("Active wars: " + snapshot.warCount, panelX, y); y += 17;
+			g2.drawString("Wars/Treaties: " + snapshot.warCount + "/" + snapshot.activeTreatyCount, panelX, y); y += 17;
 			if (!snapshot.caravans.isEmpty()) {
 				CampaignSnapshot.CaravanView caravan = snapshot.caravans.get(0);
 				g2.drawString("Merchant: " + caravan.state + " " + caravan.cargoQuantity, panelX, y); y += 17;
@@ -2051,7 +2051,8 @@ System.nanoTime();
 				g2.setColor(Color.LIGHT_GRAY);
 				g2.drawString(" " + realm.rulerName + "  leg " + Math.round(realm.legitimacy), panelX, y); y += 13;
 				g2.drawString(" pop " + realm.population + " treasury " + realm.treasury, panelX, y); y += 13;
-				g2.drawString(" " + realm.successionLaw + " factions " + realm.factionCount, panelX, y); y += 14;
+				g2.drawString(" " + realm.successionLaw + " factions " + realm.factionCount, panelX, y); y += 13;
+				g2.drawString(" treaties " + realm.treatyCount + " " + realm.diplomacySummary, panelX, y); y += 14;
 			}
 
 			y += 5;

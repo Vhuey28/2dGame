@@ -42,6 +42,7 @@ public class HeadlessRunner {
         context.randomStreams.put("POLITICS", new SeededRandom(seed + 3));
         context.randomStreams.put("MILITARY", new SeededRandom(seed + 4));
         context.randomStreams.put("GENERATION", new SeededRandom(seed + 5));
+        context.randomStreams.put("DIPLOMACY", new SeededRandom(seed + 6));
 
         // Generate world
         WorldGenerator generator = new WorldGenerator(context);
@@ -80,6 +81,9 @@ public class HeadlessRunner {
         System.out.println("  Governments: " + state.governments.size());
         System.out.println("  Titles: " + state.titles.size());
         System.out.println("  Political factions: " + state.politicalFactions.size());
+        System.out.println("  Diplomatic relations: " + state.diplomaticStates.size());
+        System.out.println("  Treaties: " + state.treaties.size());
+        System.out.println("  Schemes: " + state.schemes.size());
         for (Realm realm : state.realms.values()) {
             Person ruler = realm.rulerPersonId == null ? null : state.people.get(realm.rulerPersonId);
             System.out.println("  " + realm.name + " ruler: "

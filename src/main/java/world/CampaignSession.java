@@ -69,6 +69,7 @@ public final class CampaignSession {
         context.randomStreams.put("POLITICS", new SeededRandom(seed + 3));
         context.randomStreams.put("MILITARY", new SeededRandom(seed + 4));
         context.randomStreams.put("GENERATION", new SeededRandom(seed + 5));
+        context.randomStreams.put("DIPLOMACY", new SeededRandom(seed + 6));
     }
 
     public void update(double realSeconds) {

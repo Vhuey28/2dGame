@@ -8,6 +8,7 @@ import world.economy.GoodType;
 import world.economy.ProductionRecipe;
 import world.geography.*;
 import world.politics.*;
+import world.diplomacy.*;
 
 /**
  * Generates an initial world for testing and vertical slice.
@@ -104,6 +105,7 @@ public final class WorldGenerator {
         assignWorkersToFarms();
         createInitialCaravans();
         createPoliticalCore();
+        createDiplomaticCore();
 
         System.out.println("Vertical slice generation complete");
     }
@@ -468,6 +470,50 @@ public final class WorldGenerator {
             }
         }
         System.out.println("Created governments, crowns, councils, claims, and factions");
+    }
+
+    private void createDiplomaticCore() {
+        java.util.List<Realm> realms = new java.util.ArrayList<>(world.realms.values());
+        realms.sort(java.util.Comparator.comparingLong(realm -> realm.id));
+        if (realms.size() < 2) return;
+        Realm first = realms.get(0);
+        Realm second = realms.get(1);
+
+        DiplomaticState state = new DiplomaticState(world.idGenerator.next(), first.id, second.id);
+        state.opinion = 20;
+        state.trust = 25;
+        state.fear = 20;
+        state.rivalry = 15;
+        state.borderTension = 35;
+        state.tradeDependence = 40;
+        state.lastAiExplanation = "Border rivals cooperate because trade limits the cost of tension";
+        world.diplomaticStates.put(state.id, state);
+
+        Treaty trade = new Treaty(world.idGenerator.next(), Treaty.TreatyType.TRADE_AGREEMENT,
+                first.id, second.id, 0L, 12L * WorldConfig.MINUTES_PER_MONTH);
+        world.treaties.put(trade.id, trade);
+        state.treatyIds.add(trade.id);
+
+        Grievance border = new Grievance(world.idGenerator.next(), second.id, first.id,
+                Grievance.GrievanceType.BORDER_DISPUTE, 30, 0L,
+                24L * WorldConfig.MINUTES_PER_MONTH);
+        world.grievances.put(border.id, border);
+        state.grievanceIds.add(border.id);
+
+        SpyNetwork network = new SpyNetwork(world.idGenerator.next(), first.id, second.id, 20.0, 0L);
+        world.spyNetworks.put(network.id, network);
+
+        Person schemer = world.offices.values().stream()
+                .filter(office -> office.realmId == second.id && office.type == Office.OfficeType.SPYMASTER)
+                .map(office -> office.holderPersonId == null ? null : world.people.get(office.holderPersonId))
+                .filter(java.util.Objects::nonNull).findFirst()
+                .orElse(second.rulerPersonId == null ? null : world.people.get(second.rulerPersonId));
+        if (schemer != null) {
+            Scheme scheme = new Scheme(world.idGenerator.next(), Scheme.SchemeType.BUILD_SPY_NETWORK,
+                    second.id, schemer.id, first.id, first.rulerPersonId, 150L, 0L);
+            world.schemes.put(scheme.id, scheme);
+        }
+        System.out.println("Created diplomatic relations, treaty, grievance, and intelligence operations");
     }
 
     private java.util.List<Person> realmResidents(long realmId) {

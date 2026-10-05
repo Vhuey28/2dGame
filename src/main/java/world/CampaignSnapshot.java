@@ -13,6 +13,8 @@ import world.geography.Road;
 import world.geography.Settlement;
 import world.politics.Government;
 import world.politics.PoliticalFaction;
+import world.diplomacy.DiplomaticState;
+import world.diplomacy.Treaty;
 
 /**
  * Immutable presentation snapshot of the simulated campaign world.
@@ -28,6 +30,7 @@ public final class CampaignSnapshot {
     public final int armyCount;
     public final int caravanCount;
     public final int warCount;
+    public final int activeTreatyCount;
     public final double averageFoodSecurity;
     public final List<RealmView> realms;
     public final List<SettlementView> settlements;
@@ -38,7 +41,7 @@ public final class CampaignSnapshot {
 
     private CampaignSnapshot(long worldMinute, int speed, boolean paused,
             int livingPopulation, int householdCount, int armyCount,
-            int caravanCount, int warCount, double averageFoodSecurity,
+            int caravanCount, int warCount, int activeTreatyCount, double averageFoodSecurity,
             List<RealmView> realms, List<SettlementView> settlements,
             List<RoadView> roads, List<CaravanView> caravans, PlayerView player,
             List<EventView> recentEvents) {
@@ -50,6 +53,7 @@ public final class CampaignSnapshot {
         this.armyCount = armyCount;
         this.caravanCount = caravanCount;
         this.warCount = warCount;
+        this.activeTreatyCount = activeTreatyCount;
         this.averageFoodSecurity = averageFoodSecurity;
         this.realms = Collections.unmodifiableList(realms);
         this.settlements = Collections.unmodifiableList(settlements);
@@ -101,6 +105,18 @@ public final class CampaignSnapshot {
                     strongestFaction = faction.goal.toString();
                 }
             }
+            int treatyCount = 0;
+            String diplomacySummary = "No foreign relations";
+            for (Treaty treaty : world.treaties.values()) {
+                if (treaty.includes(realm.id) && treaty.isActiveAt(minute)) treatyCount++;
+            }
+            for (DiplomaticState state : world.diplomaticStates.values()) {
+                if (state.firstRealmId == realm.id || state.secondRealmId == realm.id) {
+                    diplomacySummary = "relations " + state.relationshipScore()
+                            + ", trust " + state.trust;
+                    break;
+                }
+            }
             realmViews.add(new RealmView(realm.id, realm.name,
                     realm.treasury == null ? 0L : realm.treasury.copperCoins,
                     realmPopulation, realmSettlements, realm.stability,
@@ -108,7 +124,7 @@ public final class CampaignSnapshot {
                     ruler == null ? "Vacant" : ruler.givenName + " " + ruler.familyName,
                     government == null ? "Unknown" : government.type.toString(),
                     government == null ? "Unknown" : government.successionLaw.toString(),
-                    factionCount, strongestFaction, strongestSupport));
+                    factionCount, strongestFaction, strongestSupport, treatyCount, diplomacySummary));
         }
         realmViews.sort(Comparator.comparing(view -> view.name));
 
@@ -178,9 +194,13 @@ public final class CampaignSnapshot {
             eventViews.add(new EventView(event.worldMinute, event.type));
         }
 
+        int activeTreaties = 0;
+        for (Treaty treaty : world.treaties.values()) {
+            if (treaty.isActiveAt(minute)) activeTreaties++;
+        }
         return new CampaignSnapshot(minute, simulation.getClock().getSpeed(),
                 simulation.getClock().isPaused(), living, world.households.size(),
-                world.armies.size(), world.caravans.size(), world.wars.size(), averageFood,
+                world.armies.size(), world.caravans.size(), world.wars.size(), activeTreaties, averageFood,
                 realmViews, settlementViews, roadViews, caravanViews, playerView, eventViews);
     }
 
@@ -226,12 +246,14 @@ public final class CampaignSnapshot {
         public final int factionCount;
         public final String strongestFaction;
         public final double strongestFactionSupport;
+        public final int treatyCount;
+        public final String diplomacySummary;
 
         RealmView(long id, String name, long treasury, int population,
                 int settlementCount, double stability, double legitimacy,
                 double warExhaustion, String rulerName, String governmentType,
                 String successionLaw, int factionCount, String strongestFaction,
-                double strongestFactionSupport) {
+                double strongestFactionSupport, int treatyCount, String diplomacySummary) {
             this.id = id;
             this.name = name;
             this.treasury = treasury;
@@ -246,6 +268,8 @@ public final class CampaignSnapshot {
             this.factionCount = factionCount;
             this.strongestFaction = strongestFaction;
             this.strongestFactionSupport = strongestFactionSupport;
+            this.treatyCount = treatyCount;
+            this.diplomacySummary = diplomacySummary;
         }
     }
 

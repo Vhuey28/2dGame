@@ -46,6 +46,11 @@ class WorldStateValidationTest {
         assertNotNull(world.offices);
         assertNotNull(world.politicalFactions);
         assertNotNull(world.claims);
+        assertNotNull(world.diplomaticStates);
+        assertNotNull(world.treaties);
+        assertNotNull(world.grievances);
+        assertNotNull(world.spyNetworks);
+        assertNotNull(world.schemes);
         assertNotNull(world.idGenerator);
 
         assertTrue(world.people.isEmpty());
@@ -60,6 +65,11 @@ class WorldStateValidationTest {
         assertTrue(world.offices.isEmpty());
         assertTrue(world.politicalFactions.isEmpty());
         assertTrue(world.claims.isEmpty());
+        assertTrue(world.diplomaticStates.isEmpty());
+        assertTrue(world.treaties.isEmpty());
+        assertTrue(world.grievances.isEmpty());
+        assertTrue(world.spyNetworks.isEmpty());
+        assertTrue(world.schemes.isEmpty());
     }
 
     @Test

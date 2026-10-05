@@ -14,6 +14,7 @@ import world.economy.Inventory;
 import world.economy.MoneyAccount;
 import world.trade.TradeSystem;
 import world.politics.PoliticsSystem;
+import world.diplomacy.DiplomacySystem;
 
 /**
  * The simulation orchestrator. Advances time, processes scheduled events,
@@ -38,6 +39,7 @@ public class WorldSimulation {
     private final HouseholdTradeSystem householdTradeSystem;
     private final TradeSystem tradeSystem;
     private final PoliticsSystem politicsSystem;
+    private final DiplomacySystem diplomacySystem;
 
     public WorldSimulation(WorldClock clock, WorldState world) {
         this.clock = clock;
@@ -55,6 +57,7 @@ public class WorldSimulation {
         this.householdTradeSystem = new HouseholdTradeSystem(context);
         this.tradeSystem = new TradeSystem(context);
         this.politicsSystem = new PoliticsSystem(context);
+        this.diplomacySystem = new DiplomacySystem(context);
     }
 
     public WorldClock getClock() {
@@ -71,6 +74,10 @@ public class WorldSimulation {
 
     public ScheduledEventQueue getScheduledEvents() {
         return scheduledEvents;
+    }
+
+    public DiplomacySystem getDiplomacySystem() {
+        return diplomacySystem;
     }
 
     /** Called each render frame to accumulate elapsed real time and advance the world. */
@@ -157,6 +164,7 @@ public class WorldSimulation {
         famineSystem.processMonth(currentMinute);
         demographicSystem.processMonth();
         politicsSystem.processMonth(currentMinute);
+        diplomacySystem.processMonth(currentMinute);
     }
 
     private void onScheduledEvent(ScheduledEvent event, long currentMinute) {

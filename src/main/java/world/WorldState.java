@@ -40,6 +40,13 @@ public final class WorldState {
     public final java.util.Map<Long, world.politics.PoliticalFaction> politicalFactions = new java.util.HashMap<>();
     public final java.util.Map<Long, world.politics.Claim> claims = new java.util.HashMap<>();
 
+    /** Bilateral diplomacy, public treaties, grievances, and secret intelligence operations. */
+    public final java.util.Map<Long, world.diplomacy.DiplomaticState> diplomaticStates = new java.util.HashMap<>();
+    public final java.util.Map<Long, world.diplomacy.Treaty> treaties = new java.util.HashMap<>();
+    public final java.util.Map<Long, world.diplomacy.Grievance> grievances = new java.util.HashMap<>();
+    public final java.util.Map<Long, world.diplomacy.SpyNetwork> spyNetworks = new java.util.HashMap<>();
+    public final java.util.Map<Long, world.diplomacy.Scheme> schemes = new java.util.HashMap<>();
+
     /** Player's persistent adventurer state in Campaign mode, when present. */
     public PlayerCampaignState player;
 

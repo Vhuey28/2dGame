@@ -24,9 +24,10 @@ The repository now contains the first foundation and food-economy systems descri
 - Real migration toward better-supplied settlements instead of deleting migrants from the social model.
 - Phase 4 player foundation: a persistent adventurer person/household, personal funds, carried cargo, route-based strategic travel, and settlement grain buying/selling from the Campaign map.
 - Phase 5 political core: governments, configurable laws, kingdom titles, rulers, councils and offices, claims, internal factions, law-driven taxes, legitimacy, and monthly succession processing.
-- Campaign realm panels now expose rulers, legitimacy, succession law, and faction counts.
+- Phase 6 diplomacy and intrigue: bilateral relations, treaties and obligations, grievances, explainable treaty AI, information quality, spy networks, and phased covert schemes.
+- Campaign realm panels now expose rulers, legitimacy, succession law, factions, treaty counts, and bilateral relationship status.
 
-Contracts, local-map settlement variants, military, war, diplomacy, intrigue expansion, tactical reconciliation, and complete save/load remain future work.
+Contracts, local-map settlement variants, military, war, tactical reconciliation, and complete save/load remain future work.
 
 ---
 
