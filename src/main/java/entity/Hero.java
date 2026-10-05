@@ -83,6 +83,9 @@ public class Hero extends Entity {
     public int attack;
     public int defense = 5;
     public int critChance;
+    public int abilityAuraTicks = 0;
+    public int abilityDamageBonus = 0;
+    public int abilityDefenseBonus = 0;
     public int dodgeChance = 5;
     public int manaRegen = 2;
     public int staminaRegen = 3;
@@ -163,18 +166,16 @@ public class Hero extends Entity {
         abilities.add(new Ability("Basic Attack", "Standard melee/ranged attack", 0, 0, Ability.AbilityType.BASIC_ATTACK));
         
         switch (heroClass) {
-            case WARRIOR : 
-                abilities.add(new Ability("Shield Bash", "Stuns enemy", 15, 30, Ability.AbilityType.STUN));
-                abilities.add(new Ability("Whirlwind", "AoE damage around self", 25, 45, Ability.AbilityType.AOE_DAMAGE));
-                abilities.add(new Ability("Taunt", "Forces enemies to target you", 10, 60, Ability.AbilityType.TAUNT));
-                abilities.add(new Ability("Last Stand", "Immune to death for 5s", 40, 120, Ability.AbilityType.BUFF));
+            case WARRIOR :
+                abilities.add(new Ability("Flame Wave", "Launch a damaging wave in the facing direction", 15, 90, Ability.AbilityType.WARRIOR_WAVE));
+                abilities.add(new Ability("War Banner", "Create an aura that boosts allied damage and defense", 25, 240, Ability.AbilityType.WARRIOR_AURA));
+                abilities.add(new Ability("Gravity Pull", "Pull nearby enemies into the center", 30, 210, Ability.AbilityType.WARRIOR_PULL));
                break;
 
-            case MAGE : 
-                abilities.add(new Ability("Fireball", "Exploding projectile", 20, 15, Ability.AbilityType.PROJECTILE));
-                abilities.add(new Ability("Ice Spike", "Piercing projectile that slows", 15, 20, Ability.AbilityType.PROJECTILE));
-                abilities.add(new Ability("Meteor", "Large AoE damage", 40, 60, Ability.AbilityType.AOE_DAMAGE));
-                abilities.add(new Ability("Teleport", "Blink to target location", 30, 40, Ability.AbilityType.MOBILITY));
+            case MAGE :
+                abilities.add(new Ability("Violet Portal", "Choose a portal destination with the mouse", 20, 180, Ability.AbilityType.MAGE_PORTAL));
+                abilities.add(new Ability("Arcane Storm", "Summon a storm that rains damage", 30, 240, Ability.AbilityType.MAGE_STORM));
+                abilities.add(new Ability("Ricochet Orb", "Launch an orb that bounces between enemies for 10 seconds", 35, 300, Ability.AbilityType.MAGE_ORB));
                 break;
 
             case ARCHER : 
@@ -217,8 +218,10 @@ public class Hero extends Entity {
                break;
         }
 
-        if (abilities.size() > 1) unlockedAbilities.add(abilities.get(0));
-        if (abilities.size() > 2) unlockedAbilities.add(abilities.get(1));
+        // Hero hotkeys 4/5/6 map directly to the first three class abilities.
+        for (int i = 1; i < abilities.size() && i <= 3; i++) {
+            unlockedAbilities.add(abilities.get(i));
+        }
     }
 
     private void initializeDialogue() {
@@ -530,6 +533,12 @@ private String getAssetDirection() {
             case TRANSFORM : performTransform(ability);break;
             case TAUNT : performTaunt(ability);break;
             case EXECUTE : performExecute(target, ability);break;
+            case WARRIOR_WAVE : gp.spawnHeroAbilityEffect(HeroAbilityEffect.warriorWave(gp, this));break;
+            case WARRIOR_AURA : gp.spawnHeroAbilityEffect(HeroAbilityEffect.warriorAura(gp, this));break;
+            case WARRIOR_PULL : gp.spawnHeroAbilityEffect(HeroAbilityEffect.warriorPull(gp, this));break;
+            case MAGE_PORTAL : { if (isActivePlayer) gp.beginMagePortalTargeting(this); }break;
+            case MAGE_STORM : gp.spawnHeroAbilityEffect(HeroAbilityEffect.mageStorm(gp, this, target));break;
+            case MAGE_ORB : gp.spawnHeroAbilityEffect(HeroAbilityEffect.mageOrb(gp, this, target));break;
             case PASSIVE : {};break;
         }
     }
@@ -673,9 +682,19 @@ private String getAssetDirection() {
     }
 
     private int calculateDamage(Ability ability) {
-        int base = attack + ability.power;
+        int base = attack + ability.power + (abilityAuraTicks > 0 ? abilityDamageBonus : 0);
         boolean crit = gp.random.nextInt(100) < critChance;
         return crit ? base * 2 : base;
+    }
+
+    public int abilityDamage(int power) {
+        return Math.max(1, attack + power + (abilityAuraTicks > 0 ? abilityDamageBonus : 0));
+    }
+
+    public void applyAbilityAura(int ticks, int damageBonus, int defenseBonus) {
+        abilityAuraTicks = Math.max(abilityAuraTicks, ticks);
+        abilityDamageBonus = Math.max(abilityDamageBonus, damageBonus);
+        abilityDefenseBonus = Math.max(abilityDefenseBonus, defenseBonus);
     }
 
     private void spawnDamageNumber(float x, float y, int amount) {
@@ -726,6 +745,10 @@ private String getAssetDirection() {
 
         // ===== UPDATE =====
         public void update() {
+        if (abilityAuraTicks > 0 && --abilityAuraTicks == 0) {
+            abilityDamageBonus = 0;
+            abilityDefenseBonus = 0;
+        }
         // The active hero is driven by GamePanel's player-control proxy. Other
         // recruited heroes remain autonomous companions.
         if (!isActivePlayer) updateCompanionAI();
@@ -796,14 +819,14 @@ private String getAssetDirection() {
         defense += 2;
         critChance += 1;
 
-        if (level % 5 == 0 && abilities.size() > unlockedAbilities.size()) {
+        if (level % 5 == 0 && abilities.size() - 1 > unlockedAbilities.size()) {
             unlockNextAbility();
         }
     }
 
     private void unlockNextAbility() {
         for (Ability a : abilities) {
-            if (!unlockedAbilities.contains(a)) {
+            if (a.type != Ability.AbilityType.BASIC_ATTACK && !unlockedAbilities.contains(a)) {
                 unlockedAbilities.add(a);
                 break;
             }
@@ -908,7 +931,9 @@ private String getAssetDirection() {
         public enum AbilityType {
             BASIC_ATTACK, PROJECTILE, AOE_DAMAGE, HEAL, AOE_HEAL,
             BUFF, DEBUFF, CC, STUN, MOBILITY, SUMMON, DRAIN,
-            DOT, TRANSFORM, TAUNT, EXECUTE, PASSIVE, CRIT
+            DOT, TRANSFORM, TAUNT, EXECUTE, PASSIVE, CRIT,
+            WARRIOR_WAVE, WARRIOR_AURA, WARRIOR_PULL,
+            MAGE_PORTAL, MAGE_STORM, MAGE_ORB
         }
 
         public Ability(String name, String description, int manaCost, int cooldown, AbilityType type) {

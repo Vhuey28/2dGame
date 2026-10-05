@@ -721,11 +721,11 @@ public class Enemy extends Entity {
             // Damage the actual target (could be player or troop)
             Object target = threatTable.getHighestThreatTarget();
             if (target == player) {
-                player.health -= damage;
+                player.health -= Math.max(1, damage - (player.abilityAuraTicks > 0 ? player.abilityDefenseBonus : 0));
                 if (player.health < 0) player.health = 0;
             } else if (target instanceof entity.Troop) {
                 entity.Troop troop = (entity.Troop) target;
-                troop.health -= damage;
+                troop.health -= Math.max(1, damage - (troop.abilityAuraTicks > 0 ? troop.abilityDefenseBonus : 0));
                 if (troop.health < 0) troop.health = 0;
             }
             attackCooldown = 40; // commander attack cooldown
@@ -754,11 +754,11 @@ public class Enemy extends Entity {
             // Damage the actual target (could be player or troop)
             Object target = threatTable.getHighestThreatTarget();
             if (target == player) {
-                player.health -= damage;
+                player.health -= Math.max(1, damage - (player.abilityAuraTicks > 0 ? player.abilityDefenseBonus : 0));
                 if (player.health < 0) player.health = 0;
             } else if (target instanceof entity.Troop) {
                 entity.Troop troop = (entity.Troop) target;
-                troop.health -= damage;
+                troop.health -= Math.max(1, damage - (troop.abilityAuraTicks > 0 ? troop.abilityDefenseBonus : 0));
                 if (troop.health < 0) troop.health = 0;
             }
             attackCooldown = 30; // Troop attack cooldown
@@ -836,11 +836,12 @@ public class Enemy extends Entity {
             int px = (int)p.x;
             int py = (int)p.y;
             if (px > x && px < x + gp.tileSize && py > y && py < y + gp.tileSize) {
-                health -= 10;
+                int projectileDamage = player.projectileDamage + (player.abilityAuraTicks > 0 ? player.abilityDamageBonus : 0);
+                health -= projectileDamage;
                 p.life = 0;
                 showHealthCounter = 60;
-                threatTable.addThreat(player, 10);   // <-- add this
-                morale.onDamageTaken(10);            // <-- add this
+                threatTable.addThreat(player, projectileDamage);   // <-- add this
+                morale.onDamageTaken(projectileDamage);            // <-- add this
             }
         }
         // Check areas from player

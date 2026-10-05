@@ -26,6 +26,9 @@ public class Troop extends Entity {
     public int maxHealth = 30;
     public int health = maxHealth;
     public int shootCooldown = 0;
+    public int abilityAuraTicks = 0;
+    public int abilityDamageBonus = 0;
+    public int abilityDefenseBonus = 0;
     public ThreatTable threatTable = new ThreatTable();
     public Morale morale = new Morale();
     public java.util.List<java.awt.Point> currentPath = null;
@@ -210,7 +213,17 @@ public class Troop extends Entity {
         return findNearestLivingEnemy();
     }
 
+    public void applyAbilityAura(int ticks, int damageBonus, int defenseBonus) {
+        abilityAuraTicks = Math.max(abilityAuraTicks, ticks);
+        abilityDamageBonus = Math.max(abilityDamageBonus, damageBonus);
+        abilityDefenseBonus = Math.max(abilityDefenseBonus, defenseBonus);
+    }
+
     public void update() {
+        if (abilityAuraTicks > 0 && --abilityAuraTicks == 0) {
+            abilityDamageBonus = 0;
+            abilityDefenseBonus = 0;
+        }
         // Handle archer attack animation
         if (role == Role.ARCHER && isArcherAttacking && !isArcherDying) {
             archerAttackAnimationCounter++;
@@ -443,7 +456,7 @@ public class Troop extends Entity {
                 meleeAttackAnimationFrame = 1;
                 // Deal damage to enemy
                 if(role == Role.MELEE){
-                    target.health -= 9;
+                    target.health -= 9 + (abilityAuraTicks > 0 ? abilityDamageBonus : 0);
                 }else if(role == Role.ARCHER){
                     target.health -= 2;
                 }
@@ -521,7 +534,8 @@ public class Troop extends Entity {
                 float dxToEnemy = enemy.x + gp.tileSize / 2f - projectile.x;
                 float dyToEnemy = enemy.y + gp.tileSize / 2f - projectile.y;
                 if (dxToEnemy * dxToEnemy + dyToEnemy * dyToEnemy <= gp.tileSize * gp.tileSize / 3f) {
-                    enemy.health = Math.max(0, enemy.health - 6);
+                    int damage = 6 + (abilityAuraTicks > 0 ? abilityDamageBonus : 0);
+                    enemy.health = Math.max(0, enemy.health - damage);
                     enemy.showHealthCounter = 60;
                     enemy.threatTable.addThreat(this, 10);
                     projectile.life = 0;

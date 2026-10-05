@@ -23,6 +23,7 @@ import javax.swing.SwingUtilities;
 
 import entity.Enemy;
 import entity.Hero;
+import entity.HeroAbilityEffect;
 import entity.Player;
 import entity.Projectile;
 import entity.Squad;
@@ -108,6 +109,7 @@ public class GamePanel extends JPanel implements Runnable{
 
 	//FPS
 	int FPS = WEB_MODE ? 30 : 60;
+	public int getFramesPerSecond() { return FPS; }
 
 
 	tileManager tileM = new tileManager(this);
@@ -119,6 +121,11 @@ public class GamePanel extends JPanel implements Runnable{
 	// public java.util.List<entity.NPC> npcs = new java.util.ArrayList<>();
 	public java.util.List<Hero> heroes = new java.util.ArrayList<>();
 	public Hero activeHero = null;
+	public final java.util.List<HeroAbilityEffect> heroAbilityEffects = new java.util.ArrayList<>();
+	private Hero pendingPortalHero;
+	private Float portalEntranceX, portalEntranceY, portalExitX, portalExitY;
+	private int heroPortalDuration;
+	private int heroPortalCooldown;
 	private int storedPlayerHealth = 100;
 	private int storedPlayerMaxHealth = 100;
 	private int storedPlayerMeleeDamage = 12;
@@ -481,6 +488,10 @@ public class GamePanel extends JPanel implements Runnable{
 				
 				if (!gameStarted) {
 					handleStartMenuClick(point);
+					return;
+				}
+				if (pendingPortalHero != null && !gamePaused && currentLayer != GameLayer.WORLD_MAP) {
+					placeMagePortal(point.x + cameraX, point.y + cameraY);
 					return;
 				}
 				if (gameMode == GameMode.CAMPAIGN && currentLayer == GameLayer.WORLD_MAP && !gamePaused) {
@@ -1167,6 +1178,10 @@ public class GamePanel extends JPanel implements Runnable{
 		tileM.loadMap(mapFile);
 		enemies.clear();
 		troops.clear();
+		heroAbilityEffects.clear();
+		pendingPortalHero = null;
+		portalEntranceX = portalEntranceY = portalExitX = portalExitY = null;
+		heroPortalDuration = 0;
 		enemySquad.members.clear();   // add this
 		enemySquad.commander = null;
 		allySquad.members.clear();
@@ -1668,6 +1683,7 @@ System.nanoTime();
 			activeHero.direction = player.direction;
 			activeHero.syncControlledAttack(player.isAttacking, player.attackAnimationFrame, 6);
 		}
+		updateHeroAbilityEffects();
 		if (redBox != null) {
 			redBox.update(player);
 		}
@@ -2054,6 +2070,7 @@ System.nanoTime();
 		java.util.List<MapLink> mapLinksSnapshot = new java.util.ArrayList<>(mapLinks);
 		java.util.List<entity.Projectile> playerProjectilesSnapshot = new java.util.ArrayList<>(player.projectiles);
 		java.util.List<entity.AreaEffect> playerAreasSnapshot = new java.util.ArrayList<>(player.areas);
+		java.util.List<HeroAbilityEffect> heroEffectsSnapshot = new java.util.ArrayList<>(heroAbilityEffects);
 
 		
 		 tileM.draw(g2, (int)cameraX, (int)cameraY); // ground layer only now
@@ -2111,6 +2128,9 @@ System.nanoTime();
 		}
 		for (entity.AreaEffect a : playerAreasSnapshot) {
 			a.draw(g2, (int)cameraX, (int)cameraY);
+		}
+		for (HeroAbilityEffect effect : heroEffectsSnapshot) {
+			effect.draw(g2, (int) cameraX, (int) cameraY);
 		}
 
 		// draw shop green box
@@ -2174,6 +2194,14 @@ System.nanoTime();
 			} else {
 				drawPauseMenu(g2);
 			}
+		}
+		if (pendingPortalHero != null) {
+			g2.setColor(new Color(25, 10, 45, 220));
+			g2.fillRoundRect(screenWidth / 2 - 190, 55, 380, 34, 10, 10);
+			g2.setColor(new Color(220, 170, 255));
+			g2.setFont(new Font("SansSerif", Font.BOLD, 14));
+			String portalPrompt = "Click the world to place the portal destination";
+			g2.drawString(portalPrompt, (screenWidth - g2.getFontMetrics().stringWidth(portalPrompt)) / 2, 77);
 		}
 		if (gameCrashed) {
 			drawCrashMenu(g2);
@@ -3949,6 +3977,83 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 		System.out.println(activeHero == null ? "Switched to adventurer" : "Switched to " + activeHero.name);
 	}
 
+	public void spawnHeroAbilityEffect(HeroAbilityEffect effect) {
+		if (effect != null) heroAbilityEffects.add(effect);
+	}
+
+	public void beginMagePortalTargeting(Hero hero) {
+		pendingPortalHero = hero;
+	}
+
+	private void placeMagePortal(float destinationX, float destinationY) {
+		if (pendingPortalHero == null) return;
+		float offsetX = 0f, offsetY = tileSize * 1.5f;
+		String facing = pendingPortalHero.direction;
+		if (facing.contains("Left") || "left".equals(facing)) offsetX = -tileSize * 1.5f;
+		if (facing.contains("Right") || "right".equals(facing)) offsetX = tileSize * 1.5f;
+		if (facing.startsWith("up")) offsetY = -tileSize * 1.5f;
+		else if (facing.startsWith("down")) offsetY = tileSize * 1.5f;
+		if (offsetX != 0f && (facing.startsWith("up") || facing.startsWith("down"))) offsetY *= 0.70710678f;
+
+		java.awt.Point entrance = findOpenSpawnSpace(
+				(int) (pendingPortalHero.x + offsetX), (int) (pendingPortalHero.y + offsetY), player, tileSize * 3);
+		portalEntranceX = entrance.x + tileSize / 2f;
+		portalEntranceY = entrance.y + tileSize / 2f;
+		float maxX = getCurrentMapWidthTiles() * tileSize - tileSize;
+		float maxY = getCurrentMapHeightTiles() * tileSize - tileSize;
+		int destinationTopLeftX = (int) Math.max(0, Math.min(maxX, destinationX - tileSize / 2f));
+		int destinationTopLeftY = (int) Math.max(0, Math.min(maxY, destinationY - tileSize / 2f));
+		java.awt.Point exit = findOpenSpawnSpace(destinationTopLeftX, destinationTopLeftY, player, tileSize * 4);
+		portalExitX = exit.x + tileSize / 2f;
+		portalExitY = exit.y + tileSize / 2f;
+		heroPortalDuration = 1800;
+		heroPortalCooldown = 45;
+		heroAbilityEffects.removeIf(HeroAbilityEffect::isPortal);
+		heroAbilityEffects.add(HeroAbilityEffect.portal(this, portalEntranceX, portalEntranceY, heroPortalDuration));
+		heroAbilityEffects.add(HeroAbilityEffect.portal(this, portalExitX, portalExitY, heroPortalDuration));
+		pendingPortalHero = null;
+	}
+
+	private void updateHeroAbilityEffects() {
+		for (Iterator<HeroAbilityEffect> iterator = heroAbilityEffects.iterator(); iterator.hasNext();) {
+			HeroAbilityEffect effect = iterator.next();
+			effect.update();
+			if (effect.isExpired()) iterator.remove();
+		}
+		if (heroPortalDuration > 0) heroPortalDuration--;
+		if (heroPortalCooldown > 0) heroPortalCooldown--;
+		if (heroPortalDuration <= 0) {
+			portalEntranceX = portalEntranceY = portalExitX = portalExitY = null;
+			return;
+		}
+		if (heroPortalCooldown > 0 || portalEntranceX == null || portalExitX == null) return;
+		float playerCenterX = player.x + tileSize / 2f;
+		float playerCenterY = player.y + tileSize / 2f;
+		float entranceDistance = distanceSquared(playerCenterX, playerCenterY, portalEntranceX, portalEntranceY);
+		float exitDistance = distanceSquared(playerCenterX, playerCenterY, portalExitX, portalExitY);
+		float triggerDistance = tileSize * tileSize;
+		if (entranceDistance <= triggerDistance) {
+			teleportThroughHeroPortal(portalExitX, portalExitY);
+		} else if (exitDistance <= triggerDistance) {
+			teleportThroughHeroPortal(portalEntranceX, portalEntranceY);
+		}
+	}
+
+	private float distanceSquared(float x1, float y1, float x2, float y2) {
+		float dx = x2 - x1, dy = y2 - y1;
+		return dx * dx + dy * dy;
+	}
+
+	private void teleportThroughHeroPortal(float centerX, float centerY) {
+		player.x = centerX - tileSize / 2f;
+		player.y = centerY - tileSize / 2f;
+		if (activeHero != null) {
+			activeHero.x = player.x;
+			activeHero.y = player.y;
+		}
+		heroPortalCooldown = 60;
+	}
+
 	private void handleHeroAbilities() {
 		if (activeHero == null) return;
 
@@ -3959,7 +4064,7 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 			if (!hero.unlockedAbilities.isEmpty()) {
 				Hero.Ability ability = hero.unlockedAbilities.get(0);
 				Enemy target = findNearestEnemyToHero(hero);
-				if (target != null && hero.mana >= ability.manaCost && ability.cooldown == 0) {
+				if (canCastHeroAbility(hero, ability, target)) {
 					hero.useAbility(ability, target);
 				}
 			}
@@ -3971,7 +4076,7 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 			if (hero.unlockedAbilities.size() > 1) {
 				Hero.Ability ability = hero.unlockedAbilities.get(1);
 				Enemy target = findNearestEnemyToHero(hero);
-				if (target != null && hero.mana >= ability.manaCost && ability.cooldown == 0) {
+				if (canCastHeroAbility(hero, ability, target)) {
 					hero.useAbility(ability, target);
 				}
 			}
@@ -3983,12 +4088,23 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 			if (hero.unlockedAbilities.size() > 2) {
 				Hero.Ability ability = hero.unlockedAbilities.get(2);
 				Enemy target = findNearestEnemyToHero(hero);
-				if (target != null && hero.mana >= ability.manaCost && ability.cooldown == 0) {
+				if (canCastHeroAbility(hero, ability, target)) {
 					hero.useAbility(ability, target);
 				}
 			}
 			keyH.num6Pressed = false; // Consume press
 		}
+	}
+
+	private boolean canCastHeroAbility(Hero hero, Hero.Ability ability, Enemy target) {
+		if (hero.mana < ability.manaCost || ability.cooldown > 0) return false;
+		if (target != null) return true;
+		return switch (ability.type) {
+			case WARRIOR_WAVE, WARRIOR_AURA, WARRIOR_PULL,
+				MAGE_PORTAL, MAGE_STORM, MAGE_ORB, AOE_DAMAGE,
+				AOE_HEAL, BUFF, MOBILITY, SUMMON, TAUNT, PASSIVE -> true;
+			default -> false;
+		};
 	}
 
 	private Enemy findNearestEnemyToHero(Hero hero) {
@@ -4075,7 +4191,9 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 
 		// Mana bar
 		y += spacing;
-		int manaWidth = (int)((double)player.mana / player.maxMana * width);
+		int displayedMana = activeHero != null && activeHero.isActivePlayer ? (int) activeHero.mana : player.mana;
+		int displayedMaxMana = activeHero != null && activeHero.isActivePlayer ? activeHero.maxMana : player.maxMana;
+		int manaWidth = (int)((double) displayedMana / Math.max(1, displayedMaxMana) * width);
 		g2.setColor(Color.blue);
 		g2.fillRect(x, y, manaWidth, height);
 		g2.setColor(Color.white);
@@ -4084,6 +4202,14 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 
 		y += spacing;
 		g2.drawString("Gold: " + gold, x + 6, y + height - 4);
+		if (activeHero != null && activeHero.isActivePlayer) {
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 11));
+			for (int i = 0; i < activeHero.unlockedAbilities.size() && i < 3; i++) {
+				Hero.Ability ability = activeHero.unlockedAbilities.get(i);
+				String cooldown = ability.cooldown > 0 ? " [" + ability.cooldown + "]" : "";
+				g2.drawString((i + 4) + ": " + ability.name + cooldown, x + 6, y + 30 + i * 14);
+			}
+		}
 
 		// Inventory button - hide in survival mode
 		if (gameMode != GameMode.SURVIVAL) {

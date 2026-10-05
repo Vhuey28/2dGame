@@ -36,6 +36,9 @@ public class Player extends Entity{
 	public int attackCooldownBase = 16; // base cooldown, can be reduced by Attack Speed Up power-up
 	public int meleeDamage = 12; // base melee damage, can be increased by Damage Up power-up
 	public int projectileDamage = 8; // base projectile damage
+	public int abilityAuraTicks = 0;
+	public int abilityDamageBonus = 0;
+	public int abilityDefenseBonus = 0;
 	public int dodgeRange = 24; // base dodge distance (tileSize/2 = 24)
 
 	// Attack animation state
@@ -229,6 +232,10 @@ public class Player extends Entity{
 	}
 
 	public void update() {
+		if (abilityAuraTicks > 0 && --abilityAuraTicks == 0) {
+			abilityDamageBonus = 0;
+			abilityDefenseBonus = 0;
+		}
 		// Calculate movement vector from input
 		float moveX = 0f;
 		float moveY = 0f;
@@ -486,12 +493,19 @@ public class Player extends Entity{
 			int ew = gp.tileSize;
 			int eh = gp.tileSize;
 			if (ex + ew > attackX && ex < attackX + attackW && ey + eh > attackY && ey < attackY + attackH) {
-				enemy.health -= meleeDamage;
+				int damage = meleeDamage + (abilityAuraTicks > 0 ? abilityDamageBonus : 0);
+				enemy.health -= damage;
 				enemy.showHealthCounter = 60;
-				enemy.threatTable.addThreat(this, meleeDamage);
+				enemy.threatTable.addThreat(this, damage);
 				if (enemy.health < 0) enemy.health = 0;
 			}
 		}
+	}
+
+	public void applyAbilityAura(int ticks, int damageBonus, int defenseBonus) {
+		abilityAuraTicks = Math.max(abilityAuraTicks, ticks);
+		abilityDamageBonus = Math.max(abilityDamageBonus, damageBonus);
+		abilityDefenseBonus = Math.max(abilityDefenseBonus, defenseBonus);
 	}
 
 	private boolean pcanMoveTo(float nextX, float nextY) {

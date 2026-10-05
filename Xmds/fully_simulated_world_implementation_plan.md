@@ -2394,6 +2394,7 @@ Target-continent budget certification remains measurement-dependent: run the opt
 - Playable and companion heroes load zero-based directional animations from class-specific resources: Vince walk/slash frames for warriors and Triss walk/spellcast frames for mages, with controlled attacks synchronized to the proxy player.
 - Allied troops in charge mode continuously acquire replacement enemies until no living targets remain, then enter a true idle state; archers maintain a ranged firing line and their projectiles apply damage.
 - Campaign players can pledge to a settlement's realm as mercenaries or lords. Affiliation unlocks a Kingdom tab with realm information, while rulers can adjust kingdom laws; affiliation, rulers, and law levels persist through saves.
+- Warrior class abilities now provide a directional damage wave, a looping allied damage/defense aura, and an enemy pull field. Mage abilities provide mouse-placed linked portals, a looping damage storm, and a ten-second enemy-bouncing orb, all using the requested packaged fire/purple effect frames.
 
 ---
 
