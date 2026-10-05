@@ -17,6 +17,8 @@ public final class WorldInvariantValidator {
         validateRegistry("household", world.households, violations);
         validateRegistry("army", world.armies, violations);
         validateRegistry("realm", world.realms, violations);
+        validateRegistry("party", world.parties, violations);
+        validateRegistry("contract", world.contracts, violations);
 
         Set<Long> householdMembers = new HashSet<>();
         for (Household household : world.households.values()) {
@@ -43,6 +45,24 @@ public final class WorldInvariantValidator {
                 violations.add("person " + person.id + " has missing home settlement " + person.homeSettlementId);
             }
             if (!person.alive && person.deathMinute == null) violations.add("dead person " + person.id + " lacks death minute");
+        }
+        for (WorldParty party : world.parties.values()) {
+            for (Long personId : party.memberPersonIds) {
+                if (!world.people.containsKey(personId)) violations.add("party " + party.id + " has missing person " + personId);
+            }
+            if (party.currentSettlementId != null
+                    && world.geography.getSettlement(party.currentSettlementId) == null) {
+                violations.add("party " + party.id + " has missing settlement " + party.currentSettlementId);
+            }
+        }
+        for (Contract contract : world.contracts.values()) {
+            if (world.geography.getSettlement(contract.issuerSettlementId) == null
+                    || world.geography.getSettlement(contract.destinationSettlementId) == null) {
+                violations.add("contract " + contract.id + " has missing settlement");
+            }
+            if (contract.takerPartyId != null && !world.parties.containsKey(contract.takerPartyId)) {
+                violations.add("contract " + contract.id + " has missing taker party");
+            }
         }
         for (Road road : world.geography.getRouteGraph().getAllRoads()) {
             if (world.geography.getSettlement(road.fromSettlementId) == null

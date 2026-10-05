@@ -123,6 +123,9 @@ public class GamePanel extends JPanel implements Runnable{
 		private final java.util.List<LocalPlaceholder> campaignLocalPlaceholders = new java.util.ArrayList<>();
 		private String localInteractionMessage = "Walk near a marker and press F";
 		private BattleContext activeCampaignBattle;
+		private world.LocalPlayerState campaignLocalPlayerState;
+		private final java.nio.file.Path campaignSavePath = java.nio.file.Paths.get(
+			System.getProperty("user.home"), ".chronicle-conquest", "campaign.ccq");
 		private static final long CAMPAIGN_SEED = WorldConfig.DEFAULT_SEED;
 		private party.Party pendingEnemyParty;
 	private boolean pendingCaughtFleeing;
@@ -245,10 +248,38 @@ public class GamePanel extends JPanel implements Runnable{
 						repaint();
 					}
 					if (gameStarted && gameMode == GameMode.CAMPAIGN) {
+						if (code == KeyEvent.VK_F5 && campaignSession != null) {
+							try {
+								campaignSession.save(campaignSavePath);
+								localInteractionMessage = "Campaign saved";
+							} catch (java.io.IOException failure) {
+								localInteractionMessage = "Save failed: " + failure.getMessage();
+							}
+							repaint();
+							return;
+						}
+						if (code == KeyEvent.VK_F9) {
+							try {
+								campaignSession = CampaignSession.load(campaignSavePath);
+								campaignSnapshot = campaignSession.getSnapshot();
+								selectedCampaignSettlementId = campaignSnapshot.player.settlementId;
+								currentLayer = GameLayer.WORLD_MAP;
+								localInteractionMessage = "Campaign loaded";
+							} catch (java.io.IOException failure) {
+								localInteractionMessage = "Load failed: " + failure.getMessage();
+							}
+							repaint();
+							return;
+						}
 						if (code == KeyEvent.VK_TAB) {
 							if (currentLayer == GameLayer.WORLD_MAP) {
 								enterCampaignLocalView();
 							} else {
+								if (campaignLocalPlayerState != null) {
+									campaignLocalPlayerState.health = player.health;
+									campaignSession.leaveLocalScene(campaignLocalPlayerState);
+									campaignLocalPlayerState = null;
+								}
 								currentLayer = GameLayer.WORLD_MAP;
 							}
 							repaint();
@@ -281,6 +312,15 @@ public class GamePanel extends JPanel implements Runnable{
 									selectedCampaignSettlementId, GoodType.GRAIN, 5);
 								if (code == KeyEvent.VK_V) campaignSession.sellToSettlement(
 									selectedCampaignSettlementId, GoodType.GRAIN, 5);
+								if (code == KeyEvent.VK_N) campaignSession.buyFromSettlement(
+									selectedCampaignSettlementId, GoodType.VEGETABLES, 5);
+								if (code == KeyEvent.VK_M) campaignSession.sellToSettlement(
+									selectedCampaignSettlementId, GoodType.VEGETABLES, 5);
+								if (code == KeyEvent.VK_C) {
+									java.util.List<world.Contract> offers = campaignSession.getAvailableContractsAt(
+										selectedCampaignSettlementId);
+									if (!offers.isEmpty()) campaignSession.acceptContract(offers.get(0).id);
+								}
 								if (code == KeyEvent.VK_T) campaignSession.travelPlayerTo(selectedCampaignSettlementId);
 							}
 							campaignSnapshot = campaignSession.getSnapshot();
@@ -693,10 +733,15 @@ public class GamePanel extends JPanel implements Runnable{
 			if (campaignSession == null || campaignSnapshot == null || campaignSnapshot.player == null) return;
 			CampaignSnapshot.SettlementView settlement = campaignSnapshot.findSettlement(
 				campaignSnapshot.player.settlementId);
-			setupMap("map1.txt");
+			String[] settlementMaps = {"map1.txt", "mapA.txt", "home.txt"};
+			String localMap = settlementMaps[(int) Math.floorMod(
+				campaignSnapshot.player.settlementId, settlementMaps.length)];
+			setupMap(localMap);
 			enemies.clear();
 			troops.clear();
-			teleportPlayerForMap("map1.txt");
+			teleportPlayerForMap(localMap);
+			campaignLocalPlayerState = campaignSession.enterLocalScene();
+			player.health = campaignLocalPlayerState.health;
 			campaignLocalPlaceholders.clear();
 			String place = settlement == null ? "Settlement" : settlement.name;
 			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 8, tileSize * 7,
@@ -705,12 +750,14 @@ public class GamePanel extends JPanel implements Runnable{
 				LocalPlaceholder.Type.PERSON, "Merchant", "I trade using the settlement's real market stock."));
 			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 18, tileSize * 11,
 				LocalPlaceholder.Type.PERSON, "Guard", "The roads and gates are being watched."));
+			String marketText = settlement == null ? "Market unavailable" : "Grain "
+				+ settlement.grainPrice + "c, vegetables " + settlement.vegetablePrice + "c";
 			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 11, tileSize * 14,
-				LocalPlaceholder.Type.MARKET, "Market Stall", "Press B/V on the world map to trade grain."));
+				LocalPlaceholder.Type.MARKET, "Market Stall", marketText));
 			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 21, tileSize * 7,
-				LocalPlaceholder.Type.INN, "Inn", "Rooms and contracts will be connected in a later phase."));
+				LocalPlaceholder.Type.INN, "Inn", "The world keeps moving while you rest and explore."));
 			campaignLocalPlaceholders.add(new LocalPlaceholder(tileSize * 16, tileSize * 17,
-				LocalPlaceholder.Type.NOTICE_BOARD, "Notice Board", "Local jobs and war news placeholder."));
+				LocalPlaceholder.Type.NOTICE_BOARD, "Notice Board", "Interact to accept the first local contract."));
 			localInteractionMessage = place + " local view - placeholder interactions are active";
 			currentLayer = GameLayer.OVERWORLD;
 		}
@@ -725,9 +772,20 @@ public class GamePanel extends JPanel implements Runnable{
 					nearest = placeholder;
 				}
 			}
-			localInteractionMessage = nearest == null
-				? "Move closer to a highlighted person or location"
-				: nearest.label + ": " + nearest.interactionText;
+			if (nearest == null) {
+				localInteractionMessage = "Move closer to a highlighted person or location";
+			} else if (nearest.type == LocalPlaceholder.Type.NOTICE_BOARD && campaignSnapshot.player != null) {
+				java.util.List<world.Contract> offers = campaignSession.getAvailableContractsAt(
+					campaignSnapshot.player.settlementId);
+				if (offers.isEmpty()) localInteractionMessage = "Notice Board: no open local contracts";
+				else {
+					world.command.CommandResult result = campaignSession.acceptContract(offers.get(0).id);
+					campaignSnapshot = campaignSession.getSnapshot();
+					localInteractionMessage = result.accepted ? "Contract accepted" : result.message;
+				}
+			} else {
+				localInteractionMessage = nearest.label + ": " + nearest.interactionText;
+			}
 		}
 
 		private void drawCampaignLocalPlaceholders(Graphics2D g2) {
@@ -2165,7 +2223,7 @@ System.nanoTime();
 			g2.drawString("Chronicle Conquest - Campaign", 20, 34);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 12));
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("TAB local | K tactical battle | 1/2/3 speed | T travel | B/V trade | F6 +day", 20, 55);
+			g2.drawString("TAB local | T travel | B/V grain | N/M veg | C contract | F5 save | F9 load", 20, 55);
 
 			if (snapshot == null) {
 				g2.setColor(Color.WHITE);
@@ -2289,6 +2347,8 @@ System.nanoTime();
 				g2.setColor(new Color(245, 196, 65));
 				g2.drawString("You: " + snapshot.player.coins + "c cargo "
 					+ snapshot.player.cargoUsed + "/" + snapshot.player.cargoCapacity, panelX, y); y += 17;
+				g2.drawString("Party " + snapshot.player.partySize + " contracts "
+					+ snapshot.player.activeContracts + " rep " + snapshot.player.reputation, panelX, y); y += 17;
 			}
 			y += 7;
 
@@ -2320,6 +2380,10 @@ System.nanoTime();
 				g2.drawString("Households: " + selected.households, panelX, y); y += 14;
 				g2.drawString("Treasury: " + selected.treasury, panelX, y); y += 14;
 				g2.drawString("Grain / veg: " + selected.grain + " / " + selected.vegetables, panelX, y); y += 14;
+				g2.drawString("Prices: " + selected.grainPrice + "c / " + selected.vegetablePrice + "c", panelX, y); y += 14;
+				long localOffers = snapshot.contracts.stream().filter(contract ->
+					contract.issuerSettlementId == selected.id && "OPEN".equals(contract.status)).count();
+				g2.drawString("Open contracts: " + localOffers, panelX, y); y += 14;
 				g2.drawString(String.format("Food security: %.0f%%", selected.foodSecurity * 100.0), panelX, y); y += 14;
 				g2.setColor(new Color(245, 196, 65));
 				g2.drawString("Travel here, then TAB for local view", panelX, y); y += 18;

@@ -4,6 +4,8 @@ import world.command.CommandResult;
 import world.economy.GoodType;
 import world.geography.Road;
 import world.geography.Settlement;
+import world.geography.WorldPosition;
+import world.save.CampaignSaveCodec;
 
 /**
  * Owns one playable campaign simulation and publishes immutable UI snapshots.
@@ -15,6 +17,7 @@ public final class CampaignSession {
     private final WorldClock clock;
     private final WorldSimulation simulation;
     private final PlayerCampaignState playerState;
+    private final ContractSystem contractSystem;
     private volatile CampaignSnapshot snapshot;
     private long lastSnapshotMinute = Long.MIN_VALUE;
 
@@ -23,12 +26,14 @@ public final class CampaignSession {
         this.world = new WorldState();
         this.clock = new WorldClock(0L);
         this.simulation = new WorldSimulation(clock, world);
+        this.contractSystem = new ContractSystem(simulation.getContext());
         configureRandomStreams(seed);
 
         WorldGenerator generator = new WorldGenerator(simulation.getContext());
         generator.generateVerticalSlice();
         this.playerState = createPlayerAdventurer();
         simulation.initializeGeneratedWorld();
+        contractSystem.generateInitialOffers(clock.getWorldMinute());
 
         // Campaign testing starts at one world hour per real second. Players can
         // select 1x, 60x, or 1440x from the campaign map.
@@ -50,12 +55,24 @@ public final class CampaignSession {
         world.people.put(personId, person);
         long householdId = world.idGenerator.next();
         Household household = new Household(householdId, settlementId, personId);
-        household.account.add(250L);
         household.inventory.add(GoodType.GRAIN, 5);
         household.inventory.add(GoodType.VEGETABLES, 5);
         world.households.put(householdId, household);
         person.householdId = householdId;
-        PlayerCampaignState state = new PlayerCampaignState(personId, householdId, settlementId);
+
+        long partyId = world.idGenerator.next();
+        WorldParty party = new WorldParty(partyId, personId, settlementId);
+        party.money.add(250L);
+        household.account = party.money; // one canonical purse shared by strategic household/party views
+        Settlement settlement = world.geography.getSettlement(settlementId);
+        if (settlement != null) party.position = new WorldPosition(
+                settlement.position.x, settlement.position.y);
+        world.parties.put(partyId, party);
+        person.travelingPartyId = partyId;
+
+        PlayerCampaignState state = new PlayerCampaignState(personId, householdId, partyId,
+                settlementId, party.cargo);
+        state.cargoCapacity = party.cargoCapacity;
         world.player = state;
         return state;
     }
@@ -75,6 +92,7 @@ public final class CampaignSession {
     public void update(double realSeconds) {
         simulation.update(realSeconds);
         long currentMinute = clock.getWorldMinute();
+        contractSystem.processDeadlines(playerState, currentMinute);
         if (currentMinute != lastSnapshotMinute) {
             refreshSnapshot();
         }
@@ -126,6 +144,12 @@ public final class CampaignSession {
         if (route.isEmpty()) return CommandResult.rejected("NO_ROUTE", "No open road reaches that settlement");
         double distance = route.stream().mapToDouble(Road::getEffectiveCostFactor).sum();
         long travelMinutes = Math.max(60L, Math.round(distance / 10.0 * 60.0));
+        WorldParty party = world.parties.get(playerState.partyId);
+        if (party != null) {
+            party.state = WorldParty.PartyState.TRAVELING;
+            party.currentSettlementId = null;
+            party.destinationSettlementId = settlementId;
+        }
         boolean paused = clock.isPaused();
         clock.setPaused(false);
         simulation.advanceMinutes(travelMinutes);
@@ -137,9 +161,71 @@ public final class CampaignSession {
             player.currentSettlementId = settlementId;
             player.homeSettlementId = settlementId;
         }
+        if (party != null) {
+            for (Long memberId : party.memberPersonIds) {
+                Person member = world.people.get(memberId);
+                if (member != null) member.currentSettlementId = settlementId;
+            }
+        }
         if (household != null) household.homeSettlementId = settlementId;
+        if (party != null) {
+            party.state = WorldParty.PartyState.AT_SETTLEMENT;
+            party.currentSettlementId = settlementId;
+            party.destinationSettlementId = null;
+            party.position = new WorldPosition(destination.position.x, destination.position.y);
+        }
+        contractSystem.onPlayerArrived(playerState, clock.getWorldMinute());
         refreshSnapshot();
         return CommandResult.accepted();
+    }
+
+    public CommandResult recruitCompanion(long personId) {
+        Person companion = world.people.get(personId);
+        WorldParty party = world.parties.get(playerState.partyId);
+        if (companion == null || party == null) return CommandResult.rejected("INVALID_PERSON", "Person not found");
+        if (!companion.alive || companion.currentSettlementId == null
+                || companion.currentSettlementId != playerState.currentSettlementId) {
+            return CommandResult.rejected("NOT_PRESENT", "Companion must be alive and present");
+        }
+        if (!party.memberPersonIds.contains(personId)) party.memberPersonIds.add(personId);
+        companion.travelingPartyId = party.id;
+        return CommandResult.accepted();
+    }
+
+    public CommandResult acceptContract(long contractId) {
+        CommandResult result = contractSystem.accept(contractId, playerState, clock.getWorldMinute());
+        refreshSnapshot();
+        return result;
+    }
+
+    public java.util.List<Contract> getAvailableContractsAt(long settlementId) {
+        java.util.List<Contract> result = new java.util.ArrayList<>();
+        for (Contract contract : world.contracts.values()) {
+            if (contract.issuerSettlementId == settlementId
+                    && contract.status == Contract.ContractStatus.OPEN) result.add(contract);
+        }
+        result.sort(java.util.Comparator.comparingLong(contract -> contract.id));
+        return result;
+    }
+
+    public LocalPlayerState enterLocalScene() {
+        WorldParty party = world.parties.get(playerState.partyId);
+        if (party != null) party.state = WorldParty.PartyState.LOCAL_SCENE;
+        Person person = world.people.get(playerState.personId);
+        return new LocalPlayerState(person == null ? 100 : (int) Math.round(person.health.healthLevel),
+                playerState.currentSettlementId);
+    }
+
+    public void leaveLocalScene(LocalPlayerState local) {
+        Person person = world.people.get(playerState.personId);
+        if (person != null && local != null) {
+            person.health.healthLevel = local.health;
+            person.health.clamp();
+            if (person.health.healthLevel <= 0.0 && person.alive) person.die(clock.getWorldMinute(), Person.DeathCause.WAR);
+        }
+        WorldParty party = world.parties.get(playerState.partyId);
+        if (party != null) party.state = WorldParty.PartyState.AT_SETTLEMENT;
+        refreshSnapshot();
     }
 
     public PlayerCampaignState getPlayerState() {
@@ -165,6 +251,7 @@ public final class CampaignSession {
         boolean wasPaused = clock.isPaused();
         clock.setPaused(false);
         simulation.advanceMinutes(WorldConfig.MINUTES_PER_DAY);
+        contractSystem.processDeadlines(playerState, clock.getWorldMinute());
         clock.setPaused(wasPaused);
         refreshSnapshot();
     }
@@ -183,6 +270,23 @@ public final class CampaignSession {
 
     public long getSeed() {
         return seed;
+    }
+
+    public void save(java.nio.file.Path path) throws java.io.IOException {
+        CampaignSaveCodec.save(this, path);
+    }
+
+    public static CampaignSession load(java.nio.file.Path path) throws java.io.IOException {
+        return CampaignSaveCodec.load(path);
+    }
+
+    /** Called by the versioned loader after canonical registries have been restored. */
+    public void rebuildDerivedStateAfterLoad() {
+        world.indexes.rebuild(world, clock.getWorldMinute());
+        world.geography.getSpatialIndex().rebuildSettlements(world.geography.getSettlements().values());
+        world.geography.getSpatialIndex().rebuildDynamic(world);
+        new WorldInvariantValidator().validate(world).throwIfInvalid();
+        refreshSnapshot();
     }
 
     private void refreshSnapshot() {

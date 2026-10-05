@@ -54,6 +54,10 @@ public final class WorldState {
     public final java.util.Map<Long, world.diplomacy.SpyNetwork> spyNetworks = new java.util.HashMap<>();
     public final java.util.Map<Long, world.diplomacy.Scheme> schemes = new java.util.HashMap<>();
 
+    /** Persistent adventuring parties and simulation-generated contracts. */
+    public final java.util.Map<Long, WorldParty> parties = new java.util.HashMap<>();
+    public final java.util.Map<Long, Contract> contracts = new java.util.HashMap<>();
+
     /** Player's persistent adventurer state in Campaign mode, when present. */
     public PlayerCampaignState player;
 

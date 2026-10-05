@@ -39,6 +39,7 @@ public final class CampaignSnapshot {
     public final List<RoadView> roads;
     public final List<CaravanView> caravans;
     public final List<ArmyView> armies;
+    public final List<ContractView> contracts;
     public final PlayerView player;
     public final List<EventView> recentEvents;
 
@@ -48,7 +49,7 @@ public final class CampaignSnapshot {
             double averageFoodSecurity,
             List<RealmView> realms, List<SettlementView> settlements,
             List<RoadView> roads, List<CaravanView> caravans, List<ArmyView> armies,
-            PlayerView player, List<EventView> recentEvents) {
+            List<ContractView> contracts, PlayerView player, List<EventView> recentEvents) {
         this.worldMinute = worldMinute;
         this.speed = speed;
         this.paused = paused;
@@ -65,6 +66,7 @@ public final class CampaignSnapshot {
         this.roads = Collections.unmodifiableList(roads);
         this.caravans = Collections.unmodifiableList(caravans);
         this.armies = Collections.unmodifiableList(armies);
+        this.contracts = Collections.unmodifiableList(contracts);
         this.player = player;
         this.recentEvents = Collections.unmodifiableList(recentEvents);
     }
@@ -156,7 +158,9 @@ public final class CampaignSnapshot {
                     settlement.controllerRealmId, settlement.occupyingRealmId,
                     settlement.position.x, settlement.position.y,
                     population, households, settlement.treasury.copperCoins, grain,
-                    vegetables, food, settlement.security, settlement.unrest));
+                    vegetables, settlement.market.getLastPrice(GoodType.GRAIN),
+                    settlement.market.getLastPrice(GoodType.VEGETABLES),
+                    food, settlement.security, settlement.unrest));
         }
         settlementViews.sort(Comparator.comparing(view -> view.name));
 
@@ -198,15 +202,27 @@ public final class CampaignSnapshot {
         }
         armyViews.sort(Comparator.comparingLong(view -> view.id));
 
+        List<ContractView> contractViews = new ArrayList<>();
+        for (Contract contract : world.contracts.values()) {
+            contractViews.add(new ContractView(contract.id, contract.type.toString(),
+                    contract.issuerSettlementId, contract.destinationSettlementId,
+                    contract.deadlineMinute, contract.rewardCoins, contract.requiredGood == null
+                            ? "None" : contract.requiredGood.toString(), contract.requiredQuantity,
+                    contract.status.toString()));
+        }
+        contractViews.sort(Comparator.comparingLong(view -> view.id));
+
         PlayerView playerView = null;
         if (world.player != null) {
             Household playerHousehold = world.households.get(world.player.householdId);
             long coins = playerHousehold == null ? 0L : playerHousehold.account.copperCoins;
+            WorldParty playerParty = world.parties.get(world.player.partyId);
             playerView = new PlayerView(world.player.currentSettlementId, coins,
                     world.player.cargo.getQuantity(GoodType.GRAIN),
                     world.player.cargo.getQuantity(GoodType.VEGETABLES),
                     world.player.cargo.totalQuantity(), world.player.cargoCapacity,
-                    world.player.reputation);
+                    world.player.reputation, playerParty == null ? 1 : playerParty.memberPersonIds.size(),
+                    world.player.acceptedContractIds.size());
         }
 
         List<EventView> eventViews = new ArrayList<>();
@@ -230,7 +246,8 @@ public final class CampaignSnapshot {
         return new CampaignSnapshot(minute, simulation.getClock().getSpeed(),
                 simulation.getClock().isPaused(), living, world.households.size(),
                 armyViews.size(), world.caravans.size(), activeWars, activeTreaties, activeSieges, averageFood,
-                realmViews, settlementViews, roadViews, caravanViews, armyViews, playerView, eventViews);
+                realmViews, settlementViews, roadViews, caravanViews, armyViews,
+                contractViews, playerView, eventViews);
     }
 
     private static int countPopulation(WorldState world, long settlementId) {
@@ -307,14 +324,16 @@ public final class CampaignSnapshot {
         public final long treasury;
         public final int grain;
         public final int vegetables;
+        public final long grainPrice;
+        public final long vegetablePrice;
         public final double foodSecurity;
         public final double security;
         public final double unrest;
 
         SettlementView(long id, String name, Long realmId, Long occupyingRealmId,
                 double worldX, double worldY, int population, int households, long treasury,
-                int grain, int vegetables, double foodSecurity,
-                double security, double unrest) {
+                int grain, int vegetables, long grainPrice, long vegetablePrice,
+                double foodSecurity, double security, double unrest) {
             this.id = id;
             this.name = name;
             this.realmId = realmId;
@@ -326,6 +345,8 @@ public final class CampaignSnapshot {
             this.treasury = treasury;
             this.grain = grain;
             this.vegetables = vegetables;
+            this.grainPrice = grainPrice;
+            this.vegetablePrice = vegetablePrice;
             this.foodSecurity = foodSecurity;
             this.security = security;
             this.unrest = unrest;
@@ -359,9 +380,11 @@ public final class CampaignSnapshot {
         public final int cargoUsed;
         public final int cargoCapacity;
         public final int reputation;
+        public final int partySize;
+        public final int activeContracts;
 
         PlayerView(long settlementId, long coins, int grain, int vegetables,
-                int cargoUsed, int cargoCapacity, int reputation) {
+                int cargoUsed, int cargoCapacity, int reputation, int partySize, int activeContracts) {
             this.settlementId = settlementId;
             this.coins = coins;
             this.grain = grain;
@@ -369,6 +392,34 @@ public final class CampaignSnapshot {
             this.cargoUsed = cargoUsed;
             this.cargoCapacity = cargoCapacity;
             this.reputation = reputation;
+            this.partySize = partySize;
+            this.activeContracts = activeContracts;
+        }
+    }
+
+    public static final class ContractView {
+        public final long id;
+        public final String type;
+        public final long issuerSettlementId;
+        public final long destinationSettlementId;
+        public final long deadlineMinute;
+        public final long rewardCoins;
+        public final String requiredGood;
+        public final int requiredQuantity;
+        public final String status;
+
+        ContractView(long id, String type, long issuerSettlementId, long destinationSettlementId,
+                long deadlineMinute, long rewardCoins, String requiredGood,
+                int requiredQuantity, String status) {
+            this.id = id;
+            this.type = type;
+            this.issuerSettlementId = issuerSettlementId;
+            this.destinationSettlementId = destinationSettlementId;
+            this.deadlineMinute = deadlineMinute;
+            this.rewardCoins = rewardCoins;
+            this.requiredGood = requiredGood;
+            this.requiredQuantity = requiredQuantity;
+            this.status = status;
         }
     }
 

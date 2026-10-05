@@ -2239,7 +2239,7 @@ Each phase must compile, run, and have tests before proceeding.
 - Destroying a caravan removes its cargo and affects destination supply.
 - A merchant can make a reproducible profit or loss.
 
-## Phase 4 — Player integration
+## Phase 4 — Player integration ✅ COMPLETE
 
 ### Tasks
 
@@ -2254,6 +2254,16 @@ Each phase must compile, run, and have tests before proceeding.
 
 - Player can buy goods, travel, sell goods, take a contract, save, and reload.
 - World continues to change during exploration.
+
+### Implemented
+
+- The adventurer now has canonical persistent `Person`, `Household`, and `WorldParty` records with one shared purse and cargo inventory.
+- Explicit local-scene adapters transfer health between the persistent person and the physical player; strategic simulation continues while local scenes are active.
+- Settlement entry selects settlement-specific local maps and exposes live market prices, stock, and notice-board contracts.
+- Contracts are generated from food need and route danger, reserve issuer rewards, enforce deadlines and penalties, consume delivery cargo, and update scoped settlement reputation.
+- Strategic travel advances the complete simulation and reconciles party position, contracts, and local entry state.
+- Versioned atomic campaign checkpoints preserve seed/time, IDs, player/party state, settlement economy, scoped reputation, and contracts; derived indexes are rebuilt and invariants validated after load.
+- Campaign controls support grain and vegetable trade, contract acceptance, and F5/F9 save/load.
 
 ## Phase 5 — Political core
 
