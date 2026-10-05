@@ -60,7 +60,7 @@ class DiplomacySimulationTest {
         ArrayList<Realm> realms = new ArrayList<>(world.realms.values());
         realms.sort(Comparator.comparingLong(realm -> realm.id));
         Treaty treaty = new Treaty(world.idGenerator.next(), Treaty.TreatyType.MILITARY_ACCESS,
-                realms.get(0).id, realms.get(1).id, 0L, WorldConfig.MINUTES_PER_MONTH);
+                realms.get(0).id, realms.get(1).id, 0L, (long) WorldConfig.MINUTES_PER_MONTH);
         world.treaties.put(treaty.id, treaty);
         world.diplomaticStates.values().iterator().next().treatyIds.add(treaty.id);
 
