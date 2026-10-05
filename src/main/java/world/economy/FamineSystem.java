@@ -36,7 +36,8 @@ public final class FamineSystem {
      * Called by the simulation at monthly intervals.
      */
     public void processMonth(long currentMinute) {
-        for (Household household : households.values()) {
+        // Migration can create a new household, so traverse a stable snapshot.
+        for (Household household : new java.util.ArrayList<>(households.values())) {
             checkHouseholdFamine(household, currentMinute);
         }
     }
