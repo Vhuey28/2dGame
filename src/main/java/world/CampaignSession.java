@@ -196,6 +196,57 @@ public final class CampaignSession {
         return CommandResult.accepted();
     }
 
+    public CommandResult joinKingdom(long realmId, PlayerCampaignState.KingdomRole role) {
+        Realm realm = world.realms.get(realmId);
+        if (realm == null) return CommandResult.rejected("INVALID_REALM", "Kingdom not found");
+        if (role != PlayerCampaignState.KingdomRole.MERCENARY
+                && role != PlayerCampaignState.KingdomRole.LORD) {
+            return CommandResult.rejected("INVALID_ROLE", "Join as a mercenary or lord");
+        }
+        playerState.affiliatedRealmId = realmId;
+        playerState.kingdomRole = role;
+        Person player = world.people.get(playerState.personId);
+        if (player != null && role == PlayerCampaignState.KingdomRole.LORD) {
+            player.type = Person.PersonType.NOBLE;
+        }
+        refreshSnapshot();
+        return CommandResult.accepted();
+    }
+
+    /** Installs the player as ruler; succession/events and test tools can call the same hook. */
+    public CommandResult appointPlayerAsKing(long realmId) {
+        Realm realm = world.realms.get(realmId);
+        Person player = world.people.get(playerState.personId);
+        if (realm == null || player == null) {
+            return CommandResult.rejected("INVALID_REALM", "Kingdom or player not found");
+        }
+        realm.rulerPersonId = player.id;
+        player.type = Person.PersonType.NOBLE;
+        playerState.affiliatedRealmId = realmId;
+        playerState.kingdomRole = PlayerCampaignState.KingdomRole.KING;
+        refreshSnapshot();
+        return CommandResult.accepted();
+    }
+
+    public CommandResult adjustKingdomLaw(world.politics.Government.LawType law, int delta) {
+        Realm realm = effectivePlayerRealm();
+        if (realm == null || realm.rulerPersonId == null || realm.rulerPersonId != playerState.personId) {
+            return CommandResult.rejected("NOT_RULER", "Only the kingdom's ruler can change laws");
+        }
+        world.politics.Government government = world.governments.get(realm.governmentId);
+        if (government == null) return CommandResult.rejected("NO_GOVERNMENT", "Kingdom government not found");
+        government.setLawLevel(law, government.getLawLevel(law) + delta);
+        refreshSnapshot();
+        return CommandResult.accepted();
+    }
+
+    private Realm effectivePlayerRealm() {
+        for (Realm realm : world.realms.values()) {
+            if (realm.rulerPersonId != null && realm.rulerPersonId == playerState.personId) return realm;
+        }
+        return playerState.affiliatedRealmId == null ? null : world.realms.get(playerState.affiliatedRealmId);
+    }
+
     public CommandResult acceptContract(long contractId) {
         CommandResult result = contractSystem.accept(contractId, playerState, clock.getWorldMinute());
         refreshSnapshot();

@@ -85,6 +85,11 @@ class PlayerIntegrationTest {
         long destination = contract.destinationSettlementId;
         session.travelPlayerTo(destination);
         session.advanceOneDayForTesting();
+        Realm realm = session.getWorld().realms.values().stream().findFirst().orElseThrow();
+        assertTrue(session.appointPlayerAsKing(realm.id).accepted);
+        assertTrue(session.adjustKingdomLaw(
+                world.politics.Government.LawType.TAXATION, 1).accepted);
+        int savedTaxation = session.getSnapshot().findRealm(realm.id).laws.get("TAXATION");
 
         Path directory = Files.createTempDirectory("campaign-save-test");
         Path save = directory.resolve("campaign.ccq");
@@ -97,6 +102,10 @@ class PlayerIntegrationTest {
         assertEquals(session.getWorld().idGenerator.getNextId(), loaded.getWorld().idGenerator.getNextId());
         assertEquals(session.getWorld().contracts.get(contract.id).status,
                 loaded.getWorld().contracts.get(contract.id).status);
+        assertEquals(realm.id, loaded.getSnapshot().player.affiliatedRealmId);
+        assertEquals("KING", loaded.getSnapshot().player.kingdomRole);
+        assertTrue(loaded.getSnapshot().player.canManageKingdom);
+        assertEquals(savedTaxation, loaded.getSnapshot().findRealm(realm.id).laws.get("TAXATION"));
         assertTrue(new WorldInvariantValidator().validate(loaded.getWorld()).isValid());
     }
 }

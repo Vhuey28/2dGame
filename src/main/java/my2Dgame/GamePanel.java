@@ -136,9 +136,10 @@ public class GamePanel extends JPanel implements Runnable{
 		private Long selectedCampaignSettlementId;
 		private Long hoveredCampaignSettlementId;
 		private java.awt.Point campaignMousePoint = new java.awt.Point();
-		private enum CampaignTab { OVERVIEW, INVENTORY, PARTY, CONTRACTS, ENCYCLOPEDIA, CRIME }
+		private enum CampaignTab { OVERVIEW, INVENTORY, PARTY, CONTRACTS, KINGDOM, ENCYCLOPEDIA, CRIME }
 		private CampaignTab activeCampaignTab = CampaignTab.OVERVIEW;
 		private final java.util.Map<CampaignTab, Rectangle> campaignTabHitboxes = new java.util.EnumMap<>(CampaignTab.class);
+		private final java.util.Map<String, Rectangle> kingdomManagementHitboxes = new java.util.LinkedHashMap<>();
 		private enum CampaignContextMenu { NONE, SETTLEMENT, MARKET, NOTICE_BOARD }
 		private CampaignContextMenu campaignContextMenu = CampaignContextMenu.NONE;
 		private final java.util.Map<String, Rectangle> campaignContextButtons = new java.util.LinkedHashMap<>();
@@ -1809,25 +1810,7 @@ System.nanoTime();
 
 		// troop commands
 		if (keyH.cPressed) {
-			for (entity.Troop t1 : troops) {
-				t1.mode = entity.Troop.Mode.CHARGE;
-				Enemy nearest = null;
-				float shortestDist = Float.MAX_VALUE;
-				for (Enemy e : enemies) {
-					if (e.dead) continue;
-					float dx = e.x - t1.x;
-					float dy = e.y - t1.y;
-					float dist = (float) Math.sqrt(dx * dx + dy * dy);
-					if (dist < shortestDist) {
-						shortestDist = dist;
-						nearest = e;
-					}
-				}
-				if (nearest != null) {
-					t1.targetX = (int) nearest.x;
-					t1.targetY = (int) nearest.y;
-				}
-			}
+			for (entity.Troop troop : troops) troop.beginCharge();
 		}
 		if (keyH.vPressed) {
 			for (entity.Troop t1 : troops) {
@@ -2224,6 +2207,10 @@ System.nanoTime();
 			addContextButton(g2, "OPEN_BOARD", "Open notice board", x + 250, y + 145, 200, 48);
 			addContextButton(g2, "ENTER_LOCAL", "Enter local settlement", x + 28, y + 210, 200, 48);
 			addContextButton(g2, "OPEN_INFO", "Open encyclopedia", x + 250, y + 210, 200, 48);
+			if (settlement.realmId != null && campaignSnapshot.player.affiliatedRealmId == null) {
+				addContextButton(g2, "JOIN_MERCENARY", "Join realm as mercenary", x + 28, y + 275, 200, 42);
+				addContextButton(g2, "JOIN_LORD", "Pledge allegiance as lord", x + 250, y + 275, 200, 42);
+			}
 		} else if (campaignContextMenu == CampaignContextMenu.MARKET && settlement != null) {
 			GoodType good = GoodType.values()[Math.floorMod(marketGoodIndex, GoodType.values().length)];
 			int stock = campaignSession.getWorld().geography.getSettlement(settlement.id).publicStockpile.getQuantity(good);
@@ -2277,6 +2264,13 @@ System.nanoTime();
 		GoodType good = GoodType.values()[Math.floorMod(marketGoodIndex, GoodType.values().length)];
 		world.command.CommandResult result = null;
 		long settlementId = campaignSnapshot.player.settlementId;
+		CampaignSnapshot.SettlementView currentSettlement = campaignSnapshot.findSettlement(settlementId);
+		if ("JOIN_MERCENARY".equals(clicked) && currentSettlement != null && currentSettlement.realmId != null) {
+			result = campaignSession.joinKingdom(currentSettlement.realmId, world.PlayerCampaignState.KingdomRole.MERCENARY);
+		}
+		if ("JOIN_LORD".equals(clicked) && currentSettlement != null && currentSettlement.realmId != null) {
+			result = campaignSession.joinKingdom(currentSettlement.realmId, world.PlayerCampaignState.KingdomRole.LORD);
+		}
 		if ("BUY_1".equals(clicked)) result = campaignSession.buyFromSettlement(settlementId, good, 1);
 		if ("BUY_5".equals(clicked)) result = campaignSession.buyFromSettlement(settlementId, good, 5);
 		if ("SELL_1".equals(clicked)) result = campaignSession.sellToSettlement(settlementId, good, 1);
@@ -2606,6 +2600,17 @@ System.nanoTime();
 	}
 
 		private void handleCampaignMapClick(java.awt.Point point) {
+			if (activeCampaignTab == CampaignTab.KINGDOM && campaignSession != null) {
+				for (java.util.Map.Entry<String, Rectangle> entry : kingdomManagementHitboxes.entrySet()) {
+					if (!entry.getValue().contains(point)) continue;
+					String[] command = entry.getKey().split(":");
+					campaignSession.adjustKingdomLaw(
+							world.politics.Government.LawType.valueOf(command[0]), Integer.parseInt(command[1]));
+					campaignSnapshot = campaignSession.getSnapshot();
+					repaint();
+					return;
+				}
+			}
 			for (java.util.Map.Entry<CampaignTab, Rectangle> entry : campaignTabHitboxes.entrySet()) {
 				if (entry.getValue().contains(point)) {
 					activeCampaignTab = entry.getKey();
@@ -2834,16 +2839,22 @@ System.nanoTime();
 			g2.setColor(new Color(10, 15, 21, 238));
 			g2.fillRect(0, barY, screenWidth, 32);
 			campaignTabHitboxes.clear();
-			CampaignTab[] tabs = CampaignTab.values();
-			int width = screenWidth / tabs.length;
-			for (int i = 0; i < tabs.length; i++) {
-				Rectangle rect = new Rectangle(i * width, barY, i == tabs.length - 1 ? screenWidth - i * width : width, 32);
-				campaignTabHitboxes.put(tabs[i], rect);
-				g2.setColor(tabs[i] == activeCampaignTab ? new Color(174, 132, 58) : new Color(42, 54, 64));
+			java.util.List<CampaignTab> tabs = new java.util.ArrayList<>(java.util.List.of(CampaignTab.values()));
+			boolean kingdomAvailable = snapshot.player != null && snapshot.player.affiliatedRealmId != null;
+			if (!kingdomAvailable) {
+				tabs.remove(CampaignTab.KINGDOM);
+				if (activeCampaignTab == CampaignTab.KINGDOM) activeCampaignTab = CampaignTab.OVERVIEW;
+			}
+			int width = screenWidth / tabs.size();
+			for (int i = 0; i < tabs.size(); i++) {
+				CampaignTab tab = tabs.get(i);
+				Rectangle rect = new Rectangle(i * width, barY, i == tabs.size() - 1 ? screenWidth - i * width : width, 32);
+				campaignTabHitboxes.put(tab, rect);
+				g2.setColor(tab == activeCampaignTab ? new Color(174, 132, 58) : new Color(42, 54, 64));
 				g2.fillRoundRect(rect.x + 2, rect.y + 3, rect.width - 4, rect.height - 5, 7, 7);
 				g2.setColor(Color.WHITE);
 				g2.setFont(new Font("SansSerif", Font.BOLD, 10));
-				String label = tabs[i].toString();
+				String label = tab.toString();
 				g2.drawString(label, rect.x + (rect.width - g2.getFontMetrics().stringWidth(label)) / 2, rect.y + 20);
 			}
 			if (activeCampaignTab == CampaignTab.OVERVIEW) return;
@@ -2857,6 +2868,7 @@ System.nanoTime();
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 			g2.setColor(Color.WHITE);
 			int y = panelY + 44;
+			kingdomManagementHitboxes.clear();
 			switch (activeCampaignTab) {
 				case INVENTORY -> {
 					if (snapshot.player != null) {
@@ -2885,6 +2897,43 @@ System.nanoTime();
 						if (++shown >= 3 || y > panelY + 150) break;
 					}
 					if (shown == 0) g2.drawString("No active contracts. Visit a notice board for new work.", 32, y);
+				}
+				case KINGDOM -> {
+					CampaignSnapshot.PlayerView playerView = snapshot.player;
+					CampaignSnapshot.RealmView realm = playerView == null || playerView.affiliatedRealmId == null
+							? null : snapshot.findRealm(playerView.affiliatedRealmId);
+					if (realm == null) {
+						g2.drawString("You are not affiliated with a kingdom.", 32, y);
+						break;
+					}
+					g2.drawString(realm.name + " | Your role: " + playerView.kingdomRole, 32, y); y += 15;
+					g2.drawString("Ruler " + realm.rulerName + " | Treasury " + realm.treasury + "c | Stability "
+							+ Math.round(realm.stability) + " | Legitimacy " + Math.round(realm.legitimacy), 32, y); y += 18;
+					g2.drawString(realm.governmentType + " | " + realm.successionLaw + " | Settlements "
+							+ realm.settlementCount + " | Population " + realm.population, 32, y); y += 17;
+					if (!playerView.canManageKingdom) {
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.drawString("Kingdom management is reserved for the ruler.", 32, y);
+						break;
+					}
+					g2.setColor(new Color(255, 215, 110));
+					g2.drawString("Manage laws (0-3):", 32, y); y += 14;
+					int lawIndex = 0;
+					for (java.util.Map.Entry<String, Integer> law : realm.laws.entrySet()) {
+						int column = lawIndex % 2;
+						int row = lawIndex / 2;
+						int lawX = 44 + column * 360;
+						int lawY = y + row * 18;
+						g2.setColor(Color.WHITE);
+						g2.drawString(law.getKey() + "  " + law.getValue(), lawX, lawY + 11);
+						Rectangle minus = new Rectangle(lawX + 250, lawY - 2, 25, 15);
+						Rectangle plus = new Rectangle(lawX + 282, lawY - 2, 25, 15);
+						kingdomManagementHitboxes.put(law.getKey() + ":-1", minus);
+						kingdomManagementHitboxes.put(law.getKey() + ":1", plus);
+						g2.setColor(new Color(58, 76, 91)); g2.fillRect(minus.x, minus.y, minus.width, minus.height); g2.fillRect(plus.x, plus.y, plus.width, plus.height);
+						g2.setColor(Color.WHITE); g2.drawString("-", minus.x + 10, minus.y + 12); g2.drawString("+", plus.x + 8, plus.y + 12);
+						lawIndex++;
+					}
 				}
 				case ENCYCLOPEDIA -> {
 					long working = snapshot.people.stream().filter(person -> "WORKING".equals(person.activity)).count();

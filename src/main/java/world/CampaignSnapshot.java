@@ -138,7 +138,8 @@ public final class CampaignSnapshot {
                     ruler == null ? "Vacant" : ruler.givenName + " " + ruler.familyName,
                     government == null ? "Unknown" : government.type.toString(),
                     government == null ? "Unknown" : government.successionLaw.toString(),
-                    factionCount, strongestFaction, strongestSupport, treatyCount, diplomacySummary));
+                    factionCount, strongestFaction, strongestSupport, treatyCount, diplomacySummary,
+                    snapshotLaws(government)));
         }
         realmViews.sort(Comparator.comparing(view -> view.name));
 
@@ -255,13 +256,27 @@ public final class CampaignSnapshot {
             Household playerHousehold = world.households.get(world.player.householdId);
             long coins = playerHousehold == null ? 0L : playerHousehold.account.copperCoins;
             WorldParty playerParty = world.parties.get(world.player.partyId);
+            Long affiliatedRealmId = world.player.affiliatedRealmId;
+            PlayerCampaignState.KingdomRole kingdomRole = world.player.kingdomRole;
+            boolean playerIsRuler = false;
+            for (Realm realm : world.realms.values()) {
+                if (realm.rulerPersonId != null && realm.rulerPersonId == world.player.personId) {
+                    affiliatedRealmId = realm.id;
+                    kingdomRole = PlayerCampaignState.KingdomRole.KING;
+                    playerIsRuler = true;
+                    break;
+                }
+            }
+            Realm affiliatedRealm = affiliatedRealmId == null ? null : world.realms.get(affiliatedRealmId);
             playerView = new PlayerView(world.player.currentSettlementId, coins,
                     world.player.cargo.getQuantity(GoodType.GRAIN),
                     world.player.cargo.getQuantity(GoodType.VEGETABLES),
                     world.player.cargo.totalQuantity(), world.player.cargoCapacity,
                     world.player.reputation, playerParty == null ? java.util.List.of(world.player.personId)
                             : new ArrayList<>(playerParty.memberPersonIds),
-                    world.player.acceptedContractIds.size());
+                    world.player.acceptedContractIds.size(), affiliatedRealmId,
+                    kingdomRole.toString(), affiliatedRealm == null ? null : affiliatedRealm.name,
+                    playerIsRuler);
         }
 
         List<EventView> eventViews = new ArrayList<>();
@@ -289,6 +304,16 @@ public final class CampaignSnapshot {
                 contractViews, personViews, crimeViews, playerView, eventViews);
     }
 
+    private static java.util.Map<String, Integer> snapshotLaws(Government government) {
+        java.util.Map<String, Integer> laws = new java.util.LinkedHashMap<>();
+        if (government != null) {
+            for (Government.LawType law : Government.LawType.values()) {
+                laws.put(law.toString(), government.getLawLevel(law));
+            }
+        }
+        return java.util.Collections.unmodifiableMap(laws);
+    }
+
     private static boolean playerAt(WorldState world, long settlementId) {
         return world.player != null && world.player.currentSettlementId == settlementId;
     }
@@ -301,6 +326,11 @@ public final class CampaignSnapshot {
         for (SettlementView settlement : settlements) {
             if (settlement.id == id) return settlement;
         }
+        return null;
+    }
+
+    public RealmView findRealm(long id) {
+        for (RealmView realm : realms) if (realm.id == id) return realm;
         return null;
     }
 
@@ -330,12 +360,14 @@ public final class CampaignSnapshot {
         public final double strongestFactionSupport;
         public final int treatyCount;
         public final String diplomacySummary;
+        public final java.util.Map<String, Integer> laws;
 
         RealmView(long id, String name, long treasury, int population,
                 int settlementCount, double stability, double legitimacy,
                 double warExhaustion, String rulerName, String governmentType,
                 String successionLaw, int factionCount, String strongestFaction,
-                double strongestFactionSupport, int treatyCount, String diplomacySummary) {
+                double strongestFactionSupport, int treatyCount, String diplomacySummary,
+                java.util.Map<String, Integer> laws) {
             this.id = id;
             this.name = name;
             this.treasury = treasury;
@@ -352,6 +384,7 @@ public final class CampaignSnapshot {
             this.strongestFactionSupport = strongestFactionSupport;
             this.treatyCount = treatyCount;
             this.diplomacySummary = diplomacySummary;
+            this.laws = laws;
         }
     }
 
@@ -426,10 +459,15 @@ public final class CampaignSnapshot {
         public final int partySize;
         public final List<Long> partyMemberIds;
         public final int activeContracts;
+        public final Long affiliatedRealmId;
+        public final String kingdomRole;
+        public final String kingdomName;
+        public final boolean canManageKingdom;
 
         PlayerView(long settlementId, long coins, int grain, int vegetables,
                 int cargoUsed, int cargoCapacity, int reputation,
-                List<Long> partyMemberIds, int activeContracts) {
+                List<Long> partyMemberIds, int activeContracts, Long affiliatedRealmId,
+                String kingdomRole, String kingdomName, boolean canManageKingdom) {
             this.settlementId = settlementId;
             this.coins = coins;
             this.grain = grain;
@@ -440,6 +478,10 @@ public final class CampaignSnapshot {
             this.partyMemberIds = Collections.unmodifiableList(new ArrayList<>(partyMemberIds));
             this.partySize = partyMemberIds.size();
             this.activeContracts = activeContracts;
+            this.affiliatedRealmId = affiliatedRealmId;
+            this.kingdomRole = kingdomRole;
+            this.kingdomName = kingdomName;
+            this.canManageKingdom = canManageKingdom;
         }
     }
 

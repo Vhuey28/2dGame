@@ -2392,6 +2392,8 @@ Target-continent budget certification remains measurement-dependent: run the opt
 - The contract tab now shows active work only; the encyclopedia tab summarizes world population, activity, kingdoms, rulers, governments, and political state.
 - Survival power-up selection is processed before overlapping pause controls, preventing the center choice from restarting; its dedicated Quit Survival Mode button remains actionable and fully clears Survival state.
 - Playable and companion heroes load zero-based directional animations from class-specific resources: Vince walk/slash frames for warriors and Triss walk/spellcast frames for mages, with controlled attacks synchronized to the proxy player.
+- Allied troops in charge mode continuously acquire replacement enemies until no living targets remain, then enter a true idle state; archers maintain a ranged firing line and their projectiles apply damage.
+- Campaign players can pledge to a settlement's realm as mercenaries or lords. Affiliation unlocks a Kingdom tab with realm information, while rulers can adjust kingdom laws; affiliation, rulers, and law levels persist through saves.
 
 ---
 

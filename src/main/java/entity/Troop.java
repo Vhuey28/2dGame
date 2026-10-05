@@ -15,9 +15,13 @@ import entity.Player;
 public class Troop extends Entity {
     public enum Role { MELEE, ARCHER }
     public Role role = Role.MELEE;
-    public enum Mode { FOLLOW, CHARGE, DEFEND, ROAM }
-    public Mode mode = Mode.ROAM; // was Mode.FOLLOW — roam is now the default idle state
+    public enum Mode { IDLE, FOLLOW, CHARGE, DEFEND, ROAM }
+    public Mode mode = Mode.ROAM; // roam remains the default until the player issues an order
     public float targetX = 0, targetY = 0;
+    private Enemy chargeTarget;
+    private static final float ARCHER_MIN_RANGE_TILES = 5f;
+    private static final float ARCHER_PREFERRED_RANGE_TILES = 8f;
+    private static final float ARCHER_MAX_RANGE_TILES = 12f;
     public Squad squad;
     public int maxHealth = 30;
     public int health = maxHealth;
@@ -172,6 +176,40 @@ public class Troop extends Entity {
          }  
     }
 
+    public void beginCharge() {
+        mode = Mode.CHARGE;
+        chargeTarget = null;
+        currentPath = null;
+        pathIndex = 0;
+        pathRecomputeTimer = 0;
+    }
+
+    private boolean isValidTarget(Enemy enemy) {
+        return enemy != null && !enemy.dead && enemy.health > 0;
+    }
+
+    private Enemy findNearestLivingEnemy() {
+        Enemy nearest = null;
+        float shortestSquared = Float.MAX_VALUE;
+        for (Enemy enemy : gp.enemies) {
+            if (!isValidTarget(enemy)) continue;
+            float dx = enemy.x - x;
+            float dy = enemy.y - y;
+            float distanceSquared = dx * dx + dy * dy;
+            if (distanceSquared < shortestSquared) {
+                shortestSquared = distanceSquared;
+                nearest = enemy;
+            }
+        }
+        return nearest;
+    }
+
+    private Enemy combatTarget() {
+        if (mode == Mode.IDLE) return null;
+        if (mode == Mode.CHARGE && isValidTarget(chargeTarget)) return chargeTarget;
+        return findNearestLivingEnemy();
+    }
+
     public void update() {
         // Handle archer attack animation
         if (role == Role.ARCHER && isArcherAttacking && !isArcherDying) {
@@ -217,43 +255,56 @@ public class Troop extends Entity {
                 dy = player.y - y;
             }
         } else if (mode == Mode.CHARGE) {
-            // Periodic path recompute for moving targets
-            // pathRecomputeTimer--;
-            // if (currentPath == null || pathIndex >= currentPath.size() || pathRecomputeTimer <= 0) {
-            //     currentPath = AStarPathfinder.findPath(gp, (int)x, (int)y, (int)targetX, (int)targetY);
-            //     pathIndex = 0;
-            //     pathRecomputeTimer = 45; // ~0.75s at 60fps
-            // }
-            // if (currentPath != null && pathIndex < currentPath.size()) {
-            //     java.awt.Point waypoint = currentPath.get(pathIndex);
-            //     dx = waypoint.x - x;
-            //     dy = waypoint.y - y;
-            //     if (Math.abs(dx) < 4 && Math.abs(dy) < 4) pathIndex++;
-            // } else {
-            //     dx = targetX - x;
-            //     dy = targetY - y;
-            // }
-                        pathRecomputeTimer--;
-                boolean needsRecompute = currentPath == null
-                    || pathIndex >= currentPath.size()
-                    || pathRecomputeTimer <= 0;
+            // Keep charging until explicitly ordered otherwise. A dead target is
+            // immediately replaced by the nearest living enemy; no enemies means idle.
+            if (!isValidTarget(chargeTarget)) {
+                chargeTarget = findNearestLivingEnemy();
+                currentPath = null;
+                pathIndex = 0;
+                pathRecomputeTimer = 0;
+            }
+            if (chargeTarget == null) {
+                mode = Mode.IDLE;
+            } else {
+                float targetDx = chargeTarget.x - x;
+                float targetDy = chargeTarget.y - y;
+                float targetDistance = (float) Math.sqrt(targetDx * targetDx + targetDy * targetDy);
+                targetX = chargeTarget.x;
+                targetY = chargeTarget.y;
 
-                if (needsRecompute) {
-                    currentPath = AStarPathfinder.findPath(gp, (int)x, (int)y,
-            (int)targetX, (int)targetY);
-                    pathIndex = 0;
-                   pathRecomputeTimer = WEB_MODE ? (75 + (int)(Math.random() * 30)) : (45 + (int)(Math.random() * 20)); // 45-65 range instead of a fixed 45 — keeps recomputes spread out over time
-                }
-
-                if (currentPath != null && pathIndex < currentPath.size()) {
-                    java.awt.Point waypoint = currentPath.get(pathIndex);
-                    dx = waypoint.x - x;
-                    dy = waypoint.y - y;
-                    if (Math.abs(dx) < 4 && Math.abs(dy) < 4) pathIndex++;
+                if (role == Role.ARCHER && targetDistance <= gp.tileSize * ARCHER_MAX_RANGE_TILES) {
+                    // Archers hold a useful firing line instead of running into melee.
+                    if (targetDistance < gp.tileSize * ARCHER_MIN_RANGE_TILES && targetDistance > 0f) {
+                        dx = -targetDx;
+                        dy = -targetDy;
+                    }
                 } else {
-                    dx = targetX - x;
-                    dy = targetY - y;
+                    if (role == Role.ARCHER && targetDistance > 0f) {
+                        float standOff = gp.tileSize * ARCHER_PREFERRED_RANGE_TILES;
+                        targetX = chargeTarget.x - targetDx / targetDistance * standOff;
+                        targetY = chargeTarget.y - targetDy / targetDistance * standOff;
+                    }
+                    pathRecomputeTimer--;
+                    boolean needsRecompute = currentPath == null
+                            || pathIndex >= currentPath.size() || pathRecomputeTimer <= 0;
+                    if (needsRecompute) {
+                        currentPath = AStarPathfinder.findPath(gp, (int) x, (int) y,
+                                (int) targetX, (int) targetY);
+                        pathIndex = 0;
+                        pathRecomputeTimer = WEB_MODE ? 75 + gp.random.nextInt(30)
+                                : 45 + gp.random.nextInt(20);
+                    }
+                    if (currentPath != null && pathIndex < currentPath.size()) {
+                        java.awt.Point waypoint = currentPath.get(pathIndex);
+                        dx = waypoint.x - x;
+                        dy = waypoint.y - y;
+                        if (Math.abs(dx) < 4 && Math.abs(dy) < 4) pathIndex++;
+                    } else {
+                        dx = targetX - x;
+                        dy = targetY - y;
+                    }
                 }
+            }
         } else if (mode == Mode.ROAM) {
             roamWaitTimer--;
             boolean needNewTarget = roamTargetX < 0 || roamWaitTimer <= 0;
@@ -330,18 +381,7 @@ public class Troop extends Entity {
             if (shootCooldown > 0) {
                 shootCooldown--;
             }
-            Enemy target = null;
-            float shortest = Float.MAX_VALUE;
-            for (Enemy enemy : gp.enemies) {
-                if (enemy.dead) continue;
-                float tx = enemy.x - x;
-                float ty = enemy.y - y;
-                float dist = (float)Math.sqrt(tx * tx + ty * ty);
-                if (dist < shortest) {
-                    shortest = dist;
-                    target = enemy;
-                }
-            }
+            Enemy target = combatTarget();
             if (shootCooldown == 0 && target != null) {
                 float tx = target.x + gp.tileSize/2f - (x + gp.tileSize/2f);
                 float ty = target.y + gp.tileSize/2f - (y + gp.tileSize/2f);
@@ -375,17 +415,12 @@ public class Troop extends Entity {
             }
         } else if (role == Role.MELEE) {
             // Melee attack logic - attack when in range of enemy
-            Enemy target = null;
+            Enemy target = combatTarget();
             float shortest = Float.MAX_VALUE;
-            for (Enemy enemy : gp.enemies) {
-                if (enemy.dead) continue;
-                float tx = enemy.x - x;
-                float ty = enemy.y - y;
-                float dist = (float)Math.sqrt(tx * tx + ty * ty);
-                if (dist < shortest) {
-                    shortest = dist;
-                    target = enemy;
-                }
+            if (target != null) {
+                float tx = target.x - x;
+                float ty = target.y - y;
+                shortest = (float) Math.sqrt(tx * tx + ty * ty);
             }
             // Attack cooldown stored in attackCooldown
             if (target != null && shortest < gp.tileSize + 4 && !isMeleeAttacking && !isMeleeDying) {
@@ -479,11 +514,23 @@ public class Troop extends Entity {
 
         Iterator<Projectile> projIterator = projectiles.iterator();
         while (projIterator.hasNext()) {
-            Projectile p = projIterator.next();
-            p.update();
+            Projectile projectile = projIterator.next();
+            projectile.update();
+            for (Enemy enemy : gp.enemies) {
+                if (!isValidTarget(enemy)) continue;
+                float dxToEnemy = enemy.x + gp.tileSize / 2f - projectile.x;
+                float dyToEnemy = enemy.y + gp.tileSize / 2f - projectile.y;
+                if (dxToEnemy * dxToEnemy + dyToEnemy * dyToEnemy <= gp.tileSize * gp.tileSize / 3f) {
+                    enemy.health = Math.max(0, enemy.health - 6);
+                    enemy.showHealthCounter = 60;
+                    enemy.threatTable.addThreat(this, 10);
+                    projectile.life = 0;
+                    break;
+                }
+            }
             threatTable.decay();
             morale.update();
-            if (p.life <= 0) projIterator.remove();
+            if (projectile.life <= 0) projIterator.remove();
         }
     }
 

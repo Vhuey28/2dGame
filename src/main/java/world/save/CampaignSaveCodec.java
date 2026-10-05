@@ -23,7 +23,7 @@ import world.geography.WorldPosition;
 /** Versioned Phase 4 campaign checkpoint. Derived caches are rebuilt rather than serialized. */
 public final class CampaignSaveCodec {
     private static final int MAGIC = 0x43435134; // CCQ4
-    private static final int VERSION = 2;
+    private static final int VERSION = 3;
 
     private CampaignSaveCodec() {}
 
@@ -91,6 +91,17 @@ public final class CampaignSaveCodec {
         out.writeLong(party.money.copperCoins);
         writeMap(out, player.settlementReputation);
         writeMap(out, player.realmReputation);
+        out.writeLong(player.affiliatedRealmId == null ? -1L : player.affiliatedRealmId);
+        out.writeUTF(player.kingdomRole.name());
+        out.writeInt(world.realms.size());
+        for (world.Realm realm : world.realms.values()) {
+            out.writeLong(realm.id);
+            out.writeLong(realm.rulerPersonId == null ? -1L : realm.rulerPersonId);
+            world.politics.Government government = world.governments.get(realm.governmentId);
+            for (world.politics.Government.LawType law : world.politics.Government.LawType.values()) {
+                out.writeInt(government == null ? 1 : government.getLawLevel(law));
+            }
+        }
 
         out.writeInt(world.geography.getSettlements().size());
         for (Settlement settlement : world.geography.getSettlements().values()) {
@@ -151,6 +162,32 @@ public final class CampaignSaveCodec {
         readMap(in, player.settlementReputation);
         player.realmReputation.clear();
         readMap(in, player.realmReputation);
+        long affiliatedRealmId = in.readLong();
+        player.affiliatedRealmId = affiliatedRealmId < 0 ? null : affiliatedRealmId;
+        try {
+            player.kingdomRole = PlayerCampaignState.KingdomRole.valueOf(in.readUTF());
+        } catch (IllegalArgumentException invalidRole) {
+            throw new IOException("Unknown player kingdom role", invalidRole);
+        }
+        if (player.affiliatedRealmId != null && !world.realms.containsKey(player.affiliatedRealmId)) {
+            throw new IOException("Unknown affiliated realm " + player.affiliatedRealmId);
+        }
+        int realmCount = in.readInt();
+        for (int i = 0; i < realmCount; i++) {
+            long realmId = in.readLong();
+            world.Realm realm = world.realms.get(realmId);
+            if (realm == null) throw new IOException("Save references unknown realm " + realmId);
+            long rulerPersonId = in.readLong();
+            realm.rulerPersonId = rulerPersonId < 0 ? null : rulerPersonId;
+            if (realm.rulerPersonId != null && !world.people.containsKey(realm.rulerPersonId)) {
+                throw new IOException("Save references unknown ruler " + realm.rulerPersonId);
+            }
+            world.politics.Government government = world.governments.get(realm.governmentId);
+            for (world.politics.Government.LawType law : world.politics.Government.LawType.values()) {
+                int level = in.readInt();
+                if (government != null) government.setLawLevel(law, level);
+            }
+        }
         player.reputation = player.settlementReputation.values().stream().mapToInt(Integer::intValue).sum();
         party.currentSettlementId = settlementId;
         party.destinationSettlementId = null;

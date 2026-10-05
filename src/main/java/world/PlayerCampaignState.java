@@ -9,6 +9,8 @@ import world.economy.Inventory;
 
 /** Persistent strategic identity for the adventurer; money and cargo are canonical on the world party. */
 public final class PlayerCampaignState {
+    public enum KingdomRole { NONE, MERCENARY, LORD, KING }
+
     public final long personId;
     public final long householdId;
     public final long partyId;
@@ -20,6 +22,9 @@ public final class PlayerCampaignState {
     public final Map<Long, Integer> settlementReputation = new HashMap<>();
     public final Map<Long, Integer> realmReputation = new HashMap<>();
     public final List<Long> acceptedContractIds = new ArrayList<>();
+    /** Realm service is explicit so mercenary/lord status survives travel and saves. */
+    public Long affiliatedRealmId;
+    public KingdomRole kingdomRole = KingdomRole.NONE;
 
     public PlayerCampaignState(long personId, long householdId, long partyId,
             long currentSettlementId, Inventory partyCargo) {

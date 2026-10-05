@@ -39,6 +39,27 @@ class CampaignSessionTest {
     }
 
     @Test
+    void kingdomAffiliationAppearsAndOnlyTheKingCanManageLaws() {
+        CampaignSession session = new CampaignSession(2468L);
+        Realm realm = session.getWorld().realms.values().stream().findFirst().orElseThrow();
+
+        assertTrue(session.joinKingdom(realm.id, PlayerCampaignState.KingdomRole.MERCENARY).accepted);
+        assertEquals(realm.id, session.getSnapshot().player.affiliatedRealmId);
+        assertEquals("MERCENARY", session.getSnapshot().player.kingdomRole);
+        assertFalse(session.getSnapshot().player.canManageKingdom);
+        assertFalse(session.adjustKingdomLaw(
+                world.politics.Government.LawType.TAXATION, 1).accepted);
+
+        assertTrue(session.appointPlayerAsKing(realm.id).accepted);
+        int before = session.getSnapshot().findRealm(realm.id).laws.get("TAXATION");
+        assertTrue(session.adjustKingdomLaw(
+                world.politics.Government.LawType.TAXATION, 1).accepted);
+        assertTrue(session.getSnapshot().player.canManageKingdom);
+        assertEquals(Math.min(3, before + 1),
+                session.getSnapshot().findRealm(realm.id).laws.get("TAXATION"));
+    }
+
+    @Test
     void generationIsDeterministicForSameSeed() {
         CampaignSession first = new CampaignSession(777L);
         CampaignSession second = new CampaignSession(777L);
