@@ -64,6 +64,8 @@ public class Hero extends Entity {
     public String name;
     public HeroClass heroClass;
     public int characterId;
+    /** Canonical campaign person represented by this local hero, when applicable. */
+    public Long sourcePersonId;
     private static int nextCharacterId = 1;
     private java.util.Map<String, BufferedImage[]> attackFrames = new java.util.HashMap<>();
     public boolean isAttacking = false;
@@ -783,11 +785,9 @@ private String getAssetDirection(){
 
         // ===== UPDATE =====
         public void update() {
-        // if (isActivePlayer) {
-        //     updatePlayerControls();
-        // } else {
-             updateCompanionAI();
-        // }
+        // The active hero is driven by GamePanel's player-control proxy. Other
+        // recruited heroes remain autonomous companions.
+        if (!isActivePlayer) updateCompanionAI();
 
         if (isAttacking) {
             attackAnimationCounter++;

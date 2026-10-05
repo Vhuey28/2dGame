@@ -118,6 +118,10 @@ public class GamePanel extends JPanel implements Runnable{
 	// public java.util.List<entity.NPC> npcs = new java.util.ArrayList<>();
 	public java.util.List<Hero> heroes = new java.util.ArrayList<>();
 	public Hero activeHero = null;
+	private int storedPlayerHealth = 100;
+	private int storedPlayerMaxHealth = 100;
+	private int storedPlayerMeleeDamage = 12;
+	private int storedPlayerProjectileDamage = 8;
 	public java.util.List<Hero> recruitedHeroes = new java.util.ArrayList<>(); // persists across maps
     java.util.List<CoinItem> coins = new java.util.ArrayList<>();
 	public Squad enemySquad = new Squad();
@@ -132,9 +136,14 @@ public class GamePanel extends JPanel implements Runnable{
 		private Long selectedCampaignSettlementId;
 		private Long hoveredCampaignSettlementId;
 		private java.awt.Point campaignMousePoint = new java.awt.Point();
-		private enum CampaignTab { OVERVIEW, INVENTORY, PARTY, CONTRACTS, PEOPLE, CRIME }
+		private enum CampaignTab { OVERVIEW, INVENTORY, PARTY, CONTRACTS, ENCYCLOPEDIA, CRIME }
 		private CampaignTab activeCampaignTab = CampaignTab.OVERVIEW;
 		private final java.util.Map<CampaignTab, Rectangle> campaignTabHitboxes = new java.util.EnumMap<>(CampaignTab.class);
+		private enum CampaignContextMenu { NONE, SETTLEMENT, MARKET, NOTICE_BOARD }
+		private CampaignContextMenu campaignContextMenu = CampaignContextMenu.NONE;
+		private final java.util.Map<String, Rectangle> campaignContextButtons = new java.util.LinkedHashMap<>();
+		private int marketGoodIndex;
+		private String campaignContextMessage = "";
 		private final java.util.Map<Long, Rectangle> campaignSettlementHitboxes = new java.util.HashMap<>();
 		private final java.util.List<LocalPlaceholder> campaignLocalPlaceholders = new java.util.ArrayList<>();
 		private String localInteractionMessage = "Walk near a marker and press F";
@@ -183,11 +192,13 @@ public class GamePanel extends JPanel implements Runnable{
 		public enum GameMode { SANDBOX, CAMPAIGN, SURVIVAL }
 		public GameMode gameMode = GameMode.SANDBOX;
 
-	public enum MenuStage { MODE_SELECT, ALLY_YES_NO, ALLY_TYPE, READY }
+	public enum MenuStage { MODE_SELECT, ALLY_YES_NO, ALLY_TYPE, HERO_CHOICE, READY }
 	public MenuStage menuStage = MenuStage.MODE_SELECT;
 
 	public enum AllyChoice { NONE, MELEE_ONLY, ARCHER_ONLY, BOTH }
 	public AllyChoice survivalAllyChoice = AllyChoice.NONE;
+	private enum SurvivalHeroChoice { NONE, PLAY_WARRIOR, PLAY_MAGE, ALLY_WARRIOR, ALLY_MAGE }
+	private SurvivalHeroChoice survivalHeroChoice = SurvivalHeroChoice.NONE;
 
 	// Survival session state
 	public int survivalWaveNumber = 0;
@@ -214,6 +225,13 @@ public class GamePanel extends JPanel implements Runnable{
 	private Rectangle allyMeleeButton = new Rectangle(screenWidth/2 - 220, screenHeight/2, 130, 44);
 	private Rectangle allyArcherButton = new Rectangle(screenWidth/2 - 65, screenHeight/2, 130, 44);
 	private Rectangle allyBothButton = new Rectangle(screenWidth/2 + 90, screenHeight/2, 130, 44);
+	private Rectangle[] survivalHeroButtons = {
+		new Rectangle(54, screenHeight/2 - 5, 125, 48),
+		new Rectangle(188, screenHeight/2 - 5, 125, 48),
+		new Rectangle(322, screenHeight/2 - 5, 125, 48),
+		new Rectangle(456, screenHeight/2 - 5, 125, 48),
+		new Rectangle(590, screenHeight/2 - 5, 125, 48)
+	};
 	private Rectangle backButton = new Rectangle(20, screenHeight - 60, 100, 36);
 
 	private Rectangle formationLineButton = new Rectangle(60, 300, 130, 40);
@@ -251,6 +269,12 @@ public class GamePanel extends JPanel implements Runnable{
 					return;
 				}
 				if (cheatMenuOpen) return;
+				if (campaignContextMenu != CampaignContextMenu.NONE && code == KeyEvent.VK_ESCAPE) {
+					campaignContextMenu = CampaignContextMenu.NONE;
+					repaint();
+					return;
+				}
+				if (campaignContextMenu != CampaignContextMenu.NONE) return;
 				if (!gameStarted && code == KeyEvent.VK_ENTER && menuStage == MenuStage.READY) {
 					gameStarted = true;
 					gamePaused = false;
@@ -421,6 +445,10 @@ public class GamePanel extends JPanel implements Runnable{
 					handleCheatMenuClick(point);
 					return;
 				}
+				if (campaignContextMenu != CampaignContextMenu.NONE) {
+					handleCampaignContextClick(point);
+					return;
+				}
 				if (currentLayer == GameLayer.DEPLOYMENT) {
 					if (formationLineButton.contains(point)) {
 						selectedFormation = entity.Formation.Type.LINE;
@@ -478,18 +506,11 @@ public class GamePanel extends JPanel implements Runnable{
 					return;
 				}
 				if (gamePaused) {
-					if (getRestartButtonRect().contains(point)) {
-						restartGame();
-						return;
-					}
-					if(getQuitButtonRect().contains(point)){
-						quitSurvival();
-						return;
-					}
-					// Handle power-up menu clicks in survival mode
-					if (gameMode == GameMode.SURVIVAL && survivalPowerUpMenuOpen && powerUpButtons != null) {
-						for (int i = 0; i < powerUpButtons.length; i++) {
-							if (powerUpButtons[i] != null && powerUpButtons[i].contains(point) && i < currentPowerUpChoices.length && currentPowerUpChoices[i] != null) {
+					// Power-up choices must be handled before generic pause buttons. The
+					// center choice overlaps the old restart rectangle.
+					if (gameMode == GameMode.SURVIVAL && survivalPowerUpMenuOpen) {
+						for (int i = 0; i < powerUpButtons.length && i < currentPowerUpChoices.length; i++) {
+							if (powerUpButtons[i].contains(point) && currentPowerUpChoices[i] != null) {
 								applyPowerUp(currentPowerUpChoices[i]);
 								survivalPowerUpMenuOpen = false;
 								gamePaused = false;
@@ -497,10 +518,16 @@ public class GamePanel extends JPanel implements Runnable{
 								return;
 							}
 						}
-						
+						return; // never fall through to restart/quit while choosing a power-up
 					}
-					
-					
+					if (getRestartButtonRect().contains(point)) {
+						restartGame();
+						return;
+					}
+					if (getQuitButtonRect().contains(point)) {
+						quitSurvival();
+						return;
+					}
 				}
 				if (gameMode != GameMode.SURVIVAL && inventoryButton.contains(point)) {
 					inventoryOpen = !inventoryOpen;
@@ -567,6 +594,9 @@ public class GamePanel extends JPanel implements Runnable{
 		survivalWaveNumber = 0;
 		survivalEnemyCountForWave = 10;
 		survivalPowerUpMenuOpen = false;
+		setActiveHero(null);
+		heroes.clear();
+		recruitedHeroes.clear();
 		activePowerUps.clear();
 		setupMap("map1.txt");
 		teleportPlayerForMap("map1.txt");
@@ -729,8 +759,10 @@ public class GamePanel extends JPanel implements Runnable{
 	// ===== Survival Mode Methods =====
 
 	private void handleStartMenuClick(java.awt.Point p) {
-		if ((menuStage == MenuStage.ALLY_YES_NO || menuStage == MenuStage.ALLY_TYPE) && backButton.contains(p)) {
-			menuStage = (menuStage == MenuStage.ALLY_TYPE) ? MenuStage.ALLY_YES_NO : MenuStage.MODE_SELECT;
+		if ((menuStage == MenuStage.ALLY_YES_NO || menuStage == MenuStage.ALLY_TYPE
+				|| menuStage == MenuStage.HERO_CHOICE) && backButton.contains(p)) {
+			menuStage = menuStage == MenuStage.HERO_CHOICE ? MenuStage.ALLY_YES_NO
+				: (menuStage == MenuStage.ALLY_TYPE ? MenuStage.ALLY_YES_NO : MenuStage.MODE_SELECT);
 			return;
 		}
 		switch (menuStage) {
@@ -751,19 +783,23 @@ public class GamePanel extends JPanel implements Runnable{
 					menuStage = MenuStage.ALLY_TYPE;
 				} else if (allyNoButton.contains(p)) {
 					survivalAllyChoice = AllyChoice.NONE;
-					menuStage = MenuStage.READY;
+					menuStage = MenuStage.HERO_CHOICE;
 				}
 				break;
 			case ALLY_TYPE:
-				if (allyMeleeButton.contains(p)) {
-					survivalAllyChoice = AllyChoice.MELEE_ONLY;
-					menuStage = MenuStage.READY;
-				} else if (allyArcherButton.contains(p)) {
-					survivalAllyChoice = AllyChoice.ARCHER_ONLY;
-					menuStage = MenuStage.READY;
-				} else if (allyBothButton.contains(p)) {
-					survivalAllyChoice = AllyChoice.BOTH;
-					menuStage = MenuStage.READY;
+				if (allyMeleeButton.contains(p)) survivalAllyChoice = AllyChoice.MELEE_ONLY;
+				else if (allyArcherButton.contains(p)) survivalAllyChoice = AllyChoice.ARCHER_ONLY;
+				else if (allyBothButton.contains(p)) survivalAllyChoice = AllyChoice.BOTH;
+				else break;
+				menuStage = MenuStage.HERO_CHOICE;
+				break;
+			case HERO_CHOICE:
+				for (int i = 0; i < survivalHeroButtons.length; i++) {
+					if (survivalHeroButtons[i].contains(p)) {
+						survivalHeroChoice = SurvivalHeroChoice.values()[i];
+						menuStage = MenuStage.READY;
+						break;
+					}
 				}
 				break;
 			case READY:
@@ -796,6 +832,7 @@ public class GamePanel extends JPanel implements Runnable{
 			campaignLocalPlayerState = campaignSession.enterLocalScene(
 				getCurrentMapWidthTiles() * tileSize, getCurrentMapHeightTiles() * tileSize);
 			player.health = campaignLocalPlayerState.health;
+			syncCampaignHeroesFromParty();
 			campaignLocalPlaceholders.clear();
 			String place = settlement == null ? "Settlement" : settlement.name;
 			String marketText = settlement == null ? "Market unavailable" : "Grain "
@@ -821,20 +858,15 @@ public class GamePanel extends JPanel implements Runnable{
 				}
 			}
 			if (nearest == null) {
-				localInteractionMessage = "Move closer to a highlighted person or location";
-			} else if (nearest.type == LocalPlaceholder.Type.NOTICE_BOARD && campaignSnapshot.player != null) {
-				java.util.List<world.Contract> offers = campaignSession.getAvailableContractsAt(
-					campaignSnapshot.player.settlementId);
-				if (offers.isEmpty()) localInteractionMessage = "Notice Board: no open local contracts";
-				else {
-					world.command.CommandResult result = campaignSession.acceptContract(offers.get(0).id);
-					campaignSnapshot = campaignSession.getSnapshot();
-					CampaignSnapshot.ContractView accepted = campaignSnapshot.contracts.stream()
-						.filter(contract -> contract.id == offers.get(0).id).findFirst().orElse(null);
-					localInteractionMessage = result.accepted && accepted != null
-						? "Accepted: " + accepted.objective + " (" + accepted.remainingDays() + " days)"
-						: result.message;
-				}
+				interactWithNearbyHero();
+				if (localInteractionMessage == null || localInteractionMessage.isBlank())
+					localInteractionMessage = "Move closer to a highlighted person, hero, or location";
+			} else if (nearest.type == LocalPlaceholder.Type.NOTICE_BOARD) {
+				campaignContextMenu = CampaignContextMenu.NOTICE_BOARD;
+				campaignContextMessage = "Select a contract to accept";
+			} else if (nearest.type == LocalPlaceholder.Type.MARKET) {
+				campaignContextMenu = CampaignContextMenu.MARKET;
+				campaignContextMessage = "Choose a good and buy or sell";
 			} else {
 				localInteractionMessage = nearest.label + ": " + nearest.interactionText;
 			}
@@ -1004,9 +1036,30 @@ public class GamePanel extends JPanel implements Runnable{
 		survivalWaveNumber = 1;
 		survivalEnemyCountForWave = 10;
 		activePowerUps.clear();
+		setActiveHero(null);
+		heroes.clear();
+		recruitedHeroes.clear();
 		setupMap("forest.tmx");
 		teleportPlayerForMap("forest.tmx");
+		spawnSelectedSurvivalHero();
 		spawnSurvivalWave(survivalEnemyCountForWave);
+	}
+
+	private void spawnSelectedSurvivalHero() {
+		if (survivalHeroChoice == SurvivalHeroChoice.NONE) return;
+		boolean mage = survivalHeroChoice == SurvivalHeroChoice.PLAY_MAGE
+			|| survivalHeroChoice == SurvivalHeroChoice.ALLY_MAGE;
+		boolean playable = survivalHeroChoice == SurvivalHeroChoice.PLAY_MAGE
+			|| survivalHeroChoice == SurvivalHeroChoice.PLAY_WARRIOR;
+		Hero hero = new Hero(this, mage ? "Triss" : "Vince",
+			mage ? Hero.HeroClass.MAGE : Hero.HeroClass.WARRIOR,
+			(int) player.x + tileSize, (int) player.y);
+		hero.isRecruited = true;
+		hero.companionRole = Hero.CompanionRole.HYBRID;
+		hero.activePlayerReference = player;
+		heroes.add(hero);
+		recruitedHeroes.add(hero);
+		if (playable) setActiveHero(hero);
 	}
 
 	private void spawnSurvivalWave(int enemyCount) {
@@ -1524,7 +1577,7 @@ System.nanoTime();
 	
 	public void update() {
 
-			if (!gameStarted || gamePaused || cheatMenuOpen) {
+			if (!gameStarted || gamePaused || cheatMenuOpen || campaignContextMenu != CampaignContextMenu.NONE) {
 				return;
 			}
 			if (gameMode == GameMode.CAMPAIGN && campaignSession != null) {
@@ -1598,6 +1651,12 @@ System.nanoTime();
 			update();
 		}
 		player.update();
+		if (activeHero != null && activeHero.isActivePlayer) {
+			activeHero.x = player.x;
+			activeHero.y = player.y;
+			activeHero.health = player.health;
+			activeHero.direction = player.direction;
+		}
 		if (redBox != null) {
 			redBox.update(player);
 		}
@@ -1767,23 +1826,8 @@ System.nanoTime();
 			}
 		}
 
-		// Hero interaction - F key to interact with nearby hero
-		if (keyH.fPressed && !keyH.fPressedLastFrame) {
-			interactWithNearbyHero();
-		}
-		// Track F key state for edge detection
 		keyH.fPressedLastFrame = keyH.fPressed;
-
-		// Hero switching - Q key to cycle through recruited heroes
-		if (keyH.qPressed && !keyH.qPressedLastFrame) {
-			switchActiveHero();
-		}
 		keyH.qPressedLastFrame = keyH.qPressed;
-
-		// Hero ability keys (4,5,6) for active hero
-		if (activeHero != null && activeHero.isActivePlayer) {
-			handleHeroAbilities();
-		}
 
 		for (Iterator<entity.Troop> tit = troops.iterator(); tit.hasNext();) {
 			entity.Troop t1 = tit.next();
@@ -1829,16 +1873,13 @@ System.nanoTime();
 
 		enemySquad.updateCommanderAI(this);   // <-- add this line here
 
-		// Update hero companions
+		// Active heroes update cooldowns/animation without AI; companions use AI.
+		if (activeHero != null && activeHero.isActivePlayer) activeHero.health = player.health;
 		for (Hero hero : heroes) {
-			if (hero.isRecruited && !hero.isActivePlayer) {
-				hero.activePlayerReference = player;
-				hero.update();
-			} else if (!hero.isRecruited) {
-				// Unrecruited heroes still update for idle animations
-				hero.update();
-			}
+			if (hero.isRecruited) hero.activePlayerReference = player;
+			hero.update();
 		}
+		if (activeHero != null && activeHero.isActivePlayer) player.health = activeHero.health;
 
 		updateMinimapZoom(1f / FPS);   // FPS = 60, so this advances zoom by a 60th of a second each tick
 		updateCamera();
@@ -2004,6 +2045,7 @@ System.nanoTime();
 			drawCampaignWorld(g2);
 			if (gamePaused) drawPauseMenu(g2);
 			if (gameCrashed) drawCrashMenu(g2);
+			drawCampaignContextMenu(g2);
 			drawCheatMenu(g2);
 			g2.setTransform(oldTransform);
 			g2.dispose();
@@ -2114,7 +2156,9 @@ System.nanoTime();
 				g2.drawString(prompt, heroScreenX - promptWidth / 2, heroScreenY);
 			}
 		}
-		player.draw(g2, (int)cameraX,(int) cameraY);
+		if (activeHero == null || !activeHero.isActivePlayer) {
+			player.draw(g2, (int)cameraX,(int) cameraY);
+		}
 		tileM.drawDecorationFront(g2, (int)cameraX, (int)cameraY, player.y); // trees below player draw last (in front)
 		drawWaveSpawnArea(g2);
 		drawMapLinks(g2);
@@ -2142,10 +2186,97 @@ System.nanoTime();
 			drawCrashMenu(g2);
 		}
 		drawDebugOverlay(g2);
+		drawCampaignContextMenu(g2);
 		drawCheatMenu(g2);
 
 		g2.setTransform(oldTransform); // restore before g2.dispose()
 		g2.dispose();
+	}
+
+	private void drawCampaignContextMenu(Graphics2D g2) {
+		if (campaignContextMenu == CampaignContextMenu.NONE || campaignSession == null || campaignSnapshot == null) return;
+		int x = 145, y = 70, w = 478, h = 410;
+		g2.setColor(new Color(0, 0, 0, 195)); g2.fillRect(0, 0, screenWidth, screenHeight);
+		g2.setColor(new Color(20, 28, 36)); g2.fillRoundRect(x, y, w, h, 16, 16);
+		g2.setColor(new Color(225, 190, 105)); g2.drawRoundRect(x, y, w, h, 16, 16);
+		campaignContextButtons.clear();
+		CampaignSnapshot.SettlementView settlement = campaignSnapshot.findSettlement(campaignSnapshot.player.settlementId);
+		g2.setFont(new Font("Serif", Font.BOLD, 22)); g2.setColor(new Color(235, 205, 130));
+		String title = campaignContextMenu == CampaignContextMenu.MARKET ? "MARKET STALL"
+			: campaignContextMenu == CampaignContextMenu.NOTICE_BOARD ? "NOTICE BOARD" : "SETTLEMENT";
+		g2.drawString(title, x + 20, y + 30);
+		g2.setFont(new Font("Monospaced", Font.PLAIN, 11)); g2.setColor(Color.WHITE);
+		if (settlement != null) g2.drawString(settlement.name, x + 20, y + 50);
+		if (campaignContextMenu == CampaignContextMenu.SETTLEMENT && settlement != null) {
+			g2.drawString("Population " + settlement.population + " | Households " + settlement.households, x + 20, y + 75);
+			g2.drawString("Treasury " + settlement.treasury + "c | Food security " + Math.round(settlement.foodSecurity * 100) + "%", x + 20, y + 94);
+			g2.drawString("Security " + Math.round(settlement.security * 100) + "% | Unrest " + Math.round(settlement.unrest * 100) + "%", x + 20, y + 113);
+			addContextButton(g2, "OPEN_MARKET", "Open market: buy and sell", x + 28, y + 145, 200, 48);
+			addContextButton(g2, "OPEN_BOARD", "Open notice board", x + 250, y + 145, 200, 48);
+			addContextButton(g2, "ENTER_LOCAL", "Enter local settlement", x + 28, y + 210, 200, 48);
+			addContextButton(g2, "OPEN_INFO", "Open encyclopedia", x + 250, y + 210, 200, 48);
+		} else if (campaignContextMenu == CampaignContextMenu.MARKET && settlement != null) {
+			GoodType good = GoodType.values()[Math.floorMod(marketGoodIndex, GoodType.values().length)];
+			int stock = campaignSession.getWorld().geography.getSettlement(settlement.id).publicStockpile.getQuantity(good);
+			int cargo = campaignSession.getPlayerState().cargo.getQuantity(good);
+			long price = campaignSession.getWorld().geography.getSettlement(settlement.id).market.getLastPrice(good);
+			g2.setFont(new Font("SansSerif", Font.BOLD, 20)); g2.drawString(good.toString(), x + 20, y + 90);
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 12));
+			g2.drawString("Price " + Math.max(1, price) + "c | Market stock " + stock + " | Your cargo " + cargo, x + 20, y + 116);
+			g2.drawString("Coins " + campaignSnapshot.player.coins + " | Capacity " + campaignSnapshot.player.cargoUsed + "/" + campaignSnapshot.player.cargoCapacity, x + 20, y + 136);
+			addContextButton(g2, "PREV_GOOD", "Previous good", x + 20, y + 165, 135, 42);
+			addContextButton(g2, "NEXT_GOOD", "Next good", x + 165, y + 165, 135, 42);
+			addContextButton(g2, "BUY_1", "Buy 1", x + 20, y + 225, 100, 42);
+			addContextButton(g2, "BUY_5", "Buy 5", x + 130, y + 225, 100, 42);
+			addContextButton(g2, "SELL_1", "Sell 1", x + 250, y + 225, 100, 42);
+			addContextButton(g2, "SELL_5", "Sell 5", x + 360, y + 225, 90, 42);
+		} else if (campaignContextMenu == CampaignContextMenu.NOTICE_BOARD) {
+			int row = 0;
+			for (CampaignSnapshot.ContractView contract : campaignSnapshot.contracts) {
+				if (!"OPEN".equals(contract.status) || contract.issuerSettlementId != campaignSnapshot.player.settlementId) continue;
+				int cy = y + 72 + row * 82;
+				g2.setColor(Color.WHITE); g2.drawString(contract.objective, x + 20, cy);
+				g2.setColor(Color.LIGHT_GRAY); g2.drawString("To " + contract.destinationName + " | " + contract.rewardCoins + "c | " + contract.remainingDays() + " days", x + 20, cy + 17);
+				addContextButton(g2, "ACCEPT_" + contract.id, "Accept contract", x + 310, cy + 27, 140, 34);
+				if (++row >= 3) break;
+			}
+			if (row == 0) g2.drawString("No new contracts are posted here.", x + 20, y + 85);
+		}
+		g2.setColor(new Color(170, 220, 170)); g2.drawString(campaignContextMessage, x + 20, y + h - 42);
+		addContextButton(g2, "CLOSE", "Close", x + w - 105, y + h - 34, 85, 26);
+	}
+
+	private void addContextButton(Graphics2D g2, String id, String label, int x, int y, int w, int h) {
+		Rectangle rect = new Rectangle(x, y, w, h); campaignContextButtons.put(id, rect);
+		g2.setColor(new Color(58, 76, 91)); g2.fillRoundRect(x, y, w, h, 8, 8);
+		g2.setColor(new Color(135, 165, 184)); g2.drawRoundRect(x, y, w, h, 8, 8);
+		g2.setColor(Color.WHITE); g2.setFont(new Font("SansSerif", Font.BOLD, 11));
+		g2.drawString(label, x + (w - g2.getFontMetrics().stringWidth(label)) / 2, y + h / 2 + 4);
+	}
+
+	private void handleCampaignContextClick(java.awt.Point point) {
+		String clicked = null;
+		for (java.util.Map.Entry<String, Rectangle> entry : campaignContextButtons.entrySet()) if (entry.getValue().contains(point)) { clicked = entry.getKey(); break; }
+		if (clicked == null) return;
+		if ("CLOSE".equals(clicked)) { campaignContextMenu = CampaignContextMenu.NONE; return; }
+		if ("OPEN_MARKET".equals(clicked)) { campaignContextMenu = CampaignContextMenu.MARKET; return; }
+		if ("OPEN_BOARD".equals(clicked)) { campaignContextMenu = CampaignContextMenu.NOTICE_BOARD; return; }
+		if ("OPEN_INFO".equals(clicked)) { campaignContextMenu = CampaignContextMenu.NONE; activeCampaignTab = CampaignTab.ENCYCLOPEDIA; return; }
+		if ("ENTER_LOCAL".equals(clicked)) { campaignContextMenu = CampaignContextMenu.NONE; enterCampaignLocalView(); return; }
+		if ("PREV_GOOD".equals(clicked)) { marketGoodIndex--; return; }
+		if ("NEXT_GOOD".equals(clicked)) { marketGoodIndex++; return; }
+		GoodType good = GoodType.values()[Math.floorMod(marketGoodIndex, GoodType.values().length)];
+		world.command.CommandResult result = null;
+		long settlementId = campaignSnapshot.player.settlementId;
+		if ("BUY_1".equals(clicked)) result = campaignSession.buyFromSettlement(settlementId, good, 1);
+		if ("BUY_5".equals(clicked)) result = campaignSession.buyFromSettlement(settlementId, good, 5);
+		if ("SELL_1".equals(clicked)) result = campaignSession.sellToSettlement(settlementId, good, 1);
+		if ("SELL_5".equals(clicked)) result = campaignSession.sellToSettlement(settlementId, good, 5);
+		if (clicked.startsWith("ACCEPT_")) result = campaignSession.acceptContract(Long.parseLong(clicked.substring(7)));
+		if (result != null) {
+			campaignSnapshot = campaignSession.getSnapshot();
+			campaignContextMessage = result.accepted ? "Action completed" : result.message;
+		}
 	}
 
 	private void drawCheatMenu(Graphics2D g2) {
@@ -2476,6 +2607,11 @@ System.nanoTime();
 			for (java.util.Map.Entry<Long, Rectangle> entry : campaignSettlementHitboxes.entrySet()) {
 				if (entry.getValue().contains(point)) {
 					selectedCampaignSettlementId = entry.getKey();
+					if (campaignSnapshot != null && campaignSnapshot.player != null
+							&& campaignSnapshot.player.settlementId == entry.getKey()) {
+						campaignContextMenu = CampaignContextMenu.SETTLEMENT;
+						campaignContextMessage = "You are currently at this settlement";
+					}
 					repaint();
 					return;
 				}
@@ -2729,7 +2865,7 @@ System.nanoTime();
 				case CONTRACTS -> {
 					int shown = 0;
 					for (CampaignSnapshot.ContractView contract : snapshot.contracts) {
-						if ("EXPIRED".equals(contract.status) || "FAILED".equals(contract.status)) continue;
+						if (!"ACTIVE".equals(contract.status)) continue;
 						g2.setColor("ACTIVE".equals(contract.status) ? new Color(255, 205, 85) : Color.WHITE);
 						g2.drawString("#" + contract.id + " [" + contract.status + "] " + contract.objective, 32, y); y += 14;
 						g2.setColor(Color.LIGHT_GRAY);
@@ -2739,16 +2875,23 @@ System.nanoTime();
 							+ "c | " + contract.remainingDays() + " days left", 44, y); y += 18;
 						if (++shown >= 3 || y > panelY + 150) break;
 					}
-					if (shown == 0) g2.drawString("No available or active contracts.", 32, y);
+					if (shown == 0) g2.drawString("No active contracts. Visit a notice board for new work.", 32, y);
 				}
-				case PEOPLE -> {
-					long settlementId = selectedCampaignSettlementId == null && snapshot.player != null
-						? snapshot.player.settlementId : selectedCampaignSettlementId == null ? -1 : selectedCampaignSettlementId;
-					for (CampaignSnapshot.PersonView person : snapshot.people) {
-						if (person.settlementId != null && person.settlementId == settlementId) {
-							g2.drawString(person.name + "  " + person.type + "  " + person.activity, 32, y); y += 15;
-							if (y > panelY + 150) break;
-						}
+				case ENCYCLOPEDIA -> {
+					long working = snapshot.people.stream().filter(person -> "WORKING".equals(person.activity)).count();
+					long traveling = snapshot.people.stream().filter(person -> "TRAVELING".equals(person.activity)).count();
+					g2.drawString("WORLD: " + snapshot.settlements.size() + " settlements, " + snapshot.realms.size()
+						+ " kingdoms, " + snapshot.warCount + " active wars", 32, y); y += 16;
+					g2.drawString("PEOPLE: " + snapshot.livingPopulation + " living, " + working + " working, "
+						+ traveling + " traveling", 32, y); y += 20;
+					for (CampaignSnapshot.RealmView realm : snapshot.realms) {
+						g2.setColor(colorForRealm(realm.id));
+						g2.drawString(realm.name + " — ruler " + realm.rulerName + ", pop " + realm.population
+							+ ", settlements " + realm.settlementCount + ", treasury " + realm.treasury + "c", 32, y); y += 15;
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.drawString("  " + realm.governmentType + ", " + realm.successionLaw + ", legitimacy "
+							+ Math.round(realm.legitimacy) + ", factions " + realm.factionCount, 32, y); y += 16;
+						if (y > panelY + 150) break;
 					}
 				}
 				case CRIME -> {
@@ -2880,15 +3023,26 @@ System.nanoTime();
 				drawMenuButton(g2, allyBothButton, "Both");
 				drawMenuButton(g2, backButton, "< Back");
 				break;
+			case HERO_CHOICE:
+				drawMenuPrompt(g2, "Choose a playable hero or companion");
+				String[] heroLabels = {"No Hero", "Play Warrior", "Play Mage", "Warrior Ally", "Mage Ally"};
+				for (int i = 0; i < survivalHeroButtons.length; i++) drawMenuButton(g2, survivalHeroButtons[i], heroLabels[i]);
+				drawMenuButton(g2, backButton, "< Back");
+				break;
 			case READY:
 				String selectedMode = gameMode == GameMode.CAMPAIGN ? "Campaign"
 					: gameMode == GameMode.SURVIVAL ? "Survival" : "Sandbox";
 				String modeLabel = selectedMode + " selected";
 				int modeWidth = g2.getFontMetrics().stringWidth(modeLabel);
 				g2.drawString(modeLabel, (screenWidth - modeWidth) / 2, screenHeight / 2 - 30);
+				if (gameMode == GameMode.SURVIVAL) {
+					String heroLabel = "Hero: " + survivalHeroChoice.toString().replace('_', ' ');
+					g2.drawString(heroLabel, (screenWidth - g2.getFontMetrics().stringWidth(heroLabel)) / 2, screenHeight / 2 - 5);
+				}
 				String prompt = "Press ENTER to start";
 				int promptWidth = g2.getFontMetrics().stringWidth(prompt);
-				g2.drawString(prompt, (screenWidth - promptWidth) / 2, screenHeight / 2);
+				g2.drawString(prompt, (screenWidth - promptWidth) / 2,
+					gameMode == GameMode.SURVIVAL ? screenHeight / 2 + 25 : screenHeight / 2);
 				break;
 		}
 
@@ -3642,46 +3796,93 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 		}
 	}
 
+	private void syncCampaignHeroesFromParty() {
+		if (campaignSession == null) return;
+		world.WorldParty party = campaignSession.getWorld().parties.get(campaignSession.getPlayerState().partyId);
+		if (party == null) return;
+		for (Long personId : party.memberPersonIds) {
+			if (personId == campaignSession.getPlayerState().personId) continue;
+			boolean exists = heroes.stream().anyMatch(hero -> personId.equals(hero.sourcePersonId));
+			if (exists) continue;
+			world.Person person = campaignSession.getWorld().people.get(personId);
+			if (person == null || !person.alive) continue;
+			Hero.HeroClass[] classes = Hero.HeroClass.values();
+			Hero hero = new Hero(this, (person.givenName + " " + person.familyName).trim(),
+				classes[(int) Math.floorMod(person.id, classes.length)], (int) player.x + tileSize, (int) player.y);
+			hero.sourcePersonId = person.id;
+			hero.isRecruited = true;
+			hero.activePlayerReference = player;
+			heroes.add(hero);
+			recruitedHeroes.add(hero);
+		}
+	}
+
 	private void recruitHero(Hero hero) {
 		hero.isRecruited = true;
 		hero.onRecruited(this);
 		hero.companionRole = Hero.CompanionRole.HYBRID;
 		hero.activePlayerReference = player;
 		if (!recruitedHeroes.contains(hero)) recruitedHeroes.add(hero);
-		if (activeHero == null) setActiveHero(hero);
+		if (gameMode == GameMode.CAMPAIGN && campaignSession != null && hero.sourcePersonId == null) {
+			world.WorldParty party = campaignSession.getWorld().parties.get(campaignSession.getPlayerState().partyId);
+			world.Person person = campaignSession.getWorld().people.values().stream()
+				.filter(value -> value.alive && value.currentSettlementId != null
+					&& value.currentSettlementId == campaignSession.getPlayerState().currentSettlementId
+					&& (party == null || !party.memberPersonIds.contains(value.id)))
+				.sorted(java.util.Comparator.comparingLong(value -> value.id)).findFirst().orElse(null);
+			if (person != null && campaignSession.recruitCompanion(person.id).accepted) {
+				hero.sourcePersonId = person.id;
+				person.givenName = hero.name;
+				person.familyName = "";
+				person.type = world.Person.PersonType.SOLDIER;
+				campaignSession.refreshAfterCheat();
+				campaignSnapshot = campaignSession.getSnapshot();
+			}
+		}
+		localInteractionMessage = hero.name + " recruited. Press Q to play as recruited heroes.";
 	}
 
 	private void setActiveHero(Hero hero) {
 		if (activeHero != null) {
+			activeHero.health = player.health;
+			activeHero.x = player.x;
+			activeHero.y = player.y;
 			activeHero.isActivePlayer = false;
+		} else {
+			storedPlayerHealth = player.health;
+			storedPlayerMaxHealth = player.maxHealth;
+			storedPlayerMeleeDamage = player.meleeDamage;
+			storedPlayerProjectileDamage = player.projectileDamage;
 		}
 		activeHero = hero;
 		if (hero != null) {
 			hero.isActivePlayer = true;
 			hero.activePlayerReference = player;
+			hero.x = player.x;
+			hero.y = player.y;
+			player.maxHealth = hero.maxHealth;
+			player.health = Math.max(1, hero.health);
+			player.meleeDamage = hero.attack;
+			player.projectileDamage = Math.max(6, hero.attack);
+		} else {
+			player.maxHealth = storedPlayerMaxHealth;
+			player.health = Math.min(storedPlayerMaxHealth, storedPlayerHealth);
+			player.meleeDamage = storedPlayerMeleeDamage;
+			player.projectileDamage = storedPlayerProjectileDamage;
 		}
 	}
 
 	private void switchActiveHero() {
-		// Get list of recruited heroes
 		java.util.List<Hero> recruited = new java.util.ArrayList<>();
-		for (Hero h : heroes) {
-			if (h.isRecruited) recruited.add(h);
+		for (Hero h : heroes) if (h.isRecruited) recruited.add(h);
+		if (recruited.isEmpty()) { setActiveHero(null); return; }
+		if (activeHero == null) setActiveHero(recruited.get(0));
+		else {
+			int currentIndex = recruited.indexOf(activeHero);
+			if (currentIndex < 0 || currentIndex + 1 >= recruited.size()) setActiveHero(null);
+			else setActiveHero(recruited.get(currentIndex + 1));
 		}
-
-		if (recruited.isEmpty()) return;
-
-		// Find current active hero index
-		int currentIndex = -1;
-		if (activeHero != null) {
-			currentIndex = recruited.indexOf(activeHero);
-		}
-
-		// Switch to next
-		int nextIndex = (currentIndex + 1) % recruited.size();
-		setActiveHero(recruited.get(nextIndex));
-
-		System.out.println("Switched to " + activeHero.name);
+		System.out.println(activeHero == null ? "Switched to adventurer" : "Switched to " + activeHero.name);
 	}
 
 	private void handleHeroAbilities() {

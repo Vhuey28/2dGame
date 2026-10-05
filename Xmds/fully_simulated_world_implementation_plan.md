@@ -2387,6 +2387,10 @@ Target-continent budget certification remains measurement-dependent: run the opt
 - Fullscreen uses a reliable F11 borderless/exclusive toggle, restores window bounds, retains keyboard focus, and maps scaled mouse input back to virtual coordinates.
 - Contracts expose plain-language objectives, named issuer/destination settlements, live cargo/location progress, deadlines, rewards, and penalties; active destinations are highlighted on the campaign map.
 - F1 opens a campaign cheat/test menu with explicit controls for resources, cargo, healing, armies, troops, caravans, rulers, lords, settlement ownership, wars, crime, contracts, and time advancement.
+- Recruited heroes are linked to persistent campaign people, can fight autonomously or be selected with Q as the controlled character, and survival setup offers playable or AI-companion warrior/mage choices.
+- Market stalls, notice boards, and the current-settlement campaign marker open clear contextual menus for trading, accepting work, local entry, and settlement information.
+- The contract tab now shows active work only; the encyclopedia tab summarizes world population, activity, kingdoms, rulers, governments, and political state.
+- Survival power-up selection is processed before overlapping pause controls, preventing the center choice from restarting or exiting the mode.
 
 ---
 
