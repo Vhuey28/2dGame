@@ -391,7 +391,11 @@ public final class MilitarySystem {
     }
 
     private void transferSupply(Settlement settlement, Army army, GoodType type, int requested) {
-        int amount = Math.min(requested, settlement.publicStockpile.getQuantity(type));
+        // Military requisition preserves a civilian emergency reserve instead of
+        // silently emptying the settlement market.
+        int reserve = type == GoodType.GRAIN || type == GoodType.VEGETABLES ? 20 : 0;
+        int available = Math.max(0, settlement.publicStockpile.getQuantity(type) - reserve);
+        int amount = Math.min(requested, available);
         if (amount > 0 && settlement.publicStockpile.remove(type, amount)) army.supplies.add(type, amount);
     }
 
