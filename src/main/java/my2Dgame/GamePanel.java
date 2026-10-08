@@ -149,12 +149,15 @@ public class GamePanel extends JPanel implements Runnable{
 		private CampaignTab activeCampaignTab = CampaignTab.OVERVIEW;
 		private final java.util.Map<CampaignTab, Rectangle> campaignTabHitboxes = new java.util.EnumMap<>(CampaignTab.class);
 		private final java.util.Map<String, Rectangle> kingdomManagementHitboxes = new java.util.LinkedHashMap<>();
-		private enum CampaignContextMenu { NONE, SETTLEMENT, MARKET, NOTICE_BOARD }
+		private enum CampaignContextMenu { NONE, SETTLEMENT, MARKET, NOTICE_BOARD, PERSON, ARMY, CARAVAN }
 		private CampaignContextMenu campaignContextMenu = CampaignContextMenu.NONE;
+		private Long selectedCampaignActorId;
 		private final java.util.Map<String, Rectangle> campaignContextButtons = new java.util.LinkedHashMap<>();
 		private int marketGoodIndex;
 		private String campaignContextMessage = "";
 		private final java.util.Map<Long, Rectangle> campaignSettlementHitboxes = new java.util.HashMap<>();
+		private final java.util.Map<Long, Rectangle> campaignArmyHitboxes = new java.util.HashMap<>();
+		private final java.util.Map<Long, Rectangle> campaignCaravanHitboxes = new java.util.HashMap<>();
 		private final java.util.List<LocalPlaceholder> campaignLocalPlaceholders = new java.util.ArrayList<>();
 		private String localInteractionMessage = "Walk near a marker and press F";
 		private BattleContext activeCampaignBattle;
@@ -873,15 +876,33 @@ public class GamePanel extends JPanel implements Runnable{
 
 		private void interactWithCampaignPlaceholder() {
 			LocalPlaceholder nearest = null;
+			world.local.LocalActor nearestActor = null;
 			double best = tileSize * 3.0;
 			for (LocalPlaceholder placeholder : campaignLocalPlaceholders) {
 				double distance = Math.hypot(player.x - placeholder.worldX, player.y - placeholder.worldY);
 				if (distance < best) {
 					best = distance;
 					nearest = placeholder;
+					nearestActor = null;
 				}
 			}
-			if (nearest == null) {
+			for (world.local.LocalActor actor : campaignSession.getLocalActors()) {
+				double distance = Math.hypot(player.x - actor.x, player.y - actor.y);
+				if (distance < best) {
+					best = distance;
+					nearestActor = actor;
+					nearest = null;
+				}
+			}
+			if (nearestActor != null) {
+				selectedCampaignActorId = nearestActor.sourceId;
+				campaignContextMenu = switch (nearestActor.kind) {
+					case PERSON -> CampaignContextMenu.PERSON;
+					case ARMY -> CampaignContextMenu.ARMY;
+					case CARAVAN -> CampaignContextMenu.CARAVAN;
+				};
+				campaignContextMessage = "Choose how to interact with " + nearestActor.label;
+			} else if (nearest == null) {
 				interactWithNearbyHero();
 				if (localInteractionMessage == null || localInteractionMessage.isBlank())
 					localInteractionMessage = "Move closer to a highlighted person, hero, or location";
@@ -916,10 +937,10 @@ public class GamePanel extends JPanel implements Runnable{
 						g2.fillOval(x - 7, y - 11, 14, 22);
 					}
 				}
-				if (Math.hypot(player.x - actor.x, player.y - actor.y) < tileSize * 2.0) {
+				if (Math.hypot(player.x - actor.x, player.y - actor.y) < tileSize * 3.0) {
 					g2.setColor(Color.WHITE);
 					g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
-					g2.drawString(actor.label + " · " + actor.activity, x - 18, y - 16);
+					g2.drawString("[F] " + actor.label + " · " + actor.activity, x - 24, y - 16);
 				}
 			}
 		}
@@ -2227,11 +2248,21 @@ System.nanoTime();
 		campaignContextButtons.clear();
 		CampaignSnapshot.SettlementView settlement = campaignSnapshot.findSettlement(campaignSnapshot.player.settlementId);
 		g2.setFont(new Font("Serif", Font.BOLD, 22)); g2.setColor(new Color(235, 205, 130));
-		String title = campaignContextMenu == CampaignContextMenu.MARKET ? "MARKET STALL"
-			: campaignContextMenu == CampaignContextMenu.NOTICE_BOARD ? "NOTICE BOARD" : "SETTLEMENT";
+		String title = switch (campaignContextMenu) {
+			case MARKET -> "MARKET STALL";
+			case NOTICE_BOARD -> "NOTICE BOARD";
+			case PERSON -> "PERSON";
+			case ARMY -> "ARMY";
+			case CARAVAN -> "MERCHANT CARAVAN";
+			default -> "SETTLEMENT";
+		};
 		g2.drawString(title, x + 20, y + 30);
 		g2.setFont(new Font("Monospaced", Font.PLAIN, 11)); g2.setColor(Color.WHITE);
-		if (settlement != null) g2.drawString(settlement.name, x + 20, y + 50);
+		if (settlement != null && (campaignContextMenu == CampaignContextMenu.SETTLEMENT
+				|| campaignContextMenu == CampaignContextMenu.MARKET
+				|| campaignContextMenu == CampaignContextMenu.NOTICE_BOARD)) {
+			g2.drawString(settlement.name, x + 20, y + 50);
+		}
 		if (campaignContextMenu == CampaignContextMenu.SETTLEMENT && settlement != null) {
 			g2.drawString("Population " + settlement.population + " | Households " + settlement.households, x + 20, y + 75);
 			g2.drawString("Treasury " + settlement.treasury + "c | Food security " + Math.round(settlement.foodSecurity * 100) + "%", x + 20, y + 94);
@@ -2270,9 +2301,93 @@ System.nanoTime();
 				if (++row >= 3) break;
 			}
 			if (row == 0) g2.drawString("No new contracts are posted here.", x + 20, y + 85);
+		} else if (campaignContextMenu == CampaignContextMenu.PERSON) {
+			world.Person person = selectedCampaignActorId == null ? null
+					: campaignSession.getWorld().people.get(selectedCampaignActorId);
+			if (person == null) {
+				g2.drawString("This person is no longer present.", x + 20, y + 82);
+			} else {
+				long minute = campaignSnapshot.worldMinute;
+				g2.setFont(new Font("Serif", Font.BOLD, 20));
+				g2.drawString(person.givenName + " " + person.familyName, x + 20, y + 78);
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+				g2.drawString("Age " + person.getAge(minute) + " | " + person.type + " | " + person.currentActivity, x + 20, y + 102);
+				String work = person.employerId == null ? "No current employer" : "Workplace #" + person.employerId;
+				g2.drawString(work + " | Wealth " + Math.round(person.wealth.netWorth) + "c", x + 20, y + 121);
+				g2.drawString("Needs: food " + percent(person.needs.foodSecurity) + "  safety " + percent(person.needs.safety)
+						+ "  social " + percent(person.needs.socialBelonging), x + 20, y + 140);
+				g2.drawString("Traits: " + describePersonality(person), x + 20, y + 159);
+				if (person.spouseId != null) {
+					world.Person spouse = campaignSession.getWorld().people.get(person.spouseId);
+					if (spouse != null) g2.drawString("Family: spouse " + spouse.givenName + " " + spouse.familyName, x + 20, y + 178);
+				}
+				addContextButton(g2, "TALK_PERSON", "Talk", x + 24, y + 218, 128, 44);
+				addContextButton(g2, "GIFT_GRAIN", "Give 1 grain", x + 174, y + 218, 128, 44);
+				addContextButton(g2, "RECRUIT_PERSON", "Invite to party", x + 324, y + 218, 128, 44);
+			}
+		} else if (campaignContextMenu == CampaignContextMenu.ARMY) {
+			world.Army army = selectedCampaignActorId == null ? null
+					: campaignSession.getWorld().armies.get(selectedCampaignActorId);
+			if (army == null) {
+				g2.drawString("This army is no longer active.", x + 20, y + 82);
+			} else {
+				world.Person commander = campaignSession.getWorld().people.get(army.commanderPersonId);
+				CampaignSnapshot.RealmView realm = campaignSnapshot.findRealm(army.realmId);
+				int strength = campaignSession.getSimulation().getMilitarySystem().strength(army);
+				g2.setFont(new Font("Serif", Font.BOLD, 20));
+				g2.drawString((realm == null ? "Unknown" : realm.name) + " Army #" + army.id, x + 20, y + 78);
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+				g2.drawString("Commander: " + personName(commander) + " | Strength " + strength, x + 20, y + 103);
+				g2.drawString("Order " + army.order + " | State " + army.state + " | Regiments " + army.regimentIds.size(), x + 20, y + 122);
+				g2.drawString("Morale " + Math.round(army.morale) + "% | Fatigue " + Math.round(army.fatigue)
+						+ "% | Days unfed " + army.daysWithoutFood, x + 20, y + 141);
+				g2.drawString("Supplies: grain " + army.supplies.getQuantity(GoodType.GRAIN)
+						+ " | vegetables " + army.supplies.getQuantity(GoodType.VEGETABLES), x + 20, y + 160);
+				addContextButton(g2, "SPEAK_COMMANDER", "Speak to commander", x + 20, y + 210, 132, 44);
+				addContextButton(g2, "SUPPLY_ARMY", "Donate 5 grain", x + 173, y + 210, 132, 44);
+				addContextButton(g2, "VIEW_ARMY_PEOPLE", "View soldiers", x + 326, y + 210, 132, 44);
+			}
+		} else if (campaignContextMenu == CampaignContextMenu.CARAVAN) {
+			world.Caravan caravan = selectedCampaignActorId == null ? null
+					: campaignSession.getWorld().caravans.get(selectedCampaignActorId);
+			if (caravan == null) {
+				g2.drawString("This caravan has moved on.", x + 20, y + 82);
+			} else {
+				world.Person leader = campaignSession.getWorld().people.get(caravan.leaderPersonId);
+				g2.setFont(new Font("Serif", Font.BOLD, 20));
+				g2.drawString("Caravan led by " + personName(leader), x + 20, y + 78);
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+				g2.drawString("State " + caravan.state + " | Guards " + caravan.guardPersonIds.size(), x + 20, y + 103);
+				g2.drawString("Cargo " + caravan.cargoQuantity() + "/" + caravan.carryingCapacity
+						+ " | Primary " + (caravan.primaryCargo() == null ? "none" : caravan.primaryCargo()), x + 20, y + 122);
+				g2.drawString("Cash " + caravan.cash.copperCoins + "c | Lifetime profit " + caravan.lifetimeProfit
+						+ "c | Trips " + caravan.completedTrips, x + 20, y + 141);
+				addContextButton(g2, "SPEAK_MERCHANT", "Ask about trade", x + 24, y + 200, 200, 44);
+				addContextButton(g2, "OPEN_MARKET", "Open local market", x + 246, y + 200, 206, 44);
+			}
 		}
 		g2.setColor(new Color(170, 220, 170)); g2.drawString(campaignContextMessage, x + 20, y + h - 42);
 		addContextButton(g2, "CLOSE", "Close", x + w - 105, y + h - 34, 85, 26);
+	}
+
+	private String percent(double value) {
+		return Math.round(Math.max(0.0, Math.min(1.0, value)) * 100.0) + "%";
+	}
+
+	private String personName(world.Person person) {
+		return person == null ? "Unknown" : person.givenName + " " + person.familyName;
+	}
+
+	private String describePersonality(world.Person person) {
+		java.util.List<java.util.Map.Entry<String, Double>> traits = new java.util.ArrayList<>();
+		traits.add(java.util.Map.entry("ambitious", person.personality.ambition));
+		traits.add(java.util.Map.entry("brave", person.personality.bravery));
+		traits.add(java.util.Map.entry("compassionate", person.personality.compassion));
+		traits.add(java.util.Map.entry("honorable", person.personality.honor));
+		traits.add(java.util.Map.entry("loyal", person.personality.loyalty));
+		traits.add(java.util.Map.entry("sociable", person.personality.sociability));
+		traits.sort(java.util.Map.Entry.<String, Double>comparingByValue().reversed());
+		return traits.get(0).getKey() + ", " + traits.get(1).getKey();
 	}
 
 	private void addContextButton(Graphics2D g2, String id, String label, int x, int y, int w, int h) {
@@ -2292,10 +2407,41 @@ System.nanoTime();
 		if ("OPEN_BOARD".equals(clicked)) { campaignContextMenu = CampaignContextMenu.NOTICE_BOARD; return; }
 		if ("OPEN_INFO".equals(clicked)) { campaignContextMenu = CampaignContextMenu.NONE; activeCampaignTab = CampaignTab.ENCYCLOPEDIA; return; }
 		if ("ENTER_LOCAL".equals(clicked)) { campaignContextMenu = CampaignContextMenu.NONE; enterCampaignLocalView(); return; }
+		if ("VIEW_ARMY_PEOPLE".equals(clicked)) {
+			campaignContextMenu = CampaignContextMenu.NONE;
+			activeCampaignTab = CampaignTab.ENCYCLOPEDIA;
+			campaignContextMessage = "Army personnel are listed with the simulated population";
+			return;
+		}
+		if ("SPEAK_COMMANDER".equals(clicked)) {
+			world.Army army = selectedCampaignActorId == null ? null : campaignSession.getWorld().armies.get(selectedCampaignActorId);
+			campaignContextMessage = army == null ? "The army has moved on"
+					: "The commander reports: " + army.order + ", morale " + Math.round(army.morale) + "%";
+			return;
+		}
+		if ("SPEAK_MERCHANT".equals(clicked)) {
+			world.Caravan caravan = selectedCampaignActorId == null ? null : campaignSession.getWorld().caravans.get(selectedCampaignActorId);
+			campaignContextMessage = caravan == null ? "The caravan has moved on"
+					: "The merchant has completed " + caravan.completedTrips + " trips and carries "
+						+ (caravan.primaryCargo() == null ? "no cargo" : caravan.primaryCargo().toString().toLowerCase());
+			return;
+		}
 		if ("PREV_GOOD".equals(clicked)) { marketGoodIndex--; return; }
 		if ("NEXT_GOOD".equals(clicked)) { marketGoodIndex++; return; }
 		GoodType good = GoodType.values()[Math.floorMod(marketGoodIndex, GoodType.values().length)];
 		world.command.CommandResult result = null;
+		if ("SUPPLY_ARMY".equals(clicked) && selectedCampaignActorId != null) {
+			result = campaignSession.supplyArmy(selectedCampaignActorId, 5);
+		}
+		if ("TALK_PERSON".equals(clicked) && selectedCampaignActorId != null) {
+			result = campaignSession.talkToPerson(selectedCampaignActorId);
+		}
+		if ("GIFT_GRAIN".equals(clicked) && selectedCampaignActorId != null) {
+			result = campaignSession.giveFoodToPerson(selectedCampaignActorId);
+		}
+		if ("RECRUIT_PERSON".equals(clicked) && selectedCampaignActorId != null) {
+			result = campaignSession.recruitCompanion(selectedCampaignActorId);
+		}
 		long settlementId = campaignSnapshot.player.settlementId;
 		CampaignSnapshot.SettlementView currentSettlement = campaignSnapshot.findSettlement(settlementId);
 		if ("JOIN_MERCENARY".equals(clicked) && currentSettlement != null && currentSettlement.realmId != null) {
@@ -2311,7 +2457,8 @@ System.nanoTime();
 		if (clicked.startsWith("ACCEPT_")) result = campaignSession.acceptContract(Long.parseLong(clicked.substring(7)));
 		if (result != null) {
 			campaignSnapshot = campaignSession.getSnapshot();
-			campaignContextMessage = result.accepted ? "Action completed" : result.message;
+			campaignContextMessage = result.accepted && (result.message == null || result.message.isBlank())
+					? "Action completed" : result.message;
 		}
 	}
 
@@ -2651,6 +2798,24 @@ System.nanoTime();
 					return;
 				}
 			}
+			for (java.util.Map.Entry<Long, Rectangle> entry : campaignArmyHitboxes.entrySet()) {
+				if (entry.getValue().contains(point)) {
+					selectedCampaignActorId = entry.getKey();
+					campaignContextMenu = CampaignContextMenu.ARMY;
+					campaignContextMessage = "Inspect this army and its commander";
+					repaint();
+					return;
+				}
+			}
+			for (java.util.Map.Entry<Long, Rectangle> entry : campaignCaravanHitboxes.entrySet()) {
+				if (entry.getValue().contains(point)) {
+					selectedCampaignActorId = entry.getKey();
+					campaignContextMenu = CampaignContextMenu.CARAVAN;
+					campaignContextMessage = "Inspect this merchant caravan";
+					repaint();
+					return;
+				}
+			}
 			for (java.util.Map.Entry<Long, Rectangle> entry : campaignSettlementHitboxes.entrySet()) {
 				if (entry.getValue().contains(point)) {
 					selectedCampaignSettlementId = entry.getKey();
@@ -2757,6 +2922,7 @@ System.nanoTime();
 				g2.drawString("Pop " + settlement.population, label.x + 4, label.y + 23);
 			}
 
+			campaignArmyHitboxes.clear();
 			for (CampaignSnapshot.ArmyView army : snapshot.armies) {
 				int x = campaignMapCoordinate(army.worldX, bounds[0], bounds[1], mapX, mapW);
 				int y = campaignMapCoordinate(army.worldY, bounds[2], bounds[3], mapY, mapH);
@@ -2765,8 +2931,10 @@ System.nanoTime();
 				g2.setColor(Color.WHITE);
 				g2.drawRect(x - 6, y - 6, 12, 12);
 				g2.drawString(Integer.toString(army.strength), x + 8, y + 4);
+				campaignArmyHitboxes.put(army.id, new Rectangle(x - 10, y - 10, 28, 20));
 			}
 
+			campaignCaravanHitboxes.clear();
 			for (CampaignSnapshot.CaravanView caravan : snapshot.caravans) {
 				int x = campaignMapCoordinate(caravan.worldX, bounds[0], bounds[1], mapX, mapW);
 				int y = campaignMapCoordinate(caravan.worldY, bounds[2], bounds[3], mapY, mapH);
@@ -2776,6 +2944,7 @@ System.nanoTime();
 				g2.fillPolygon(xs, ys, 4);
 				g2.setColor(Color.BLACK);
 				g2.drawPolygon(xs, ys, 4);
+				campaignCaravanHitboxes.put(caravan.id, new Rectangle(x - 10, y - 10, 20, 20));
 			}
 
 			int panelX = 535;
@@ -2826,28 +2995,6 @@ System.nanoTime();
 			}
 
 			y += 5;
-			CampaignSnapshot.SettlementView selected = selectedCampaignSettlementId == null
-				? null : snapshot.findSettlement(selectedCampaignSettlementId);
-			if (selected != null) {
-				g2.setColor(new Color(222, 204, 155));
-				g2.setFont(new Font("SansSerif", Font.BOLD, 13));
-				g2.drawString("SELECTED SETTLEMENT", panelX, y); y += 18;
-				g2.setColor(Color.WHITE);
-				g2.drawString(selected.name, panelX, y); y += 15;
-				g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
-				g2.drawString("Population: " + selected.population, panelX, y); y += 14;
-				g2.drawString("Households: " + selected.households, panelX, y); y += 14;
-				g2.drawString("Treasury: " + selected.treasury, panelX, y); y += 14;
-				g2.drawString("Grain / veg: " + selected.grain + " / " + selected.vegetables, panelX, y); y += 14;
-				g2.drawString("Prices: " + selected.grainPrice + "c / " + selected.vegetablePrice + "c", panelX, y); y += 14;
-				long localOffers = snapshot.contracts.stream().filter(contract ->
-					contract.issuerSettlementId == selected.id && "OPEN".equals(contract.status)).count();
-				g2.drawString("Open contracts: " + localOffers, panelX, y); y += 14;
-				g2.drawString(String.format("Food security: %.0f%%", selected.foodSecurity * 100.0), panelX, y); y += 14;
-				g2.setColor(new Color(245, 196, 65));
-				g2.drawString("Travel here, then TAB for local view", panelX, y); y += 18;
-			}
-
 			g2.setColor(new Color(222, 204, 155));
 			g2.setFont(new Font("SansSerif", Font.BOLD, 12));
 			g2.drawString("RECENT EVENTS", panelX, y); y += 16;

@@ -7,7 +7,7 @@ public final class LocalActor {
     public final long sourceId;
     public final ActorKind kind;
     public final String label;
-    public final boolean companion;
+    public boolean companion;
     public double x;
     public double y;
     public double targetX;

@@ -58,7 +58,8 @@ public class Player extends Entity{
 	//Player effect animations
 	public BufferedImage[] conqurs = new BufferedImage[4]; // index 1-4 used, matching your existing 1-based convention
 	public BufferedImage[] heals = new BufferedImage[3]; 
-	public BufferedImage[] fireball = new BufferedImage[2]; 
+	public BufferedImage[] fireball = new BufferedImage[2];
+	public BufferedImage[] mageBasicProjectile = new BufferedImage[4];
 
 	public java.util.List<Projectile> projectiles = new ArrayList<>();
 	public java.util.List<AreaEffect> areas = new ArrayList<>();
@@ -172,6 +173,12 @@ public class Player extends Entity{
 			//fireball effects
 			fireball[0] = loadImage("/effects/fire_effect_sliced_tiles/tiles/group2/r04_c07.png");
 			fireball[1] = loadImage("/effects/fire_effect_sliced_tiles/tiles/group2/r04_c08.png");
+
+			// Mage basic attack projectile animation
+			mageBasicProjectile[0] = loadImage("/effects/purple_effect_sliced_tiles/tiles/group5/r09_c19.png");
+			mageBasicProjectile[1] = loadImage("/effects/purple_effect_sliced_tiles/tiles/group5/r09_c20.png");
+			mageBasicProjectile[2] = loadImage("/effects/purple_effect_sliced_tiles/tiles/group5/r09_c21.png");
+			mageBasicProjectile[3] = loadImage("/effects/purple_effect_sliced_tiles/tiles/group5/r09_c22.png");
 
 				
 
@@ -337,7 +344,11 @@ public class Player extends Entity{
 			isAttacking = true;
 			attackAnimationCounter = 0;
 			attackAnimationFrame = 0; // Start attack animation from first frame
-			performMeleeAttack();
+			if (gp.activeHero != null && gp.activeHero.heroClass == Hero.HeroClass.MAGE) {
+				fireMageBasicProjectiles();
+			} else {
+				performMeleeAttack();
+			}
 		}
 		
 		if (gp.activeHero == null && keyH.num1Pressed && mana >= 15) {
@@ -448,6 +459,36 @@ public class Player extends Entity{
 		}
 	}
 
+	/** Fires the controlled Mage's basic attack as a five-projectile fan. */
+	private void fireMageBasicProjectiles() {
+		float baseDx = 0f;
+		float baseDy = 0f;
+		switch (direction) {
+			case "up": baseDy = -1f; break;
+			case "upRight": baseDx = 1f; baseDy = -1f; break;
+			case "right": baseDx = 1f; break;
+			case "downRight": baseDx = 1f; baseDy = 1f; break;
+			case "down": baseDy = 1f; break;
+			case "downLeft": baseDx = -1f; baseDy = 1f; break;
+			case "left": baseDx = -1f; break;
+			case "upLeft": baseDx = -1f; baseDy = -1f; break;
+			default: baseDy = 1f; break;
+		}
+
+		double baseAngle = Math.atan2(baseDy, baseDx);
+		double spreadStep = Math.toRadians(12);
+		float originX = x + gp.tileSize / 2f;
+		float originY = y + gp.tileSize / 2f;
+		for (int projectileIndex = -2; projectileIndex <= 2; projectileIndex++) {
+			double angle = baseAngle + projectileIndex * spreadStep;
+			Projectile projectile = new Projectile(originX, originY,
+					(float) Math.cos(angle), (float) Math.sin(angle), 6, 12,
+					java.awt.Color.MAGENTA, mageBasicProjectile);
+			projectile.setRotateToDirection(false);
+			projectiles.add(projectile);
+		}
+	}
+
 	private void performMeleeAttack() {
 		int range = gp.tileSize + 4;
 		float attackX = x;
@@ -527,24 +568,16 @@ public class Player extends Entity{
 	}
 
 	public void draw(Graphics2D g2, int cameraX, int cameraY) {
-		// Draw attack animation if attacking
-		int drawWidth = gp.tileSize ,drawHeight = gp.tileSize;
-		if (isAttacking) {
-			BufferedImage attackImage = getAttackFrameForDirection(direction);
-			if (attackImage != null) {
-				g2.drawImage(attackImage, (int)x - cameraX, (int)y - cameraY, drawWidth, drawHeight, null);
-			} else {
-				// Fallback to idle sprite if attack frame not loaded
-				BufferedImage image = getIdleFrameForDirection(direction);
-				if (image != null) {
-					g2.drawImage(image, (int)x - cameraX, (int)y - cameraY, gp.tileSize, gp.tileSize, null);
-				}
-			}
-		} else {
-			// --- Fallback: old static images ---
-			BufferedImage image = getIdleFrameForDirection(direction);
-				g2.drawImage(image, (int)x - cameraX, (int)y - cameraY, gp.tileSize, gp.tileSize, null);
-			
+		int drawWidth = scaleSpriteDrawWidth(gp.tileSize);
+		int drawHeight = scaleSpriteDrawHeight(gp.tileSize);
+		int screenX = (int) x - cameraX + (gp.tileSize - drawWidth) / 2;
+		int screenY = (int) y - cameraY + (gp.tileSize - drawHeight) / 2;
+		BufferedImage image = isAttacking
+				? getAttackFrameForDirection(direction)
+				: getIdleFrameForDirection(direction);
+		if (image == null) image = getIdleFrameForDirection(direction);
+		if (image != null) {
+			g2.drawImage(image, screenX, screenY, drawWidth, drawHeight, null);
 		}
 	}
 
