@@ -866,8 +866,9 @@ private String getAssetDirection() {
     }
 
     public void draw(Graphics2D g2, int cameraX, int cameraY) {
-        int drawWidth = (int) (gp.tileSize * (isAttacking ? attackDrawScale : idleDrawScale));
-        int drawHeight = drawWidth; // square scaling — split into separate width/height fields if your art isn't square
+        int baseDrawSize = (int) (gp.tileSize * (isAttacking ? attackDrawScale : idleDrawScale));
+        int drawWidth = scaleSpriteDrawWidth(baseDrawSize);
+        int drawHeight = scaleSpriteDrawHeight(baseDrawSize);
 
         // Center the larger attack sprite on the hero's actual tile position, same technique as Enemy.draw()
         int screenX = (int) (x - cameraX) + (gp.tileSize - drawWidth) / 2;

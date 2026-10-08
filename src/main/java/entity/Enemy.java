@@ -925,6 +925,8 @@ public class Enemy extends Entity {
             drawWidth = gp.tileSize;  // 1x tile = 48px
             drawHeight = gp.tileSize;
         }
+        drawWidth = scaleSpriteDrawWidth(drawWidth);
+        drawHeight = scaleSpriteDrawHeight(drawHeight);
         int screenX = (int)x - cameraX + (gp.tileSize - drawWidth) / 2;
         int screenY = (int)y - cameraY + (gp.tileSize - drawHeight) / 2;
         BufferedImage currentFrame = getCurrentAnimationFrame();
