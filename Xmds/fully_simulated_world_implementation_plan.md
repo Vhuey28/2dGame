@@ -2264,6 +2264,9 @@ Each phase must compile, run, and have tests before proceeding.
 - Strategic travel advances the complete simulation and reconciles party position, contracts, and local entry state.
 - Versioned atomic campaign checkpoints preserve seed/time, IDs, player/party state, settlement economy, scoped reputation, and contracts; derived indexes are rebuilt and invariants validated after load.
 - Campaign controls support grain and vegetable trade, contract acceptance, and F5/F9 save/load.
+- Local projected people now expose their canonical age, work, activity, needs, family, wealth, and personality, with state-aware conversation, food gifts, and validated party recruitment.
+- Armies and caravans are selectable on both local and strategic maps; context menus expose commanders, strength, orders, morale, fatigue, supplies, cargo, guards, and trade history, and nearby armies can receive player grain supplies.
+- The campaign world's permanent side panel is reserved for world/realm status and events; settlement details remain available contextually through hover and settlement menus.
 
 ## Phase 5 — Political core
 

@@ -192,9 +192,106 @@ public final class CampaignSession {
                 || companion.currentSettlementId != playerState.currentSettlementId) {
             return CommandResult.rejected("NOT_PRESENT", "Companion must be alive and present");
         }
-        if (!party.memberPersonIds.contains(personId)) party.memberPersonIds.add(personId);
+        if (party.memberPersonIds.contains(personId)) {
+            return CommandResult.rejected("ALREADY_RECRUITED", "This person is already in your party");
+        }
+        long minute = clock.getWorldMinute();
+        if (companion.isChild(minute) || companion.type == Person.PersonType.CHILD) {
+            return CommandResult.rejected("CHILD", "Children cannot be recruited into an adventuring party");
+        }
+        if (companion.regimentId != null || companion.type == Person.PersonType.SOLDIER) {
+            return CommandResult.rejected("MILITARY_DUTY", "This person is serving in an army");
+        }
+        if (companion.travelingPartyId != null && companion.travelingPartyId != party.id) {
+            return CommandResult.rejected("OTHER_PARTY", "This person already belongs to another traveling party");
+        }
+        if (companion.type == Person.PersonType.NOBLE) {
+            return CommandResult.rejected("NOBLE_DUTY", "This noble will not abandon their obligations");
+        }
+        if (companion.employerId != null) {
+            world.economy.Workplace workplace = world.workplaces.get(companion.employerId);
+            if (workplace != null) workplace.removeWorker(companion.id);
+            companion.employerId = null;
+        }
+        party.memberPersonIds.add(personId);
         companion.travelingPartyId = party.id;
-        return CommandResult.accepted();
+        companion.currentActivity = PersonActivity.IDLE;
+        world.indexes.rebuild(world, clock.getWorldMinute());
+        refreshSnapshot();
+        return new CommandResult(true, "RECRUITED",
+                companion.givenName + " has joined your party");
+    }
+
+    /** Returns dialogue derived from the person's current schedule, needs, and personality. */
+    public CommandResult talkToPerson(long personId) {
+        Person person = world.people.get(personId);
+        if (!isPersonPresent(person)) {
+            return CommandResult.rejected("NOT_PRESENT", "That person is no longer nearby");
+        }
+        String concern = mostPressingConcern(person);
+        String manner = person.personality.sociability >= 65.0 ? "warmly"
+                : person.personality.patience < 35.0 ? "briefly" : "carefully";
+        String activity = person.currentActivity.toString().toLowerCase().replace('_', ' ');
+        person.needs.socialBelonging = Math.min(1.0, person.needs.socialBelonging + 0.01);
+        refreshSnapshot();
+        return new CommandResult(true, "CONVERSATION",
+                person.givenName + " speaks " + manner + " about " + concern
+                        + " before returning to " + activity + ".");
+    }
+
+    /** Transfers one unit of player grain to a nearby person's household. */
+    public CommandResult giveFoodToPerson(long personId) {
+        Person person = world.people.get(personId);
+        if (!isPersonPresent(person)) {
+            return CommandResult.rejected("NOT_PRESENT", "That person is no longer nearby");
+        }
+        if (!playerState.cargo.remove(GoodType.GRAIN, 1)) {
+            return CommandResult.rejected("NO_GRAIN", "You have no grain in your cargo");
+        }
+        Household household = person.householdId == null ? null : world.households.get(person.householdId);
+        if (household != null) household.inventory.add(GoodType.GRAIN, 1);
+        person.needs.foodSecurity = Math.min(1.0, person.needs.foodSecurity + 0.15);
+        person.needs.socialBelonging = Math.min(1.0, person.needs.socialBelonging + 0.05);
+        playerState.changeSettlementReputation(playerState.currentSettlementId, 1);
+        refreshSnapshot();
+        return new CommandResult(true, "GIFT_ACCEPTED",
+                person.givenName + " accepts the food. Local reputation increased.");
+    }
+
+    private boolean isPersonPresent(Person person) {
+        return person != null && person.alive && person.currentSettlementId != null
+                && person.currentSettlementId == playerState.currentSettlementId;
+    }
+
+    private String mostPressingConcern(Person person) {
+        double lowest = person.needs.foodSecurity;
+        String concern = "the price of food";
+        if (person.needs.safety < lowest) { lowest = person.needs.safety; concern = "safety on the roads"; }
+        if (person.needs.health < lowest) { lowest = person.needs.health; concern = "their health"; }
+        if (person.needs.wealthSecurity < lowest) { lowest = person.needs.wealthSecurity; concern = "finding steady work"; }
+        if (person.needs.politicalSatisfaction < lowest) concern = "the local rulers";
+        return concern;
+    }
+
+    /** Gives supplies to an army only when it is physically at the player's settlement. */
+    public CommandResult supplyArmy(long armyId, int grain) {
+        Army army = world.armies.get(armyId);
+        if (army == null || army.state == Army.ArmyState.DISBANDED) {
+            return CommandResult.rejected("INVALID_ARMY", "That army is no longer active");
+        }
+        if (army.currentSettlementId != playerState.currentSettlementId
+                || army.state == Army.ArmyState.TRAVELING) {
+            return CommandResult.rejected("NOT_PRESENT", "The army must be at your current settlement");
+        }
+        if (grain <= 0 || playerState.cargo.getQuantity(GoodType.GRAIN) < grain) {
+            return CommandResult.rejected("NO_GRAIN", "You do not have enough grain in your cargo");
+        }
+        playerState.cargo.remove(GoodType.GRAIN, grain);
+        army.supplies.add(GoodType.GRAIN, grain);
+        playerState.realmReputation.merge(army.realmId, 1, Integer::sum);
+        refreshSnapshot();
+        return new CommandResult(true, "ARMY_SUPPLIED",
+                "The quartermaster accepts " + grain + " grain. Realm reputation increased.");
     }
 
     public CommandResult joinKingdom(long realmId, PlayerCampaignState.KingdomRole role) {

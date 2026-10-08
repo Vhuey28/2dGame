@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
+import world.economy.GoodType;
 import world.politics.Government;
 
 class CampaignSessionTest {
@@ -59,6 +60,55 @@ class CampaignSessionTest {
         assertTrue(session.getSnapshot().player.canManageKingdom);
         assertEquals(Math.min(3, before + 1),
                 session.getSnapshot().findRealm(realm.id).laws.get("TAXATION"));
+    }
+
+    @Test
+    void localPeopleSupportConversationGiftsAndRecruitment() {
+        CampaignSession session = new CampaignSession(12345L);
+        long settlementId = session.getPlayerState().currentSettlementId;
+        Person person = session.getWorld().people.values().stream()
+                .filter(candidate -> candidate.id != session.getPlayerState().personId)
+                .filter(candidate -> candidate.currentSettlementId != null
+                        && candidate.currentSettlementId == settlementId)
+                .filter(candidate -> !candidate.isChild(session.getSnapshot().worldMinute))
+                .filter(candidate -> candidate.type != Person.PersonType.NOBLE
+                        && candidate.type != Person.PersonType.SOLDIER)
+                .filter(candidate -> candidate.travelingPartyId == null)
+                .findFirst().orElseThrow();
+
+        double socialBefore = person.needs.socialBelonging;
+        assertTrue(session.talkToPerson(person.id).accepted);
+        assertTrue(person.needs.socialBelonging >= socialBefore);
+
+        session.getPlayerState().cargo.add(GoodType.GRAIN, 1);
+        double foodBefore = person.needs.foodSecurity;
+        assertTrue(session.giveFoodToPerson(person.id).accepted);
+        assertTrue(person.needs.foodSecurity >= foodBefore);
+        assertEquals(0, session.getPlayerState().cargo.getQuantity(GoodType.GRAIN));
+        assertTrue(session.getSnapshot().player.reputation > 0);
+
+        session.enterLocalScene();
+        assertTrue(session.recruitCompanion(person.id).accepted);
+        session.updateLocalScene(0.1, 1600, 1200);
+        assertTrue(session.getSnapshot().player.partyMemberIds.contains(person.id));
+        assertTrue(session.getLocalActors().stream()
+                .anyMatch(actor -> actor.sourceId == person.id && actor.companion));
+        assertFalse(session.recruitCompanion(person.id).accepted);
+    }
+
+    @Test
+    void playerCanSupplyAnArmyOnlyAtItsCurrentSettlement() {
+        CampaignSession session = new CampaignSession(12345L);
+        Army army = session.getWorld().armies.values().stream()
+                .filter(candidate -> candidate.state != Army.ArmyState.DISBANDED)
+                .findFirst().orElseThrow();
+        assertTrue(session.travelPlayerTo(army.currentSettlementId).accepted);
+        session.getPlayerState().cargo.add(GoodType.GRAIN, 5);
+        int before = army.supplies.getQuantity(GoodType.GRAIN);
+
+        assertTrue(session.supplyArmy(army.id, 5).accepted);
+        assertEquals(before + 5, army.supplies.getQuantity(GoodType.GRAIN));
+        assertEquals(0, session.getPlayerState().cargo.getQuantity(GoodType.GRAIN));
     }
 
     @Test

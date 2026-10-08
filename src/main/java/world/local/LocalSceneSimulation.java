@@ -78,7 +78,11 @@ public final class LocalSceneSimulation {
         for (LocalActor actor : actors) {
             if (actor.kind == LocalActor.ActorKind.PERSON) {
                 Person person = world.people.get(actor.sourceId);
-                if (person != null) actor.activity = person.currentActivity;
+                if (person != null) {
+                    actor.activity = person.currentActivity;
+                    WorldParty playerParty = world.player == null ? null : world.parties.get(world.player.partyId);
+                    actor.companion = playerParty != null && playerParty.memberPersonIds.contains(person.id);
+                }
             }
             double dx = actor.targetX - actor.x;
             double dy = actor.targetY - actor.y;
