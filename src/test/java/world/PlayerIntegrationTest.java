@@ -36,6 +36,10 @@ class PlayerIntegrationTest {
                 .filter(person -> person.id != player.personId && person.alive
                         && person.currentSettlementId != null
                         && person.currentSettlementId == player.currentSettlementId)
+                .filter(person -> !person.isChild(session.getSnapshot().worldMinute)
+                        && person.regimentId == null && person.travelingPartyId == null
+                        && person.type != Person.PersonType.NOBLE
+                        && person.type != Person.PersonType.SOLDIER)
                 .findFirst().orElseThrow();
         assertTrue(session.recruitCompanion(companion.id).accepted);
         assertTrue(party.memberPersonIds.contains(companion.id));
