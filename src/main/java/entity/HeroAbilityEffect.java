@@ -48,7 +48,10 @@ public final class HeroAbilityEffect {
     public static HeroAbilityEffect warriorWave(GamePanel gp, Hero owner) {
         HeroAbilityEffect effect = new HeroAbilityEffect(gp, owner, Type.WARRIOR_WAVE,
                 centerX(gp, owner), centerY(gp, owner), gp.tileSize, 55,
-                load("/effects/fire_effect_sliced_tiles/tiles/group2/r11_c07.png"));
+                load(
+                    "/effects/fire_effect_sliced_tiles/tiles/group2/r05_c07.png",
+                    "/effects/fire_effect_sliced_tiles/tiles/group2/r05_c08.png"
+                     ));
         float[] facing = facingVector(owner.direction);
         effect.velocityX = facing[0] * 11f;
         effect.velocityY = facing[1] * 11f;
@@ -77,7 +80,7 @@ public final class HeroAbilityEffect {
         float sx = selectedTarget == null ? centerX(gp, owner) : selectedTarget.x + gp.tileSize / 2f;
         float sy = selectedTarget == null ? centerY(gp, owner) : selectedTarget.y + gp.tileSize / 2f;
         return new HeroAbilityEffect(gp, owner, Type.MAGE_STORM, sx, sy,
-                gp.tileSize * 3, 300,
+                gp.tileSize * 3, 600,
                 load(
                     "/effects/purple_effect_sliced_tiles/tiles/group4/r08_c14.png",
                     "/effects/purple_effect_sliced_tiles/tiles/group4/r08_c15.png"));

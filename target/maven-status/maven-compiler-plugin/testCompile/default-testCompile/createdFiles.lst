@@ -1,1 +1,14 @@
+world/BattleBridgeTest.class
+world/PlayerIntegrationTest.class
+world/RegionalLocalSimulationTest.class
+world/CampaignSessionTest.class
+world/ScaleUpTest.class
+world/CheatAndContractClarityTest.class
 world/WorldStateValidationTest.class
+world/WarSimulationTest.class
+world/TradeSimulationTest.class
+entity/HeroAbilityResourcesTest.class
+entity/HeroAnimationResourcesTest.class
+world/MilitarySimulationTest.class
+world/PoliticsSimulationTest.class
+world/DiplomacySimulationTest.class

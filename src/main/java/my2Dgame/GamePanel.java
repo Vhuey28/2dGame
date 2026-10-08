@@ -213,6 +213,7 @@ public class GamePanel extends JPanel implements Runnable{
 	// Survival session state
 	public int survivalWaveNumber = 0;
 	public int survivalEnemyCountForWave = 10; // first wave; +15 each wave after
+	public int survivalCurrentEnemyCount = survivalEnemyCountForWave;
 	private static final int MAX_ENEMIES_PER_WAVE =WEB_MODE ? 20 : 9999; // cap to prevent unbounded spawn bursts
 	public boolean survivalWaveTransition = false; // true while power-up menu/portal-wait is showing
 	public boolean survivalPowerUpMenuOpen = false;
@@ -611,6 +612,7 @@ public class GamePanel extends JPanel implements Runnable{
 		menuStage = MenuStage.MODE_SELECT;
 		survivalWaveNumber = 0;
 		survivalEnemyCountForWave = 10;
+		survivalCurrentEnemyCount = survivalEnemyCountForWave;
 		survivalWaveTransition = false;
 		survivalPowerUpMenuOpen = false;
 		survivalPortal = null;
@@ -1057,6 +1059,7 @@ public class GamePanel extends JPanel implements Runnable{
 		private void startSurvivalMode() {
 		survivalWaveNumber = 1;
 		survivalEnemyCountForWave = 10;
+		survivalCurrentEnemyCount = survivalEnemyCountForWave;
 		activePowerUps.clear();
 		setActiveHero(null);
 		heroes.clear();
@@ -4240,7 +4243,6 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 		g2.drawString("Mana", x + 6, y + height - 4);
 
 		y += spacing;
-		g2.drawString("Gold: " + gold, x + 6, y + height - 4);
 		g2.setFont(new Font("SansSerif", Font.PLAIN, 11));
 		if (activeHero != null && activeHero.isActivePlayer) {
 			for (int i = 0; i < activeHero.unlockedAbilities.size() && i < 3; i++) {
@@ -4261,6 +4263,8 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 		g2.setColor(Color.white);
 		g2.drawRoundRect(inventoryButton.x, inventoryButton.y, inventoryButton.width, inventoryButton.height, 10, 10);
 		g2.drawString("Inventory", inventoryButton.x + 12, inventoryButton.y + 20);
+		
+		g2.drawString("Gold: " + gold, x + 6, y + height - 4);
 
 		if (inventoryOpen) {
 			drawInventoryPanel(g2);
@@ -4271,7 +4275,8 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 		g2.setColor(Color.white);
 		g2.drawRoundRect(inventoryButton.x, inventoryButton.y, inventoryButton.width, inventoryButton.height, 10, 10);
 		g2.drawString("Wave: "+survivalWaveNumber, inventoryButton.x + 12, inventoryButton.y + 20);
-			
+		
+		g2.drawString("Wave Enemy Coount: " + survivalEnemyCountForWave, x + 6, y + height - 4);
 		}
 	}
 
@@ -4287,7 +4292,6 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 		g2.setColor(Color.white);
 		g2.drawRoundRect(x, y, width, contentHeight, 12, 12);
 		g2.drawString("Inventory", x + 12, y + 20);
-		g2.drawString("Gold: " + gold, x + 12, y + 40);
 
 		if (player.inventory.isEmpty()) {
 			g2.drawString("(empty)", x + 12, y + 60);

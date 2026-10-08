@@ -17,8 +17,8 @@ import my2Dgame.GamePanel;
  */
 public class Hero extends Entity {
     public enum HeroClass {
-        WARRIOR("Warrior", "Melee tank with high defense", 120, 20, 10, 0),
-        MAGE("Mage", "Ranged spellcaster with high magic damage", 70, 10, 5, 80),
+        WARRIOR("Warrior", "Melee tank with high defense", 120, 100, 20, 70),
+        MAGE("Mage", "Ranged spellcaster with high magic damage", 70, 10, 5, 200),
         ARCHER("Archer", "Ranged physical damage dealer", 80, 15, 8, 20),
         CLERIC("Cleric", "Support with healing and buffs", 90, 12, 6, 50),
         ROGUE("Rogue", "High crit/dodge melee DPS", 75, 18, 15, 10),
@@ -270,12 +270,27 @@ public class Hero extends Entity {
         String[] directions = {"up", "down", "left", "right"};
         String basePath = getAssetFolderForClass();
         String primaryAttack = heroClass == HeroClass.MAGE
-                ? "standard/spellcast/"
+                ? "custom/slash_oversize/"
                 : "standard/slash/";
         String fallbackAttack = heroClass == HeroClass.MAGE
-                ? "standard/slash/"
-                : "custom/slash_oversize/";
+                ?  "custom/slash_oversize/"
+                :"standard/slash/";
 
+        if(heroClass == HeroClass.WARRIOR){          
+            primaryAttack = heroClass == HeroClass.WARRIOR
+                ? "custom/slash_oversize/"
+                : "standard/slash/";
+            fallbackAttack = heroClass == HeroClass.WARRIOR
+                ?  "custom/slash_oversize/"
+                :"standard/slash/";    
+        } else if(heroClass == HeroClass.ADVENTURER){
+            primaryAttack = heroClass == HeroClass.ADVENTURER
+                ? "custom/slash_oversize/"
+                : "standard/slash/";
+            fallbackAttack = heroClass == HeroClass.ADVENTURER
+                ?  "custom/slash_oversize/"
+                :"standard/slash/"; 
+        }
         for (String facing : directions) {
             BufferedImage[] walking = loadSequentialFrames(basePath, "standard/walk/", facing);
             if (walking.length > 0) walkFrames.put(facing, walking);
