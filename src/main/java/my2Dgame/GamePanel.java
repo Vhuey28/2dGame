@@ -303,6 +303,12 @@ public class GamePanel extends JPanel implements Runnable{
 					return;
 				}
 					if (gameStarted && code == KeyEvent.VK_P) {
+						// The death menu and the survival power-up menu are modal: they have to be
+						// answered with a click. Unpausing behind them would hide the menu but leave
+						// the run dead (or waiting on a wave) with no way back.
+						if (deathMenuOpen || survivalPowerUpMenuOpen) {
+							return;
+						}
 						if (settingsMenuOpen) settingsMenuOpen = false;
 						gamePaused = !gamePaused;
 						// if (gameMode == GameMode.CAMPAIGN && campaignSession != null) {
@@ -522,12 +528,17 @@ public class GamePanel extends JPanel implements Runnable{
 					}
 					return; // swallow other clicks while settings screen is open
 				}
-				if (gamePaused && !settingsMenuOpen && pauseResumeButtonRect.contains(e.getPoint())) {
+				// The pause-menu RESUME / SETTINGS buttons only exist on the pause menu itself.
+				// While the power-up menu or the death menu is on screen they are not drawn, so
+				// clicks in those rectangles must not silently resume a run the player died in.
+				boolean pauseMenuVisible = gamePaused && !settingsMenuOpen
+						&& !survivalPowerUpMenuOpen && !deathMenuOpen;
+				if (pauseMenuVisible && pauseResumeButtonRect.contains(point)) {
 					gamePaused = false;
 					repaint();
 					return;
 				}
-				if (gamePaused && !settingsMenuOpen && settingsButtonRect.contains(point)) {
+				if (pauseMenuVisible && settingsButtonRect.contains(point)) {
 					settingsMenuOpen = true;
 					return;
 				}
@@ -544,20 +555,30 @@ public class GamePanel extends JPanel implements Runnable{
 								return;
 							}
 						}
+						// "Quit Survival Mode" only exists on the power-up menu
 						if (getQuitButtonRect().contains(point)) {
 							quitSurvival();
 							return;
 						}
 						return; // never fall through to restart while choosing a power-up
 					}
+					if (deathMenuOpen) {
+						if (getDeathRestartButtonRect().contains(point)) {
+							restartSurvivalRun();
+							return;
+						}
+						if (getDeathMainMenuButtonRect().contains(point)) {
+							quitSurvival();
+							return;
+						}
+						return; // swallow every other click while the death menu is up
+					}
+					if (getRestartButtonRect().contains(point)) {
 						restartGame();
 						return;
 					}
-					if (getQuitButtonRect().contains(point)) {
-						quitSurvival();
-						return;
-					}
-				
+					return;
+				}
 				if (gameMode != GameMode.SURVIVAL && inventoryButton.contains(point)) {
 					inventoryOpen = !inventoryOpen;
 					selectedInventoryIndex = -1;
@@ -606,11 +627,36 @@ public class GamePanel extends JPanel implements Runnable{
 	}
 	
 
+	/** "Quit Survival Mode" button - only ever drawn on the survival power-up menu. */
 	public Rectangle getQuitButtonRect(){
 		return new Rectangle(100, screenHeight - 100, 200, 50);
 	}
 
+	/** "START AGAIN" button inside the death menu panel. */
+	public Rectangle getDeathRestartButtonRect() {
+		return new Rectangle(screenWidth / 2 - 170, screenHeight / 2 - 30, 340, 44);
+	}
+
+	/** "MAIN MENU" button inside the death menu panel. */
+	public Rectangle getDeathMainMenuButtonRect() {
+		return new Rectangle(screenWidth / 2 - 170, screenHeight / 2 + 30, 340, 44);
+	}
+
+	/** Restarts the survival run from wave 1 after a death, keeping the menu choices. */
+	private void restartSurvivalRun() {
+		deathMenuOpen = false;
+		survivalPowerUpMenuOpen = false;
+		settingsMenuOpen = false;
+		gamePaused = false;
+		player.projectiles.clear();
+		player.areas.clear();
+		startSurvivalMode(); // clears death state, refills health and restarts at wave 1
+		repaint();
+	}
+
 	public void quitSurvival(){
+		deathMenuOpen = false;
+		settingsMenuOpen = false;
 		gameMode = GameMode.SANDBOX;
 		gameStarted = false;
 		gamePaused = false;
@@ -633,6 +679,29 @@ public class GamePanel extends JPanel implements Runnable{
 		activePowerUps.clear();
 		setupMap("map1.txt");
 		teleportPlayerForMap("map1.txt");
+		// setActiveHero(null) restores the stored (possibly 0) health, so clear the death
+		// state last - otherwise the next run would start dead and reopen the death menu.
+		clearPlayerDeathState();
+	}
+
+	/** Wipes every trace of a finished death: flags, animation frame and the hero mirror. */
+	private void clearPlayerDeathState() {
+		player.resetDeathState();
+		player.health = player.maxHealth;
+		player.stamina = player.maxStamina;
+		player.mana = player.maxMana;
+		if (activeHero != null) {
+			activeHero.isDying = false;
+			activeHero.resetDeathAnimation();
+			activeHero.health = player.health;
+		}
+		for (Hero hero : heroes) {
+			if (hero != null && hero.health <= 0) {
+				hero.isDying = false;
+				hero.resetDeathAnimation();
+				hero.health = hero.maxHealth;
+			}
+		}
 	}
 	
 	public Rectangle getRestartButtonRect() {
@@ -641,12 +710,15 @@ public class GamePanel extends JPanel implements Runnable{
 
 	public void restartGame() {
 		gold = 100;
+		deathMenuOpen = false;
+		settingsMenuOpen = false;
 		player.health = player.maxHealth;
 		player.stamina = player.maxStamina;
 		player.mana = player.maxMana;
 		player.projectiles.clear();
 		player.areas.clear();
 		player.inventory.clear();
+		player.resetDeathState();
 			gameMode = GameMode.SANDBOX;
 			gameStarted = false;
 			gamePaused = false;
@@ -667,11 +739,10 @@ public class GamePanel extends JPanel implements Runnable{
 		player.health = player.maxHealth;
 		player.stamina = player.maxStamina;
 		player.mana = player.maxMana;
-		player.isDead = false;
-		player.isdeathAnimationStarted = false;
-		player.deathAnimationFrame = 1;
-		player.deathAnimationCounter = 0;
+		player.resetDeathState();
 		if (activeHero != null && activeHero.isActivePlayer) {
+			activeHero.isDying = false;
+			activeHero.resetDeathAnimation();
 			activeHero.health = player.health;
 			activeHero.x = player.x;
 			activeHero.y = player.y;
@@ -863,6 +934,8 @@ public class GamePanel extends JPanel implements Runnable{
 				? null : campaignSnapshot.settlements.get(0).id;
 			currentLayer = GameLayer.WORLD_MAP;
 			gamePaused = false;
+			deathMenuOpen = false;
+			clearPlayerDeathState();
 			setupMap("map1.txt");
 			teleportPlayerForMap("map1.txt");
 		}
@@ -1104,9 +1177,14 @@ public class GamePanel extends JPanel implements Runnable{
 		survivalEnemyCountForWave = 10;
 		survivalCurrentEnemyCount = survivalEnemyCountForWave;
 		activePowerUps.clear();
+		deathMenuOpen = false;
+		survivalPowerUpMenuOpen = false;
 		setActiveHero(null);
 		heroes.clear();
 		recruitedHeroes.clear();
+		// A new run always starts alive: wipe any death state left over from a previous run
+		// (setActiveHero(null) restores a stored health value that may already be 0).
+		clearPlayerDeathState();
 		setupMap("forest.tmx");
 		teleportPlayerForMap("forest.tmx");
 		spawnSelectedSurvivalHero();
@@ -1198,6 +1276,12 @@ public class GamePanel extends JPanel implements Runnable{
 
 	private void onSurvivalWaveCleared() {
 		waveActive = false;
+		// If the player went down on the same frame the wave cleared, the run is over - opening
+		// the power-up menu here would stack on top of the death menu and swallow the click that
+		// is supposed to restart/quit.
+		if (player.isDying()) {
+			return;
+		}
 		survivalWaveTransition = true;
 		rollPowerUpChoices();
 		survivalPowerUpMenuOpen = true;
@@ -1649,6 +1733,15 @@ System.nanoTime();
 	
 	public void update() {
 
+			// A dead player always ends up in front of the death menu, even if the run was paused
+			// for some other reason on the very frame the death animation finished. Without this
+			// the pause gate below would swallow the death and the game would sit there unplayable.
+			if (gameStarted && gameMode == GameMode.SURVIVAL && player.isDead && !deathMenuOpen) {
+				survivalPowerUpMenuOpen = false;
+				settingsMenuOpen = false;
+				gamePaused = true;
+				deathMenuOpen = true;
+			}
 			if (!gameStarted || gamePaused || cheatMenuOpen || campaignContextMenu != CampaignContextMenu.NONE) {
 				return;
 			}
@@ -3424,7 +3517,7 @@ System.nanoTime();
 		g2.setColor(new Color(215, 178, 95));
 		drawCenteredString(g2, "P also resumes", y + 368);
 
-		if (gameMode == GameMode.SURVIVAL) drawQuitSurvivalButton(g2);
+		// NOTE: "Quit Survival Mode" intentionally lives only on the power-up menu.
 	}
 
 	private void drawDeathMenu(Graphics2D g2) {
@@ -3449,8 +3542,8 @@ System.nanoTime();
 		g2.setFont(new Font("SansSerif", Font.PLAIN, 14));
 		drawCenteredString(g2, "Your survival run has ended.", y + 96);
 
-		drawMenuButton(g2, getRestartButtonRect(), "START AGAIN");
-		drawMenuButton(g2, getQuitButtonRect(), "MAIN MENU");
+		drawMenuButton(g2, getDeathRestartButtonRect(), "START AGAIN");
+		drawMenuButton(g2, getDeathMainMenuButtonRect(), "MAIN MENU");
 	}
 
 	// private void drawSettingsMenu(Graphics2D g2) {
@@ -4226,6 +4319,9 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 			player.meleeDamage = storedPlayerMeleeDamage;
 			player.projectileDamage = storedPlayerProjectileDamage;
 		}
+		// Both branches above guarantee at least 1 HP, so a finished/half-finished death
+		// animation must not carry over into the newly controlled character.
+		player.resetDeathState();
 	}
 
 	private void showAdventurerCompanion() {
@@ -4253,6 +4349,11 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 	}
 
 	private void switchActiveHero() {
+		// Dying is not escapable: setActiveHero() always hands back at least 1 HP, so swapping
+		// bodies mid-death-animation would resurrect the player and skip the death menu.
+		if (player.isDying()) {
+			return;
+		}
 		java.util.List<Hero> recruited = new java.util.ArrayList<>();
 		for (Hero h : heroes) if (h.isRecruited && h != adventurerCompanion) recruited.add(h);
 		if (recruited.isEmpty()) { setActiveHero(null); return; }

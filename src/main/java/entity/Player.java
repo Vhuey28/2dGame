@@ -28,9 +28,14 @@ public class Player extends Entity{
 	public int health = maxHealth;
 	// Death animation state
 	public boolean isDead = false;
+	public boolean deathAnimationComplete = false;
 	public int deathAnimationCounter = 0;
 	public int deathAnimationFrame = 1;
 	public boolean isdeathAnimationStarted = false;
+	// Death animation timing/length. Frames are 1-based (index 0 of every array is unused),
+	// so the animation runs 1..deathAnimationMaxFrame and then holds on the last frame.
+	public int deathAnimationSpeed = 6;      // ticks each death frame is held (60fps -> 10 frames/sec)
+	public int deathAnimationMaxFrame = 6;   // last death frame, matches the 6 loaded hurt/death PNGs
 	// Death animation frames - 6 frames per direction (1-based indexing, index 0 unused)
 	public BufferedImage[] deathUp = new BufferedImage[7];    // index 1-6
 	public BufferedImage[] deathDown = new BufferedImage[7];
@@ -56,6 +61,14 @@ public class Player extends Entity{
 	public int abilityDamageBonus = 0;
 	public int abilityDefenseBonus = 0;
 	public int dodgeRange = 24; // base dodge distance (tileSize/2 = 24)
+
+	// ===== PNG draw size (render size only - collision boxes stay tileSize) =====
+	// Tune these to change how big the player's PNG frames are drawn, per animation state.
+	// Same idea as Enemy.draw(): each state gets its own size, and Entity.setSpriteDrawScale()
+	// still multiplies everything at the end.
+	public float idleDrawScale = 1.0f;      // walking/idle: 1x tile = 48px
+	public float attackDrawScale = 1.3f;    // attack animation: slightly larger (swing effect)
+	public float dyingDrawScale = 0.75f;    // death animation: smaller (collapse effect)
 
 	// Attack animation state
 	public boolean isAttacking = false;
@@ -298,6 +311,12 @@ public class Player extends Entity{
 	}
 
 	public void update() {
+		// Death owns the player: once health hits 0 the death animation runs to the end and
+		// nothing else (movement, attacks, abilities, regen) is allowed to interrupt it.
+		if (health <= 0 || isdeathAnimationStarted || isDead) {
+			updateDeathAnimation();
+			return;
+		}
 		if (abilityAuraTicks > 0 && --abilityAuraTicks == 0) {
 			abilityDamageBonus = 0;
 			abilityDefenseBonus = 0;
@@ -378,19 +397,6 @@ public class Player extends Entity{
 			manaRegenTimer = 0;
 		}
 
-		//handle player death
-		if(isdeathAnimationStarted){
-			deathAnimationCounter++;
-			if(deathAnimationCounter > 2){
-				deathAnimationFrame++;
-				deathAnimationCounter = 0;
-				if(deathAnimationFrame >= 6){
-					deathAnimationFrame = 0;
-					isdeathAnimationStarted = false;
-					isDead = true;
-				}
-			}
-		}
 		// handle attacks
 		// Update attack animation independently of cooldown (so it completes fully)
 		if (isAttacking) {
@@ -422,10 +428,6 @@ public class Player extends Entity{
 				performMeleeAttack();
 			}
 		}
-		// if(health <= 0 && !isDead){
-		// 	isdeathAnimationStarted = true;
-		// 	isAttacking = false;
-		// }
 		
 		if (gp.activeHero == null && keyH.num1Pressed && mana >= 15) {
 			mana -= 15;
@@ -533,6 +535,66 @@ public class Player extends Entity{
 
 			if (a.duration <= 0) ait.remove();
 		}
+	}
+
+	/**
+	 * Starts the death animation. Called the first time health drops to 0, so the animation
+	 * plays exactly once instead of restarting every frame.
+	 */
+	public void startDeathAnimation() {
+		if (isdeathAnimationStarted || deathAnimationComplete || isDead) {
+			return;
+		}
+		health = 0;
+		isdeathAnimationStarted = true;
+		deathAnimationComplete = false;
+		deathAnimationCounter = 0;
+		deathAnimationFrame = 1; // frames are 1-based; index 0 is unused
+		// Stop everything the player was doing
+		isAttacking = false;
+		attackAnimationCounter = 0;
+		attackAnimationFrame = 0;
+		spriteNum = 1;
+		spriteCounter = 0;
+		projectiles.clear();
+		areas.clear();
+	}
+
+	/**
+	 * Advances the death animation one tick. Runs to the last frame, holds it, then flags the
+	 * player as dead so GamePanel can open the death menu / respawn.
+	 */
+	public void updateDeathAnimation() {
+		if (health <= 0) {
+			startDeathAnimation();
+		}
+		if (!isdeathAnimationStarted || deathAnimationComplete) {
+			return;
+		}
+		deathAnimationCounter++;
+		if (deathAnimationCounter > deathAnimationSpeed) {
+			deathAnimationCounter = 0;
+			deathAnimationFrame++;
+			if (deathAnimationFrame >= deathAnimationMaxFrame) {
+				// Hold the final frame (never wrap back to 1 - that was the loop bug)
+				deathAnimationFrame = deathAnimationMaxFrame;
+				deathAnimationComplete = true;
+				isdeathAnimationStarted = false;
+				isDead = true;
+			}
+		}
+	}
+
+	/** Clears all death state so the player can be respawned or a new run can start. */
+	public void resetDeathState() {
+		isDead = false;
+		isdeathAnimationStarted = false;
+		deathAnimationComplete = false;
+		deathAnimationCounter = 0;
+		deathAnimationFrame = 1;
+		isAttacking = false;
+		attackAnimationCounter = 0;
+		attackAnimationFrame = 0;
 	}
 
 	/** Fires the controlled Mage's basic attack as a five-projectile fan. */
@@ -644,26 +706,75 @@ public class Player extends Entity{
 	}
 
 	public void draw(Graphics2D g2, int cameraX, int cameraY) {
-		int drawWidth = scaleSpriteDrawWidth(gp.tileSize);
-		int drawHeight = scaleSpriteDrawHeight(gp.tileSize);
+		int[] size = getPlayerDrawSize();
+		int drawWidth = size[0];
+		int drawHeight = size[1];
 		int screenX = (int) x - cameraX + (gp.tileSize - drawWidth) / 2;
 		int screenY = (int) y - cameraY + (gp.tileSize - drawHeight) / 2;
-		BufferedImage image = isAttacking
-				? getAttackFrameForDirection(direction)
-				: getIdleFrameForDirection(direction);
-		if (health <= 0) {
-			isdeathAnimationStarted = true;
-			BufferedImage[] deathFrames = getDeathFramesForDirection(direction);
-			if (deathFrames != null && deathAnimationFrame > 0 && deathAnimationFrame < deathFrames.length) {
-				image = deathFrames[deathAnimationFrame];
-			}
-		 } //else {
-		// 	image = isAttacking ? getAttackFrameForDirection(direction) : getIdleFrameForDirection(direction);
-		// }		
-		if (image == null) image = getIdleFrameForDirection(direction);
+		BufferedImage image = getCurrentAnimationFrame();
 		if (image != null) {
 			g2.drawImage(image, screenX, screenY, drawWidth, drawHeight, null);
 		}
+	}
+
+	/** True from the moment health hits 0 until the death menu / respawn clears it. */
+	public boolean isDying() {
+		return health <= 0 || isdeathAnimationStarted || deathAnimationComplete || isDead;
+	}
+
+	/**
+	 * Works out how large the player's PNG frames are drawn this frame, per animation state -
+	 * the same idea as the per-type / per-state sizing inside Enemy.draw().
+	 * Tweak idleDrawScale / attackDrawScale / dyingDrawScale (or call setSpriteDrawScale) to
+	 * change the rendered size. Collision boxes stay at gp.tileSize regardless.
+	 *
+	 * @return {drawWidth, drawHeight} in pixels, already scaled
+	 */
+	public int[] getPlayerDrawSize() {
+		int drawWidth;
+		int drawHeight;
+		if (isDying()) {
+			// Death animation: make smaller (collapse effect)
+			drawWidth = (int) (gp.tileSize * dyingDrawScale);
+			drawHeight = (int) (gp.tileSize * dyingDrawScale);
+		} else if (isAttacking) {
+			// Attack animation: make slightly larger (swing effect)
+			drawWidth = (int) (gp.tileSize * attackDrawScale);
+			drawHeight = (int) (gp.tileSize * attackDrawScale);
+		} else {
+			// Idle / walk
+			drawWidth = (int) (gp.tileSize * idleDrawScale);
+			drawHeight = (int) (gp.tileSize * idleDrawScale);
+		}
+		drawWidth = scaleSpriteDrawWidth(drawWidth);
+		drawHeight = scaleSpriteDrawHeight(drawHeight);
+		return new int[] { drawWidth, drawHeight };
+	}
+
+	/**
+	 * Picks the PNG frame for the current animation state. Death takes priority, then attack,
+	 * then walk/idle - the same ordering Enemy.getCurrentAnimationFrame() uses.
+	 */
+	private BufferedImage getCurrentAnimationFrame() {
+		if (isDying()) {
+			BufferedImage[] deathFrames = getDeathFramesForDirection(direction);
+			if (deathFrames != null && deathFrames.length > 1) {
+				// Clamp so the last frame is held instead of wrapping back to the start
+				int frame = Math.max(1, Math.min(deathAnimationFrame, deathFrames.length - 1));
+				if (deathFrames[frame] != null) {
+					return deathFrames[frame];
+				}
+			}
+			// No death art for this character - keep drawing the idle sprite instead of nothing
+			return getIdleFrameForDirection(direction);
+		}
+		if (isAttacking) {
+			BufferedImage attackFrame = getAttackFrameForDirection(direction);
+			if (attackFrame != null) {
+				return attackFrame;
+			}
+		}
+		return getIdleFrameForDirection(direction);
 	}
 
 	private BufferedImage getIdleFrameForDirection(String dir) {
@@ -705,18 +816,22 @@ public class Player extends Entity{
 	}
 
 	private BufferedImage getAttackFrameForDirection(String dir) {
-		
+		BufferedImage[] frames;
 		switch (dir) {
-			case "up": return attackUp[attackAnimationFrame];
-			case "down": return attackDown[attackAnimationFrame];
-			case "left": return attackLeft[attackAnimationFrame];
-			case "right": return attackRight[attackAnimationFrame];
-			case "upLeft": return attackUpLeft[attackAnimationFrame];
-			case "upRight": return attackUpRight[attackAnimationFrame];
-			case "downLeft": return attackDownLeft[attackAnimationFrame];
-			case "downRight": return attackDownRight[attackAnimationFrame];
+			case "up": frames = attackUp; break;
+			case "down": frames = attackDown; break;
+			case "left": frames = attackLeft; break;
+			case "right": frames = attackRight; break;
+			case "upLeft": frames = attackUpLeft; break;
+			case "upRight": frames = attackUpRight; break;
+			case "downLeft": frames = attackDownLeft; break;
+			case "downRight": frames = attackDownRight; break;
 			default: return up1;
 		}
+		if (frames == null || frames.length == 0) return null;
+		// Clamp so an out-of-range frame can never throw mid-swing
+		int frame = Math.max(0, Math.min(attackAnimationFrame, frames.length - 1));
+		return frames[frame];
 	}
 
 	private BufferedImage[] getDeathFramesForDirection(String dir){

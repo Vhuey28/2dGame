@@ -360,7 +360,9 @@ public class Enemy extends Entity {
                 copyArrayFrom1(archerDeathUp, archerDeathLeft);
                 copyArrayFrom1(archerDeathUp, archerDeathRight);
                 // Diagonal death frames - horizontal priority only
-                copyArrayFrom1(archerDeathLeft, archerDeathLeft);
+                // (was copyArrayFrom1(archerDeathLeft, archerDeathLeft), which left the
+                // upLeft death frames null, so archers drew as a triangle while dying)
+                copyArrayFrom1(archerDeathLeft, archerDeathUpLeft);
                 copyArrayFrom1(archerDeathRight, archerDeathUpRight);
                 copyArrayFrom1(archerDeathLeft, archerDeathDownLeft);
                 copyArrayFrom1(archerDeathRight, archerDeathDownRight);

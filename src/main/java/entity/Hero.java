@@ -69,9 +69,15 @@ public class Hero extends Entity {
     public Long sourcePersonId;
     private static int nextCharacterId = 1;
     private java.util.Map<String, BufferedImage[]> attackFrames = new java.util.HashMap<>();
+    private java.util.Map<String, BufferedImage[]> deathFrames = new java.util.HashMap<>();
     public boolean isAttacking = false;
     public int attackAnimationCounter = 0;
     public int attackAnimationFrame = 0;
+    // Death animation playback (zero-based, unlike Player's 1-based arrays)
+    public int deathAnimationCounter = 0;
+    public int deathAnimationFrame = 0;
+    public boolean deathAnimationComplete = false;
+    public int deathAnimationSpeed = 6; // ticks each death frame is held
 
     // ===== STATS =====
     public int level = 1;
@@ -126,6 +132,9 @@ public class Hero extends Entity {
     public String direction = "down";
     private float idleDrawScale = 1.0f;
     private float attackDrawScale = 1.8f;
+    private float dyingDrawScale = 0.7f;
+    /** Set once health hits 0: the hero stops acting and is drawn collapsed. */
+    public boolean isDying = false;
 
     // ===== KINGDOM AFFAIRS =====
     public KingdomAffairs kingdomAffairs;
@@ -300,6 +309,14 @@ public class Hero extends Entity {
                 attacking = loadSequentialFrames(basePath, fallbackAttack, facing);
             }
             if (attacking.length > 0) attackFrames.put(facing, attacking);
+
+            // Death plays the shared "hurt" set. Only an "up" folder ships with it, so every
+            // facing falls back to "up" - the same trick Player.getPlayerImage() uses.
+            BufferedImage[] dying = loadSequentialFrames(basePath, "standard/hurt/", facing);
+            if (dying.length == 0) {
+                dying = loadSequentialFrames(basePath, "standard/hurt/", "up");
+            }
+            if (dying.length > 0) deathFrames.put(facing, dying);
         }
 
         portrait = loadOptionalImage(basePath + "portrait.png");
@@ -768,6 +785,18 @@ private String getAssetDirection() {
 
         // ===== UPDATE =====
         public void update() {
+        // A dead hero stops acting entirely - no AI, no regen, no cooldown ticks. Without this
+        // the +1 health regen below kept reviving the hero (and, through GamePanel's two-way
+        // health sync, the player), so the death animation could never finish.
+        if (health <= 0) {
+            isDying = true;
+            isAttacking = false;
+            attackAnimationFrame = 0;
+            attackAnimationCounter = 0;
+            updateDeathAnimation();
+            return;
+        }
+        isDying = false;
         if (abilityAuraTicks > 0 && --abilityAuraTicks == 0) {
             abilityDamageBonus = 0;
             abilityDefenseBonus = 0;
@@ -792,7 +821,12 @@ private String getAssetDirection() {
         }
 
         mana = Math.min(maxMana, mana + manaRegen);
-        health = Math.min(maxHealth, health + 1);
+        // The active hero's health is owned by the Player proxy (GamePanel syncs it both ways
+        // every frame), so regenerating it here would heal the player 1 HP per frame and make
+        // them effectively unkillable. Only autonomous companions regenerate.
+        if (!isActivePlayer) {
+            health = Math.min(maxHealth, health + 1);
+        }
 
         for (Ability a : abilities) {
             if (a.cooldown > 0) a.cooldown--;
@@ -800,6 +834,103 @@ private String getAssetDirection() {
 
         interactionArea.setBounds((int) x - gp.tileSize, (int) y - gp.tileSize, gp.tileSize * 3, gp.tileSize * 3);
     }
+    /**
+     * Advances the death animation one tick. Plays straight through to the last hurt frame and
+     * then holds it - it never wraps back to frame 0, which is what made the player's death
+     * animation loop forever.
+     */
+    public void updateDeathAnimation() {
+        if (deathAnimationComplete) {
+            return;
+        }
+        BufferedImage[] frames = deathFrames.get(getAssetDirection());
+        int lastFrame = frames == null ? 0 : frames.length - 1;
+        deathAnimationCounter++;
+        if (deathAnimationCounter > deathAnimationSpeed) {
+            deathAnimationCounter = 0;
+            if (deathAnimationFrame >= lastFrame) {
+                deathAnimationFrame = lastFrame;
+                deathAnimationComplete = true;
+            } else {
+                deathAnimationFrame++;
+            }
+        }
+    }
+
+    /** Clears death playback so a revived/respawned hero starts from a clean slate. */
+    public void resetDeathAnimation() {
+        deathAnimationCounter = 0;
+        deathAnimationFrame = 0;
+        deathAnimationComplete = false;
+    }
+
+    /** True while this hero is down (health 0) and playing/held on its death frames. */
+    public boolean isDown() {
+        return isDying || health <= 0;
+    }
+
+    /**
+     * Works out how large this hero's PNG frames are drawn this frame, per animation state -
+     * the same idea as the per-type / per-state sizing inside Enemy.draw().
+     * Change the size by calling setIdleDrawScale / setAttackDrawScale / setDyingDrawScale
+     * (multiples of gp.tileSize), or setSpriteDrawScale for an overall multiplier. Collision
+     * and interaction boxes are untouched - this only affects the drawn sprite.
+     *
+     * @return {drawWidth, drawHeight} in pixels, already scaled
+     */
+    public int[] getHeroDrawSize() {
+        float stateScale;
+        if (isDown()) {
+            // Death animation: make smaller (collapse effect)
+            stateScale = dyingDrawScale;
+        } else if (isAttacking) {
+            // Attack animation: make larger (swing / cast effect)
+            stateScale = attackDrawScale;
+        } else {
+            // Idle / walk
+            stateScale = idleDrawScale;
+        }
+        int baseDrawSize = (int) (gp.tileSize * stateScale);
+        return new int[] { scaleSpriteDrawWidth(baseDrawSize), scaleSpriteDrawHeight(baseDrawSize) };
+    }
+
+    /** Drawn size of idle/walk frames, as a multiple of gp.tileSize. */
+    public void setIdleDrawScale(float scale) {
+        idleDrawScale = validatedScale(scale);
+    }
+
+    /** Drawn size of attack frames, as a multiple of gp.tileSize. */
+    public void setAttackDrawScale(float scale) {
+        attackDrawScale = validatedScale(scale);
+    }
+
+    /** Drawn size of the death/collapse frames, as a multiple of gp.tileSize. */
+    public void setDyingDrawScale(float scale) {
+        dyingDrawScale = validatedScale(scale);
+    }
+
+    /** Sets idle, attack and death draw sizes in one call. */
+    public void setHeroDrawScales(float idleScale, float attackScale, float dyingScale) {
+        setIdleDrawScale(idleScale);
+        setAttackDrawScale(attackScale);
+        setDyingDrawScale(dyingScale);
+    }
+
+    public float getIdleDrawScale() {
+        return idleDrawScale;
+    }
+
+    public float getDyingDrawScale() {
+        return dyingDrawScale;
+    }
+
+    private float validatedScale(float scale) {
+        if (scale <= 0f || Float.isNaN(scale) || Float.isInfinite(scale)) {
+            throw new IllegalArgumentException("Hero draw scales must be finite and greater than zero");
+        }
+        return scale;
+    }
+
     private void updatePlayerControls() {
         // Movement handled by KeyHandler in GamePanel
     }
@@ -881,9 +1012,9 @@ private String getAssetDirection() {
     }
 
     public void draw(Graphics2D g2, int cameraX, int cameraY) {
-        int baseDrawSize = (int) (gp.tileSize * (isAttacking ? attackDrawScale : idleDrawScale));
-        int drawWidth = scaleSpriteDrawWidth(baseDrawSize);
-        int drawHeight = scaleSpriteDrawHeight(baseDrawSize);
+        int[] size = getHeroDrawSize();
+        int drawWidth = size[0];
+        int drawHeight = size[1];
 
         // Center the larger attack sprite on the hero's actual tile position, same technique as Enemy.draw()
         int screenX = (int) (x - cameraX) + (gp.tileSize - drawWidth) / 2;
@@ -917,6 +1048,20 @@ private String getAssetDirection() {
     }
     private BufferedImage getCurrentSpriteFrame() {
         String facing = getAssetDirection();
+        // Death takes priority, then attack, then walk - same ordering as Enemy/Player
+        if (isDown()) {
+            BufferedImage[] dying = deathFrames.get(facing);
+            if (dying == null || dying.length == 0) {
+                dying = deathFrames.get("up");
+            }
+            if (dying != null && dying.length > 0) {
+                int frame = Math.max(0, Math.min(deathAnimationFrame, dying.length - 1));
+                if (dying[frame] != null) {
+                    return dying[frame];
+                }
+            }
+            // No death art for this class - fall through to the walk frames instead of vanishing
+        }
         if (isAttacking) {
             BufferedImage[] frames = attackFrames.get(facing);
             if (frames != null && frames.length > 0) {
