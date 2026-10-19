@@ -26,6 +26,22 @@ public class Player extends Entity{
 
 	public int maxHealth = 100;
 	public int health = maxHealth;
+	// Death animation state
+	public boolean isDead = false;
+	public int deathAnimationCounter = 0;
+	public int deathAnimationFrame = 1;
+	public boolean isdeathAnimationStarted = false;
+	// Death animation frames - 6 frames per direction (1-based indexing, index 0 unused)
+	public BufferedImage[] deathUp = new BufferedImage[7];    // index 1-6
+	public BufferedImage[] deathDown = new BufferedImage[7];
+	public BufferedImage[] deathLeft = new BufferedImage[7];
+	public BufferedImage[] deathRight = new BufferedImage[7];
+	public BufferedImage[] deathUpLeft = new BufferedImage[7];
+	public BufferedImage[] deathUpRight = new BufferedImage[7];
+	public BufferedImage[] deathDownLeft = new BufferedImage[7];
+	public BufferedImage[] deathDownRight = new BufferedImage[7];
+	// Reference to which hurt set to use (loaded per hero class)
+	public String currentDeathAssetFolder = "sword_animations"; // default: adventurer
 	public int maxStamina = 100;
 	public int stamina = maxStamina;
 	public int maxMana = 100;
@@ -189,6 +205,22 @@ public class Player extends Entity{
 					System.out.println("heals[" + i + "] = " + (heals[i] != null ? "loaded" : "NULL - check this path"));
 				}
 
+			// Determine which hurt folder to load based on hero class
+			if (gp.activeHero != null) {
+				switch (gp.activeHero.heroClass) {
+					case MAGE:
+						currentDeathAssetFolder = "triss";
+						break;
+					case WARRIOR:
+						currentDeathAssetFolder = "vince";
+						break;
+					default:
+						currentDeathAssetFolder = "sword_animations";
+				}
+			} else {
+				currentDeathAssetFolder = "sword_animations"; // fallback
+			}
+
 			// Load attack animations (8 frames per direction)
 			// Attack up
 			 attackUp[0] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/1.png"));
@@ -219,6 +251,33 @@ public class Player extends Entity{
       		attackRight[3] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/4.png"));
       		attackRight[4] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/5.png"));
       		attackRight[5] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/6.png"));
+			//death up 
+			for (int i = 1; i <= 6; i++) {
+                deathUp[i] = ImageIO.read(
+                    getClass().getResourceAsStream("/player/"+currentDeathAssetFolder+"/standard/hurt/up/" + i + ".png"));
+            }
+			//death down
+			for (int i = 1; i <= 6; i++) {
+                deathDown[i] = ImageIO.read(
+                    getClass().getResourceAsStream("/player/"+currentDeathAssetFolder+"/standard/hurt/up/" + i + ".png"));
+            }
+			//death left
+			for (int i = 1; i <= 6; i++) {
+                deathLeft[i] = ImageIO.read(
+                    getClass().getResourceAsStream("/player/"+currentDeathAssetFolder+"/standard/hurt/up/" + i + ".png"));
+            }
+			//death right
+			for (int i = 1; i <= 6; i++) {
+                deathRight[i] = ImageIO.read(
+                    getClass().getResourceAsStream("/player/"+currentDeathAssetFolder+"/standard/hurt/up/" + i + ".png"));
+            }
+            copyArray(deathUp, deathDown);
+            copyArray(deathUp, deathLeft);
+            copyArray(deathUp, deathRight);
+            copyArray(deathUp, deathUpLeft);
+            copyArray(deathUp, deathUpRight);
+            copyArray(deathUp, deathDownLeft);
+            copyArray(deathUp, deathDownRight);
 			
 			// Diagonal attack frames - horizontal priority only (single copy, no overwrites)
 			copyArray(attackLeft, attackUpLeft);
@@ -319,6 +378,19 @@ public class Player extends Entity{
 			manaRegenTimer = 0;
 		}
 
+		//handle player death
+		if(isdeathAnimationStarted){
+			deathAnimationCounter++;
+			if(deathAnimationCounter > 2){
+				deathAnimationFrame++;
+				deathAnimationCounter = 0;
+				if(deathAnimationFrame >= 6){
+					deathAnimationFrame = 0;
+					isdeathAnimationStarted = false;
+					isDead = true;
+				}
+			}
+		}
 		// handle attacks
 		// Update attack animation independently of cooldown (so it completes fully)
 		if (isAttacking) {
@@ -350,6 +422,10 @@ public class Player extends Entity{
 				performMeleeAttack();
 			}
 		}
+		// if(health <= 0 && !isDead){
+		// 	isdeathAnimationStarted = true;
+		// 	isAttacking = false;
+		// }
 		
 		if (gp.activeHero == null && keyH.num1Pressed && mana >= 15) {
 			mana -= 15;
@@ -575,6 +651,15 @@ public class Player extends Entity{
 		BufferedImage image = isAttacking
 				? getAttackFrameForDirection(direction)
 				: getIdleFrameForDirection(direction);
+		if (health <= 0) {
+			isdeathAnimationStarted = true;
+			BufferedImage[] deathFrames = getDeathFramesForDirection(direction);
+			if (deathFrames != null && deathAnimationFrame > 0 && deathAnimationFrame < deathFrames.length) {
+				image = deathFrames[deathAnimationFrame];
+			}
+		 } //else {
+		// 	image = isAttacking ? getAttackFrameForDirection(direction) : getIdleFrameForDirection(direction);
+		// }		
 		if (image == null) image = getIdleFrameForDirection(direction);
 		if (image != null) {
 			g2.drawImage(image, screenX, screenY, drawWidth, drawHeight, null);
@@ -633,5 +718,19 @@ public class Player extends Entity{
 			default: return up1;
 		}
 	}
+
+	private BufferedImage[] getDeathFramesForDirection(String dir){
+        switch (dir) {
+            case "up": return deathUp;
+            case "down": return deathDown;
+            case "left": return deathLeft;
+            case "right": return deathRight;
+            case "upLeft": return deathUpLeft;
+            case "upRight": return deathUpRight;
+            case "downLeft": return deathDownLeft;
+            case "downRight": return deathDownRight;
+            default: return deathDown;
+        }
+    }
 
 }

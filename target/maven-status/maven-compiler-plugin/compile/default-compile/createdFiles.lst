@@ -192,6 +192,7 @@ world/politics/PoliticalFaction$FactionGoal.class
 world/geography/District.class
 world/military/PeaceOffer$TermType.class
 my2Dgame/KeyHandler.class
+entity/Player$1.class
 world/politics/Title$Rank.class
 world/geography/WorldSpatialIndex.class
 kingdom/Character$Trait.class

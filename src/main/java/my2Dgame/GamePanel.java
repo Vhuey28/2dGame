@@ -196,9 +196,11 @@ public class GamePanel extends JPanel implements Runnable{
 	String crashError = null;
 	// Settings menu
 	boolean settingsMenuOpen = false;
+	boolean deathMenuOpen = false;
 	private BindingManager.Action awaitingRebindAction = null;
 	private boolean awaitingRebindIsController = false;
-	private Rectangle settingsButtonRect = new Rectangle(screenWidth/2 - 80, screenHeight/2 + 40, 160, 36);
+	private Rectangle pauseResumeButtonRect = new Rectangle(screenWidth/2 - 170, screenHeight/2 - 45, 340, 44);
+	private Rectangle settingsButtonRect = new Rectangle(screenWidth/2 - 170, screenHeight/2 + 10, 340, 44);
 	private Rectangle[][] settingsRowRects;
 	
 		// Game mode state
@@ -231,14 +233,14 @@ public class GamePanel extends JPanel implements Runnable{
 	private final String[] survivalMapPool = {"map1.txt", "mapA.txt", "forest.tmx", "home.txt"}; // extend as you add maps
 
 		// Menu button rects (only used before gameStarted)
-		private Rectangle sandboxModeButton = new Rectangle(screenWidth/2 - 240, screenHeight/2, 140, 44);
-		private Rectangle campaignModeButton = new Rectangle(screenWidth/2 - 70, screenHeight/2, 140, 44);
-		private Rectangle survivalModeButton = new Rectangle(screenWidth/2 + 100, screenHeight/2, 140, 44);
-	private Rectangle allyYesButton = new Rectangle(screenWidth/2 - 160, screenHeight/2, 140, 44);
-	private Rectangle allyNoButton = new Rectangle(screenWidth/2 + 20, screenHeight/2, 140, 44);
-	private Rectangle allyMeleeButton = new Rectangle(screenWidth/2 - 220, screenHeight/2, 130, 44);
-	private Rectangle allyArcherButton = new Rectangle(screenWidth/2 - 65, screenHeight/2, 130, 44);
-	private Rectangle allyBothButton = new Rectangle(screenWidth/2 + 90, screenHeight/2, 130, 44);
+	private Rectangle sandboxModeButton = new Rectangle(34, 270, 220, 58);
+	private Rectangle survivalModeButton = new Rectangle(274, 270, 220, 58);
+	private Rectangle campaignModeButton = new Rectangle(514, 270, 220, 58);
+	private Rectangle allyYesButton = new Rectangle(screenWidth/2 - 190, 270, 175, 54);
+	private Rectangle allyNoButton = new Rectangle(screenWidth/2 + 15, 270, 175, 54);
+	private Rectangle allyMeleeButton = new Rectangle(screenWidth/2 - 225, 270, 140, 54);
+	private Rectangle allyArcherButton = new Rectangle(screenWidth/2 - 70, 270, 140, 54);
+	private Rectangle allyBothButton = new Rectangle(screenWidth/2 + 85, 270, 140, 54);
 	private Rectangle[] survivalHeroButtons = {
 		new Rectangle(54, screenHeight/2 - 5, 125, 48),
 		new Rectangle(188, screenHeight/2 - 5, 125, 48),
@@ -301,11 +303,12 @@ public class GamePanel extends JPanel implements Runnable{
 					return;
 				}
 					if (gameStarted && code == KeyEvent.VK_P) {
+						if (settingsMenuOpen) settingsMenuOpen = false;
 						gamePaused = !gamePaused;
-						if (gameMode == GameMode.CAMPAIGN && campaignSession != null) {
-							campaignSession.setWorldPaused(gamePaused);
-							campaignSnapshot = campaignSession.getSnapshot();
-						}
+						// if (gameMode == GameMode.CAMPAIGN && campaignSession != null) {
+						// 	campaignSession.setWorldPaused(gamePaused);
+						// 	campaignSnapshot = campaignSession.getSnapshot();
+						// }
 						repaint();
 					}
 					if (gameStarted && gameMode == GameMode.CAMPAIGN) {
@@ -519,6 +522,11 @@ public class GamePanel extends JPanel implements Runnable{
 					}
 					return; // swallow other clicks while settings screen is open
 				}
+				if (gamePaused && !settingsMenuOpen && pauseResumeButtonRect.contains(e.getPoint())) {
+					gamePaused = false;
+					repaint();
+					return;
+				}
 				if (gamePaused && !settingsMenuOpen && settingsButtonRect.contains(point)) {
 					settingsMenuOpen = true;
 					return;
@@ -542,7 +550,6 @@ public class GamePanel extends JPanel implements Runnable{
 						}
 						return; // never fall through to restart while choosing a power-up
 					}
-					if (getRestartButtonRect().contains(point)) {
 						restartGame();
 						return;
 					}
@@ -550,7 +557,7 @@ public class GamePanel extends JPanel implements Runnable{
 						quitSurvival();
 						return;
 					}
-				}
+				
 				if (gameMode != GameMode.SURVIVAL && inventoryButton.contains(point)) {
 					inventoryOpen = !inventoryOpen;
 					selectedInventoryIndex = -1;
@@ -561,15 +568,14 @@ public class GamePanel extends JPanel implements Runnable{
 					handleInventoryClick(point);
 				}
 			}
-			@Override
-    		public void mouseWheelMoved(java.awt.event.MouseWheelEvent e) {
+			@Override public void mouseWheelMoved(java.awt.event.MouseWheelEvent e) {
         		if (miniMapVisible) {
            		 // scrolling up (negative rotation) zooms in
             	adjustMinimapZoom(-e.getWheelRotation() * 0.2f);
         		}
    			 }
-			
 		});
+	
 		this.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
 			@Override public void mouseMoved(MouseEvent e) {
 				campaignMousePoint = toGamePoint(e.getPoint());
@@ -630,15 +636,7 @@ public class GamePanel extends JPanel implements Runnable{
 	}
 	
 	public Rectangle getRestartButtonRect() {
-		int width = 450;
-		int height = 240;
-		int x = (screenWidth - width) / 2;
-		int y = (screenHeight - height) / 2;
-		int btnW = 160;
-		int btnH = 36;
-		int btnX = x + (width - btnW) / 2;
-		int btnY = y + 115;
-		return new Rectangle(btnX, btnY, btnW, btnH);
+		return new Rectangle(screenWidth / 2 - 170, screenHeight / 2 + 65, 340, 44);
 	}
 
 	public void restartGame() {
@@ -662,6 +660,30 @@ public class GamePanel extends JPanel implements Runnable{
 		waveActive = false;
 		waveMessageTimer = 0;
 		repaint();
+	}
+
+	/** Respawn the player with full health at a safe spot on the current map, clearing death state. */
+	private void respawnPlayer() {
+		player.health = player.maxHealth;
+		player.stamina = player.maxStamina;
+		player.mana = player.maxMana;
+		player.isDead = false;
+		player.isdeathAnimationStarted = false;
+		player.deathAnimationFrame = 1;
+		player.deathAnimationCounter = 0;
+		if (activeHero != null && activeHero.isActivePlayer) {
+			activeHero.health = player.health;
+			activeHero.x = player.x;
+			activeHero.y = player.y;
+		}
+		// Move to an open spawn space near current position
+		java.awt.Point openPt = findOpenSpawnSpace((int) player.x, (int) player.y, player);
+		player.x = openPt.x;
+		player.y = openPt.y;
+		if (activeHero != null && activeHero.isActivePlayer) {
+			activeHero.x = player.x;
+			activeHero.y = player.y;
+		}
 	}
 
 	private void syncPlayerPartyFromTroops() {
@@ -1701,6 +1723,28 @@ System.nanoTime();
 			update();
 		}
 		player.update();
+
+		// Handle player death according to game mode
+		if (player.isDead && !deathMenuOpen && !gamePaused) {
+			switch (gameMode) {
+				case SURVIVAL:
+					gamePaused = true;
+					survivalPowerUpMenuOpen = false;
+					settingsMenuOpen = false;
+					deathMenuOpen = true;
+					break;
+				case CAMPAIGN:
+					// Return player to world view to continue playing
+					currentLayer = GameLayer.WORLD_MAP;
+					respawnPlayer();
+					break;
+				case SANDBOX:
+					// Respawn the player
+					respawnPlayer();
+					break;
+			}
+		}
+
 		if (activeHero != null && activeHero.isActivePlayer) {
 			activeHero.x = player.x;
 			activeHero.y = player.y;
@@ -2216,6 +2260,8 @@ System.nanoTime();
 				drawPowerUpMenu(g2);
 			}else if (settingsMenuOpen) {
 				drawSettingsMenu(g2);
+			} else if (deathMenuOpen) {
+				drawDeathMenu(g2);
 			} else {
 				drawPauseMenu(g2);
 			}
@@ -3231,35 +3277,48 @@ System.nanoTime();
 		}
 
 		private void drawStartMenu(Graphics2D g2) {
-		g2.setColor(Color.black);
+		g2.setPaint(new java.awt.GradientPaint(0, 0, new Color(8, 18, 29),
+				screenWidth, screenHeight, new Color(35, 22, 18)));
 		g2.fillRect(0, 0, screenWidth, screenHeight);
-		g2.setColor(Color.white);
-		g2.setFont(new Font("Arial", Font.BOLD, 40));
-		String title = "Chronicle Conquest Beta";
-		int titleWidth = g2.getFontMetrics().stringWidth(title);
-		g2.drawString(title, (screenWidth - titleWidth) / 2, screenHeight / 3);
+		// Subtle horizon and frame keep the screen readable without requiring menu art.
+		g2.setColor(new Color(211, 164, 72, 24));
+		for (int i = 0; i < 5; i++) g2.drawOval(screenWidth / 2 - 260 - i * 18, 80 - i * 8, 520 + i * 36, 320 + i * 16);
+		g2.setColor(new Color(225, 190, 105));
+		g2.setFont(new Font("Serif", Font.BOLD, 44));
+		drawCenteredString(g2, "CHRONICLE CONQUEST", 86);
+		g2.setColor(new Color(185, 195, 202));
+		g2.setFont(new Font("SansSerif", Font.PLAIN, 13));
 
-		g2.setFont(new Font("Arial", Font.PLAIN, 20));
+		g2.setColor(new Color(7, 12, 18, 215));
+		g2.fillRoundRect(118, 145, screenWidth - 236, 245, 18, 18);
+		g2.setColor(new Color(112, 91, 60));
+		g2.setFont(new Font("SansSerif", Font.PLAIN, 18));
 
 		switch (menuStage) {
 			case MODE_SELECT:
-				drawMenuPrompt(g2, "Choose a game mode");
-				drawMenuButton(g2, sandboxModeButton, "Sandbox");
-				drawMenuButton(g2, campaignModeButton, "Campaign");
-				drawMenuButton(g2, survivalModeButton, "Survival");
+				drawMenuPrompt(g2, "Choose your experience");
+				drawMenuButton(g2, sandboxModeButton, "SANDBOX");
+				drawMenuButton(g2, survivalModeButton, "SURVIVAL");
+				drawMenuButton(g2, campaignModeButton, "CAMPAIGN");
+				g2.setColor(new Color(170, 178, 184));
+				g2.setFont(new Font("SansSerif", Font.PLAIN, 11));
+				drawCenteredAt(g2, "Explore, recruit, and fight", sandboxModeButton.x + sandboxModeButton.width / 2, 347);
+				drawCenteredAt(g2, "Fight endles waves of ennemies", survivalModeButton.x + survivalModeButton.width / 2, 347);
+				drawCenteredAt(g2, "Create your own legend", campaignModeButton.x + campaignModeButton.width / 2, 347);
+
 				break;
 			case ALLY_YES_NO:
-				drawMenuPrompt(g2, "Start with allies?");
-				drawMenuButton(g2, allyYesButton, "Yes");
-				drawMenuButton(g2, allyNoButton, "No");
-				drawMenuButton(g2, backButton, "< Back");
+				drawMenuPrompt(g2, "Begin survival with allied troops?");
+				drawMenuButton(g2, allyYesButton, "BRING ALLIES");
+				drawMenuButton(g2, allyNoButton, "FIGHT ALONE");
+				drawMenuButton(g2, backButton, "BACK");
 				break;
 			case ALLY_TYPE:
-				drawMenuPrompt(g2, "Choose ally type");
-				drawMenuButton(g2, allyMeleeButton, "Melee Only");
-				drawMenuButton(g2, allyArcherButton, "Archer Only");
-				drawMenuButton(g2, allyBothButton, "Both");
-				drawMenuButton(g2, backButton, "< Back");
+				drawMenuPrompt(g2, "Choose your starting formation");
+				drawMenuButton(g2, allyMeleeButton, "MELEE");
+				drawMenuButton(g2, allyArcherButton, "ARCHERS");
+				drawMenuButton(g2, allyBothButton, "BALANCED");
+				drawMenuButton(g2, backButton, "BACK");
 				break;
 			case HERO_CHOICE:
 				drawMenuPrompt(g2, "Choose a playable hero or companion");
@@ -3277,81 +3336,121 @@ System.nanoTime();
 					String heroLabel = "Hero: " + survivalHeroChoice.toString().replace('_', ' ');
 					g2.drawString(heroLabel, (screenWidth - g2.getFontMetrics().stringWidth(heroLabel)) / 2, screenHeight / 2 - 5);
 				}
-				String prompt = "Press ENTER to start";
-				int promptWidth = g2.getFontMetrics().stringWidth(prompt);
-				g2.drawString(prompt, (screenWidth - promptWidth) / 2,
-					gameMode == GameMode.SURVIVAL ? screenHeight / 2 + 25 : screenHeight / 2);
+				g2.setColor(new Color(225, 190, 105));
+				g2.setFont(new Font("Serif", Font.BOLD, 25));
+				drawCenteredString(g2, gameMode == GameMode.SURVIVAL ? "SURVIVAL READY" : "SANDBOX READY", 230);
+				g2.setColor(Color.WHITE);
+				g2.setFont(new Font("SansSerif", Font.BOLD, 18));
+				drawCenteredString(g2, "Press ENTER to begin", 292);
+				g2.setColor(new Color(160, 170, 178));
+				g2.setFont(new Font("SansSerif", Font.PLAIN, 12));
+				drawCenteredString(g2, "Your choices are set. The world is waiting.", 322);
 				break;
 		}
 
-		String controls1 = "WASD to move";
-		String controls2 = "P to pause / resume";
-		String controls3 = "Click Inventory to open";
-		int controlsY = screenHeight / 2 + 90;
-		g2.drawString(controls1, (screenWidth - g2.getFontMetrics().stringWidth(controls1)) / 2, controlsY);
-		g2.drawString(controls2, (screenWidth - g2.getFontMetrics().stringWidth(controls2)) / 2, controlsY + 26);
+		g2.setColor(new Color(12, 18, 24, 210));
+		g2.fillRoundRect(120, 420, screenWidth - 240, 92, 14, 14);
+		g2.setFont(new Font("Monospaced", Font.PLAIN, 12));
+		g2.setColor(new Color(210, 216, 220));
+		drawCenteredString(g2, "WASD  Move     SPACE  Attack     1/2/3  Abilities     E  Dodge", 451);
+		drawCenteredString(g2, "F  Interact     Q  Switch Hero     P  Pause     F3  Debug", 480);
+		g2.setColor(new Color(125, 135, 145));
+		g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
+		drawCenteredString(g2, "BETA BUILD", 548);
 	}
 
 	private void drawMenuPrompt(Graphics2D g2, String text) {
-		int w = g2.getFontMetrics().stringWidth(text);
-		g2.drawString(text, (screenWidth - w) / 2, screenHeight / 2 - 40);
+		g2.setColor(new Color(232, 232, 224));
+		g2.setFont(new Font("Serif", Font.BOLD, 23));
+		drawCenteredString(g2, text, 215);
 	}
 
 	private void drawMenuButton(Graphics2D g2, Rectangle btn, String label) {
-		g2.setColor(new Color(64, 64, 64, 220));
+		g2.setColor(new Color(0, 0, 0, 90));
+		g2.fillRoundRect(btn.x + 3, btn.y + 4, btn.width, btn.height, 10, 10);
+		g2.setPaint(new java.awt.GradientPaint(btn.x, btn.y, new Color(70, 83, 94),
+				btn.x, btn.y + btn.height, new Color(39, 48, 57)));
 		g2.fillRoundRect(btn.x, btn.y, btn.width, btn.height, 10, 10);
-		g2.setColor(Color.white);
+		g2.setColor(new Color(205, 170, 92));
 		g2.drawRoundRect(btn.x, btn.y, btn.width, btn.height, 10, 10);
+		g2.setColor(Color.WHITE);
+		g2.setFont(new Font("SansSerif", Font.BOLD, btn.height < 45 ? 12 : 14));
 		int textW = g2.getFontMetrics().stringWidth(label);
-		g2.drawString(label, btn.x + (btn.width - textW) / 2, btn.y + 28);
+		int baseline = btn.y + (btn.height - g2.getFontMetrics().getHeight()) / 2 + g2.getFontMetrics().getAscent();
+		g2.drawString(label, btn.x + (btn.width - textW) / 2, baseline);
+	}
+
+	private void drawCenteredString(Graphics2D g2, String text, int y) {
+		drawCenteredAt(g2, text, screenWidth / 2, y);
+	}
+
+	private void drawCenteredAt(Graphics2D g2, String text, int centerX, int y) {
+		g2.drawString(text, centerX - g2.getFontMetrics().stringWidth(text) / 2, y);
 	}
 
 	private void drawPauseMenu(Graphics2D g2) {
-		int width = 450;
-		int height = 240;
+		int width = 480;
+		int height = 410;
 		int x = (screenWidth - width) / 2;
 		int y = (screenHeight - height) / 2;
-		g2.setColor(new Color(0, 0, 0, 180));
+		g2.setColor(new Color(2, 5, 8, 205));
 		g2.fillRect(0, 0, screenWidth, screenHeight);
-		g2.setColor(new Color(32, 32, 32, 220));
+		g2.setPaint(new java.awt.GradientPaint(x, y, new Color(31, 43, 53, 248),
+				x + width, y + height, new Color(18, 24, 31, 248)));
 		g2.fillRoundRect(x, y, width, height, 20, 20);
-		g2.setColor(Color.white);
-		g2.setFont(new Font("Arial", Font.BOLD, 36));
-		String text = "Game Paused";
-		int textWidth = g2.getFontMetrics().stringWidth(text);
-		g2.drawString(text, x + (width - textWidth) / 2, y + 50);
-		g2.setFont(new Font("Arial", Font.PLAIN, 18));
-		String resume = "Press P to resume";
-		int resumeWidth = g2.getFontMetrics().stringWidth(resume);
-		g2.drawString(resume, x + (width - resumeWidth) / 2, y + 90);
+		g2.setColor(new Color(207, 169, 89));
+		g2.setStroke(new BasicStroke(2f));
+		g2.drawRoundRect(x, y, width, height, 20, 20);
+		g2.setStroke(new BasicStroke(1f));
 
-		// Draw Restart Button
-		Rectangle btn = getRestartButtonRect();
-		g2.setColor(new Color(180, 50, 50, 255));
-		g2.fillRoundRect(btn.x, btn.y, btn.width, btn.height, 10, 10);
-		g2.setColor(Color.white);
-		g2.drawRoundRect(btn.x, btn.y, btn.width, btn.height, 10, 10);
-		g2.setFont(new Font("Arial", Font.BOLD, 18));
-		String btnText = "Restart Game";
-		int btnTextW = g2.getFontMetrics().stringWidth(btnText);
-		g2.drawString(btnText, btn.x + (btn.width - btnTextW) / 2, btn.y + 24);
+		g2.setColor(new Color(230, 205, 145));
+		g2.setFont(new Font("Serif", Font.BOLD, 34));
+		drawCenteredString(g2, "GAME PAUSED", y + 52);
+		g2.setColor(new Color(170, 180, 188));
+		g2.setFont(new Font("SansSerif", Font.PLAIN, 12));
+		drawCenteredString(g2, gameMode == GameMode.SURVIVAL
+				? "The current survival run is safely suspended"
+				: "The world is waiting for your return", y + 78);
 
-		// Draw Settings Button
-		g2.setColor(new Color(64, 64, 64, 220));
-		g2.fillRoundRect(settingsButtonRect.x, settingsButtonRect.y, settingsButtonRect.width, settingsButtonRect.height, 10, 10);
-		g2.setColor(Color.white);
-		g2.drawRoundRect(settingsButtonRect.x, settingsButtonRect.y, settingsButtonRect.width, settingsButtonRect.height, 10, 10);
-		g2.setFont(new Font("Arial", Font.BOLD, 18));
-		String settingsText = "Settings";
-		int settingsTextW = g2.getFontMetrics().stringWidth(settingsText);
-		g2.drawString(settingsText, settingsButtonRect.x + (settingsButtonRect.width - settingsTextW) / 2, settingsButtonRect.y + 24);
+		drawMenuButton(g2, pauseResumeButtonRect, "RESUME GAME");
+		drawMenuButton(g2, settingsButtonRect, "CONTROLS & SETTINGS");
+		drawMenuButton(g2, getRestartButtonRect(), "RETURN TO MAIN MENU");
 
-		g2.setFont(new Font("Arial", Font.PLAIN, 14));
-		String controls = "Controls: WASD Move, SPACE Melee, 1/2/3 Magic, E Dodge";
-		int cw = g2.getFontMetrics().stringWidth(controls);
-		g2.drawString(controls, x + (width - cw) / 2, y + 200);
+		g2.setColor(new Color(10, 15, 20, 180));
+		g2.fillRoundRect(x + 30, y + 325, width - 60, 54, 10, 10);
+		g2.setColor(new Color(185, 194, 200));
+		g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+		drawCenteredString(g2, "WASD Move  ·  SPACE Attack  ·  1/2/3 Abilities  ·  E Dodge", y + 349);
+		g2.setColor(new Color(215, 178, 95));
+		drawCenteredString(g2, "P also resumes", y + 368);
 
 		if (gameMode == GameMode.SURVIVAL) drawQuitSurvivalButton(g2);
+	}
+
+	private void drawDeathMenu(Graphics2D g2) {
+		int width = 480;
+		int height = 340;
+		int x = (screenWidth - width) / 2;
+		int y = (screenHeight - height) / 2;
+		g2.setColor(new Color(20, 5, 5, 220));
+		g2.fillRect(0, 0, screenWidth, screenHeight);
+		g2.setPaint(new java.awt.GradientPaint(x, y, new Color(60, 20, 20, 248),
+				x + width, y + height, new Color(24, 12, 12, 248)));
+		g2.fillRoundRect(x, y, width, height, 20, 20);
+		g2.setColor(new Color(207, 69, 89));
+		g2.setStroke(new BasicStroke(2f));
+		g2.drawRoundRect(x, y, width, height, 20, 20);
+		g2.setStroke(new BasicStroke(1f));
+
+		g2.setColor(new Color(230, 190, 190));
+		g2.setFont(new Font("Serif", Font.BOLD, 38));
+		drawCenteredString(g2, "YOU DIED", y + 60);
+		g2.setColor(new Color(180, 170, 170));
+		g2.setFont(new Font("SansSerif", Font.PLAIN, 14));
+		drawCenteredString(g2, "Your survival run has ended.", y + 96);
+
+		drawMenuButton(g2, getRestartButtonRect(), "START AGAIN");
+		drawMenuButton(g2, getQuitButtonRect(), "MAIN MENU");
 	}
 
 	// private void drawSettingsMenu(Graphics2D g2) {

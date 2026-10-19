@@ -3,6 +3,7 @@ world/PlayerIntegrationTest.class
 world/RegionalLocalSimulationTest.class
 world/CampaignSessionTest.class
 world/ScaleUpTest.class
+entity/EntitySpriteScaleTest.class
 world/CheatAndContractClarityTest.class
 world/WorldStateValidationTest.class
 world/WarSimulationTest.class
