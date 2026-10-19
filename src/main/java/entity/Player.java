@@ -67,7 +67,7 @@ public class Player extends Entity{
 	// Same idea as Enemy.draw(): each state gets its own size, and Entity.setSpriteDrawScale()
 	// still multiplies everything at the end.
 	public float idleDrawScale = 1.0f;      // walking/idle: 1x tile = 48px
-	public float attackDrawScale = 1.3f;    // attack animation: slightly larger (swing effect)
+	public float attackDrawScale = 2.8f;    // attack animation: slightly larger (swing effect)
 	public float dyingDrawScale = 0.75f;    // death animation: smaller (collapse effect)
 
 	// Attack animation state
@@ -236,34 +236,34 @@ public class Player extends Entity{
 
 			// Load attack animations (8 frames per direction)
 			// Attack up
-			 attackUp[0] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/1.png"));
-      		attackUp[1] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/2.png"));
-      		attackUp[2] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/3.png"));
-      		attackUp[3] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/4.png"));
-      		attackUp[4] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/5.png"));
-     		 attackUp[5] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/6.png"));		
-			 attackUp[6] = cropTransparentBorders(loadImage("/player/sword_animations/standard/walk/up/4.png"));				//Users/vaughnhuey/Homework/code/2dGame/my2Dgame/bin/player/sword_animations/slash_oversize/up/1.png
+			 attackUp[0] =loadImage("/player/sword_animations/custom/slash_oversize/up/1.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/1.png"));
+      		attackUp[1] = loadImage("/player/sword_animations/custom/slash_oversize/up/2.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/2.png"));
+      		attackUp[2] = loadImage("/player/sword_animations/custom/slash_oversize/up/3.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/3.png"));
+      		attackUp[3] = loadImage("/player/sword_animations/custom/slash_oversize/up/4.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/4.png"));
+      		attackUp[4] = loadImage("/player/sword_animations/custom/slash_oversize/up/5.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/5.png"));
+     		 attackUp[5] = loadImage("/player/sword_animations/custom/slash_oversize/up/6.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/up/6.png"));		
+			 attackUp[6] = loadImage("/player/sword_animations/standard/walk/up/4.png");//cropTransparentBorders(loadImage("/player/sword_animations/standard/walk/up/4.png"));				//Users/vaughnhuey/Homework/code/2dGame/my2Dgame/bin/player/sword_animations/slash_oversize/up/1.png
 			// Attack down
-			attackDown[0] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/1.png"));
-     		attackDown[1] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/2.png"));
-      		attackDown[2] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/3.png"));
-      		attackDown[3] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/4.png"));
-     		attackDown[4] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/5.png"));
-     		attackDown[5] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/6.png"));
+			attackDown[0] = loadImage("/player/sword_animations/custom/slash_oversize/down/1.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/1.png"));
+     		attackDown[1] = loadImage("/player/sword_animations/custom/slash_oversize/down/2.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/2.png"));
+      		attackDown[2] = loadImage("/player/sword_animations/custom/slash_oversize/down/3.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/3.png"));
+      		attackDown[3] = loadImage("/player/sword_animations/custom/slash_oversize/down/4.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/4.png"));
+     		attackDown[4] = loadImage("/player/sword_animations/custom/slash_oversize/down/5.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/5.png"));
+     		attackDown[5] = loadImage("/player/sword_animations/custom/slash_oversize/down/6.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/down/6.png"));
 			// Attack left
-			attackLeft[0] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/left/1.png"));
-      		attackLeft[1] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/left/2.png"));
-      		attackLeft[2] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/left/3.png"));
-      		attackLeft[3] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/left/4.png"));
-      		attackLeft[4] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/left/5.png"));
-      		attackLeft[5] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/left/6.png"));
+			attackLeft[0] = loadImage("/player/sword_animations/custom/slash_oversize/left/1.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/left/1.png"));
+      		attackLeft[1] = loadImage("/player/sword_animations/custom/slash_oversize/left/2.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/left/2.png"));
+      		attackLeft[2] = loadImage("/player/sword_animations/custom/slash_oversize/left/3.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/left/3.png"));
+      		attackLeft[3] =loadImage("/player/sword_animations/custom/slash_oversize/left/4.png");// cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/left/4.png"));
+      		attackLeft[4] = loadImage("/player/sword_animations/custom/slash_oversize/left/5.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/left/5.png"));
+      		attackLeft[5] = loadImage("/player/sword_animations/custom/slash_oversize/left/6.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/left/6.png"));
 			// Attack right
-			attackRight[0] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/1.png"));
-      		attackRight[1] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/2.png"));
-      		attackRight[2] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/3.png"));
-      		attackRight[3] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/4.png"));
-      		attackRight[4] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/5.png"));
-      		attackRight[5] = cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/6.png"));
+			attackRight[0] = loadImage("/player/sword_animations/custom/slash_oversize/right/1.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/1.png"));
+      		attackRight[1] = loadImage("/player/sword_animations/custom/slash_oversize/right/2.png");// cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/2.png"));
+      		attackRight[2] = loadImage("/player/sword_animations/custom/slash_oversize/right/3.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/3.png"));
+      		attackRight[3] = loadImage("/player/sword_animations/custom/slash_oversize/right/4.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/4.png"));
+      		attackRight[4] = loadImage("/player/sword_animations/custom/slash_oversize/right/5.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/5.png"));
+      		attackRight[5] = loadImage("/player/sword_animations/custom/slash_oversize/right/6.png");//cropTransparentBorders(loadImage("/player/sword_animations/custom/slash_oversize/right/6.png"));
 			//death up 
 			for (int i = 1; i <= 6; i++) {
                 deathUp[i] = ImageIO.read(

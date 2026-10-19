@@ -885,39 +885,39 @@ public class Enemy extends Entity {
         // commander uses larger sprite size (2x tile size for commander)
         int drawWidth, drawHeight;
         if (type == Type.COMMANDER) {
-            drawWidth = gp.tileSize +40;  // 3x tile = 144px
-            drawHeight = gp.tileSize +40;
+            drawWidth = (int)(gp.tileSize *2.0f);  // 3x tile = 144px
+            drawHeight = (int)(gp.tileSize *2.0f);
             // Adjust size per animation state
             if (isAttacking) {
                 // Attack animation: make slightly larger 
-                drawWidth = (int)(gp.tileSize*2.5);
-                drawHeight = (int)(gp.tileSize*2.5);
+                drawWidth = (int)(gp.tileSize*2.8f);
+                drawHeight = (int)(gp.tileSize*2.8f);
             } else if (isDying) {
                 // Death animation: make smaller (collapse effect)
                 drawWidth = (int)(gp.tileSize );
                 drawHeight = (int)(gp.tileSize );
             }
         } else if (type == Type.ARCHER) {
-            drawWidth = gp.tileSize+50 ;  // 2x tile = 96px
-            drawHeight = gp.tileSize+50 ;
+            drawWidth = (int)(gp.tileSize*2.0f) ;  // 2x tile = 96px
+            drawHeight = (int)(gp.tileSize*2.0f) ;
             // Adjust size per animation state
             if (isArcherAttacking) {
                 // Attack animation: make slightly larger (draw bow effect)
-                drawWidth = (int)(gp.tileSize + 10 );
-                drawHeight = (int)(gp.tileSize + 10);
+                drawWidth = (int)(gp.tileSize * 1.0f);
+                drawHeight = (int)(gp.tileSize * 1.0f);
             } else if (isArcherDying) {
                 // Death animation: make smaller (collapse effect)
                 drawWidth = (int)(gp.tileSize * 1.5);
                 drawHeight = (int)(gp.tileSize * 1.5);
             }
         }else if (type == Type.TROOP) {
-            drawWidth = gp.tileSize * 2;  // 2x tile = 96px (same as archer)
-            drawHeight = gp.tileSize * 2;
+            drawWidth = (int)(gp.tileSize * 2.0f);  // 2x tile = 96px (same as archer)
+            drawHeight = (int)(gp.tileSize * 2.0f);
             // Adjust size per animation state
             if (isTroopAttacking) {
                 // Attack animation: make slightly larger (slash effect)
-                drawWidth = (int)(gp.tileSize * 2.5);
-                drawHeight = (int)(gp.tileSize * 2.5);
+                drawWidth = (int)(gp.tileSize * 2.5f);
+                drawHeight = (int)(gp.tileSize * 2.5f);
             } else if (isTroopDying) {
                 // Death animation: make smaller (collapse effect)
                 drawWidth = (int)(gp.tileSize * 1.5);

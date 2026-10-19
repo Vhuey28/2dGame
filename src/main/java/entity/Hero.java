@@ -131,7 +131,7 @@ public class Hero extends Entity {
     public int spriteCounter = 0;
     public String direction = "down";
     private float idleDrawScale = 1.0f;
-    private float attackDrawScale = 1.8f;
+    private float attackDrawScale = 2.8f;
     private float dyingDrawScale = 0.7f;
     /** Set once health hits 0: the hero stops acting and is drawn collapsed. */
     public boolean isDying = false;
