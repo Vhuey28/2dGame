@@ -23,6 +23,12 @@ public class Enemy extends Entity {
     public enum Type { BASIC, ARCHER, COMMANDER, TROOP }
     public Type type = Type.BASIC;
     public boolean dead = false;
+    /** Campaign/local battlefield disposition after a side breaks. */
+    public boolean routed = false;
+    public boolean surrendered = false;
+    public boolean escaped = false;
+    private int routTicks = 0;
+    private float routStartX, routStartY;
     public ThreatTable threatTable = new ThreatTable();
     public Morale morale = new Morale();
     public java.util.List<java.awt.Point> currentPath = null;
@@ -223,6 +229,81 @@ public class Enemy extends Entity {
 		this.spawnX = x;
 		this.spawnY = y;
 	}
+
+    /** True while this enemy can still be attacked, including while routed. */
+    public boolean isTargetableInBattle() {
+        return !dead && health > 0 && !surrendered && !escaped;
+    }
+
+    /** True while this enemy is still standing and fighting rather than fleeing. */
+    public boolean isStandingToFight() {
+        return isTargetableInBattle() && !routed;
+    }
+
+    /** Breaks formation: the enemy stops attacking and flees on later updates. */
+    public void beginRout() {
+        if (!isTargetableInBattle()) return;
+        routed = true;
+        surrendered = false;
+        routTicks = 0;
+        routStartX = x;
+        routStartY = y;
+        stopBattleActions();
+    }
+
+    /** Accepts quarter. Surrendered enemies remain visible but cannot be attacked. */
+    public void surrender() {
+        if (dead || health <= 0 || escaped) return;
+        surrendered = true;
+        routed = false;
+        stopBattleActions();
+        projectiles.clear();
+    }
+
+    /** Removes this surviving enemy from the field while retaining its roster identity. */
+    public void markEscaped() {
+        escaped = true;
+        routed = false;
+        surrendered = false;
+        stopBattleActions();
+        projectiles.clear();
+        x = -1000;
+        y = -1000;
+    }
+
+    private void stopBattleActions() {
+        isAttacking = false;
+        isArcherAttacking = false;
+        isTroopAttacking = false;
+        attackCooldown = 0;
+        shootCooldown = 0;
+        currentPath = null;
+        pathIndex = 0;
+    }
+
+    /** Collision-aware shove used by the player's wide melee cleave. */
+    public void applyKnockback(float dirX, float dirY, float distance) {
+        if (!isTargetableInBattle() || distance <= 0f) return;
+        float length = (float) Math.sqrt(dirX * dirX + dirY * dirY);
+        if (length <= 0.001f) return;
+        float stepX = dirX / length * 2f;
+        float stepY = dirY / length * 2f;
+        int steps = Math.max(1, Math.round(distance / 2f));
+        for (int i = 0; i < steps; i++) {
+            boolean moved = false;
+            if (canMoveTo(x + stepX, y + stepY)) {
+                x += stepX;
+                y += stepY;
+                moved = true;
+            } else {
+                if (stepX != 0f && canMoveTo(x + stepX, y)) { x += stepX; moved = true; }
+                if (stepY != 0f && canMoveTo(x, y + stepY)) { y += stepY; moved = true; }
+            }
+            if (!moved) break;
+        }
+        currentPath = null;
+        pathIndex = 0;
+    }
     public void getEnemyImage() {
         try {
             // Load commander walk animations (walk_128: 9 frames per direction)
@@ -571,6 +652,15 @@ public class Enemy extends Entity {
             }
             return;
         }
+        if (escaped) return;
+        if (surrendered) {
+            updateSurrendered();
+            return;
+        }
+        if (routed) {
+            updateRouted(player);
+            return;
+        }
         Object aggroTarget = threatTable.getHighestThreatTarget();
         float targetX = (aggroTarget != null) ? gp.getEntityX(aggroTarget) : player.x;
         float targetY = (aggroTarget != null) ? gp.getEntityY(aggroTarget) : player.y;
@@ -839,11 +929,13 @@ public class Enemy extends Entity {
             int py = (int)p.y;
             if (px > x && px < x + gp.tileSize && py > y && py < y + gp.tileSize) {
                 int projectileDamage = player.projectileDamage + (player.abilityAuraTicks > 0 ? player.abilityDamageBonus : 0);
+                boolean wasAlive = health > 0;
                 health -= projectileDamage;
                 p.life = 0;
                 showHealthCounter = 60;
                 threatTable.addThreat(player, projectileDamage);   // <-- add this
                 morale.onDamageTaken(projectileDamage);            // <-- add this
+                if (wasAlive && health <= 0) player.totalKills++;
             }
         }
         // Check areas from player
@@ -868,6 +960,103 @@ public class Enemy extends Entity {
             threatTable.addProximityThreat(t, tdist, chaseRange);
         }
     }
+    private void updateSurrendered() {
+        stopBattleActions();
+        if (showHealthCounter > 0) showHealthCounter--;
+        if (stunTimer > 0) stunTimer--;
+        threatTable.decay();
+        morale.update();
+    }
+
+    private void updateRouted(Player player) {
+        routTicks++;
+        checkPlayerProjectilesAndAreas(player);
+        if (health <= 0) return;
+        if (stunTimer > 0) {
+            stunTimer--;
+            if (showHealthCounter > 0) showHealthCounter--;
+            return;
+        }
+
+        float awayX = x - player.x;
+        float awayY = y - player.y;
+        float toSpawnX = spawnX - x;
+        float toSpawnY = spawnY - y;
+        float moveX = awayX * 1.35f + toSpawnX * 0.45f;
+        float moveY = awayY * 1.35f + toSpawnY * 0.45f;
+        float length = (float) Math.sqrt(moveX * moveX + moveY * moveY);
+        if (length > 0.001f) {
+            float fleeSpeed = Math.max(2.1f, speed * 1.32f);
+            moveX = moveX / length * fleeSpeed;
+            moveY = moveY / length * fleeSpeed;
+            boolean moved = false;
+            if (moveX != 0f && canMoveTo(x + moveX, y)) { x += moveX; moved = true; }
+            if (moveY != 0f && canMoveTo(x, y + moveY)) { y += moveY; moved = true; }
+            if (Math.abs(moveX) > Math.abs(moveY)) direction = moveX < 0 ? "left" : "right";
+            else direction = moveY < 0 ? "up" : "down";
+            if (moved) {
+                spriteCounter++;
+                if (spriteCounter > 10) {
+                    spriteNum++;
+                    if (spriteNum > 9) spriteNum = 1;
+                    spriteCounter = 0;
+                }
+            }
+        }
+
+        Iterator<Projectile> projIterator = projectiles.iterator();
+        while (projIterator.hasNext()) {
+            Projectile projectile = projIterator.next();
+            projectile.update();
+            if (projectile.life <= 0) projIterator.remove();
+        }
+        threatTable.decay();
+        morale.update();
+        if (showHealthCounter > 0) showHealthCounter--;
+
+        float playerDistance = (float) Math.hypot(player.x - x, player.y - y);
+        float fledDistance = (float) Math.hypot(x - routStartX, y - routStartY);
+        boolean nearEdge = x <= gp.tileSize * 1.2f || y <= gp.tileSize * 1.2f
+                || x >= (gp.getCurrentMapWidthTiles() - 2.2f) * gp.tileSize
+                || y >= (gp.getCurrentMapHeightTiles() - 2.2f) * gp.tileSize;
+        if ((routTicks > 60 * 3 && nearEdge)
+                || (fledDistance > gp.tileSize * 14f && playerDistance > gp.tileSize * 7f)
+                || (routTicks > 60 * 16 && playerDistance > gp.tileSize * 7f)) {
+            markEscaped();
+        }
+    }
+
+    private void checkPlayerProjectilesAndAreas(Player player) {
+        for (Projectile projectile : player.projectiles) {
+            int px = (int) projectile.x;
+            int py = (int) projectile.y;
+            if (px > x && px < x + gp.tileSize && py > y && py < y + gp.tileSize) {
+                int projectileDamage = player.projectileDamage
+                        + (player.abilityAuraTicks > 0 ? player.abilityDamageBonus : 0);
+                boolean wasAlive = health > 0;
+                health -= projectileDamage;
+                projectile.life = 0;
+                showHealthCounter = 60;
+                threatTable.addThreat(player, projectileDamage);
+                morale.onDamageTaken(projectileDamage);
+                if (wasAlive && health <= 0) player.totalKills++;
+            }
+        }
+        for (AreaEffect area : player.areas) {
+            float dx = (x + gp.tileSize / 2f) - area.x;
+            float dy = (y + gp.tileSize / 2f) - area.y;
+            if (Math.sqrt(dx * dx + dy * dy) < area.radius) {
+                if (area.type == AreaEffect.Type.STUN_AND_DAMAGE) {
+                    boolean wasAlive = health > 0;
+                    health -= 1;
+                    stunTimer = 30;
+                    if (wasAlive && health <= 0) player.totalKills++;
+                }
+                showHealthCounter = 60;
+            }
+        }
+    }
+
     private boolean canMoveTo(float nextX, float nextY) {
         int left = (int)Math.floor(nextX);
         int right = (int)Math.floor(nextX + gp.tileSize - 1);
@@ -988,6 +1177,18 @@ public class Enemy extends Entity {
             g2.fillRect(barX, barY, filled, 6);
             g2.setColor(java.awt.Color.white);
             g2.drawRect(barX, barY, barWidth, 6);
+        }
+        if (!escaped && (routed || surrendered)) {
+            int centerX = screenX + drawWidth / 2;
+            int flagY = screenY - 27;
+            g2.setColor(java.awt.Color.darkGray);
+            g2.drawLine(centerX, flagY, centerX, flagY + 16);
+            g2.setColor(surrendered ? java.awt.Color.white : new java.awt.Color(255, 205, 75));
+            g2.fillPolygon(new int[] {centerX, centerX + 14, centerX},
+                    new int[] {flagY, flagY + 5, flagY + 10}, 3);
+            g2.setColor(java.awt.Color.black);
+            g2.drawPolygon(new int[] {centerX, centerX + 14, centerX},
+                    new int[] {flagY, flagY + 5, flagY + 10}, 3);
         }
     }
     private BufferedImage getCurrentAnimationFrame() {

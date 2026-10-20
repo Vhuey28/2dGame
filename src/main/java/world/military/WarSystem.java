@@ -286,10 +286,50 @@ public final class WarSystem {
             Army second = world.armies.get(report.secondArmyId);
             Army winner = world.armies.get(report.winnerArmyId);
             if (first == null || second == null || winner == null || !war.opposing(first.realmId, second.realmId)) continue;
-            int losses = report.firstCasualties + report.secondCasualties;
-            if (war.attackerRealmIds.contains(winner.realmId)) war.attackerScore = Math.min(100.0, war.attackerScore + 10 + losses);
-            else war.defenderScore = Math.min(100.0, war.defenderScore + 10 + losses);
-            war.contributionByRealm.merge(winner.realmId, 10.0 + losses, Double::sum);
+
+            Army loser = winner.id == first.id ? second : first;
+            int winnerLosses = report.winnerArmyId == report.firstArmyId
+                    ? report.firstCasualties : report.secondCasualties;
+            int loserLosses = report.winnerArmyId == report.firstArmyId
+                    ? report.secondCasualties : report.firstCasualties;
+            int totalLosses = winnerLosses + loserLosses;
+            BattleResult result = world.battleResults.get(report.id);
+            int prisoners = result == null ? 0 : result.prisonerPersonIds.size();
+            boolean loserDestroyed = loser.state == Army.ArmyState.DISBANDED;
+            boolean commanderCaptured = result != null
+                    && result.prisonerPersonIds.contains(loser.commanderPersonId);
+            boolean commanderKilled = result != null && result.casualties.stream().anyMatch(casualty ->
+                    casualty.personId == loser.commanderPersonId
+                            && casualty.outcome == BattleResult.CasualtyOutcome.KILLED);
+            boolean decisive = loserDestroyed || commanderCaptured || commanderKilled
+                    || loserLosses >= Math.max(6, winnerLosses * 2 + 3);
+
+            // A close, bloody win moves the war; destroying or capturing the
+            // opposing field force moves it much further. Prisoners matter even
+            // though BattleReport's casualty fields count only the dead.
+            double gain = 12.0 + totalLosses * 0.65
+                    + Math.max(0, loserLosses - winnerLosses) * 1.15
+                    + prisoners * 2.0
+                    + (decisive ? 8.0 : 0.0)
+                    + (commanderCaptured ? 6.0 : commanderKilled ? 4.0 : 0.0);
+            gain = Math.min(38.0, gain);
+            boolean winnerIsAttacker = war.attackerRealmIds.contains(winner.realmId);
+            if (winnerIsAttacker) {
+                war.attackerScore = Math.min(100.0, war.attackerScore + gain);
+                war.defenderScore = Math.max(0.0, war.defenderScore - Math.min(10.0, gain * 0.22));
+                war.defenderExhaustion = Math.min(100.0, war.defenderExhaustion
+                        + 3.0 + loserLosses * 0.35 + prisoners * 0.8 + (decisive ? 3.0 : 0.0));
+                war.attackerExhaustion = Math.min(100.0, war.attackerExhaustion
+                        + 1.0 + winnerLosses * 0.20);
+            } else {
+                war.defenderScore = Math.min(100.0, war.defenderScore + gain);
+                war.attackerScore = Math.max(0.0, war.attackerScore - Math.min(10.0, gain * 0.22));
+                war.attackerExhaustion = Math.min(100.0, war.attackerExhaustion
+                        + 3.0 + loserLosses * 0.35 + prisoners * 0.8 + (decisive ? 3.0 : 0.0));
+                war.defenderExhaustion = Math.min(100.0, war.defenderExhaustion
+                        + 1.0 + winnerLosses * 0.20);
+            }
+            war.contributionByRealm.merge(winner.realmId, gain, Double::sum);
         }
     }
 

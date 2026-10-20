@@ -122,7 +122,8 @@ public final class BattleBridge {
         BattleContext.BattleSide loser = winner == BattleResult.WinningSide.ATTACKER
                 ? battle.defender : battle.attacker;
         return new BattleResult(battleId, winner, casualties, prisoners,
-                projectedLoot(loser.armyId), experienceFor(battle), retreatFor(winner), durationMinutes);
+                projectedLoot(loser.armyId), experienceFor(battle, winner),
+                retreatFor(winner), durationMinutes);
     }
 
     /** Player-readable realm name for event details. */
@@ -299,10 +300,19 @@ public final class BattleBridge {
         return loot;
     }
 
-    private Map<Long, Double> experienceFor(BattleContext battle) {
+    private Map<Long, Double> experienceFor(BattleContext battle,
+            BattleResult.WinningSide winner) {
         Map<Long, Double> gains = new HashMap<>();
-        for (BattleContext.TacticalCombatant combatant : battle.attacker.combatants) gains.put(combatant.sourceRegimentId, 2.0);
-        for (BattleContext.TacticalCombatant combatant : battle.defender.combatants) gains.put(combatant.sourceRegimentId, 2.0);
+        double attackerGain = winner == BattleResult.WinningSide.ATTACKER ? 4.0
+                : winner == BattleResult.WinningSide.DRAW ? 2.5 : 1.5;
+        double defenderGain = winner == BattleResult.WinningSide.DEFENDER ? 4.0
+                : winner == BattleResult.WinningSide.DRAW ? 2.5 : 1.5;
+        for (BattleContext.TacticalCombatant combatant : battle.attacker.combatants) {
+            gains.put(combatant.sourceRegimentId, attackerGain);
+        }
+        for (BattleContext.TacticalCombatant combatant : battle.defender.combatants) {
+            gains.put(combatant.sourceRegimentId, defenderGain);
+        }
         return gains;
     }
 
@@ -407,13 +417,18 @@ public final class BattleBridge {
 
     private void applyArmyOutcome(BattleResult result, Army attacker, Army defender, Army winner, Army loser) {
         if (winner != null) {
-            winner.morale = Math.min(100.0, winner.morale + 8.0);
+            winner.morale = Math.min(100.0, winner.morale + 10.0);
             winner.fatigue = Math.min(100.0, winner.fatigue + 12.0);
             winner.state = Army.ArmyState.MUSTERED;
         }
         if (loser != null) {
-            loser.morale = Math.max(0.0, loser.morale - 20.0);
-            loser.fatigue = Math.min(100.0, loser.fatigue + 18.0);
+            boolean commanderLost = result.casualties.stream().anyMatch(casualty ->
+                    casualty.personId == loser.commanderPersonId
+                            && (casualty.outcome == BattleResult.CasualtyOutcome.KILLED
+                                    || casualty.outcome == BattleResult.CasualtyOutcome.CAPTURED));
+            loser.morale = Math.max(0.0, loser.morale - (commanderLost ? 34.0 : 24.0)
+                    - Math.min(10.0, result.prisonerPersonIds.size() * 1.5));
+            loser.fatigue = Math.min(100.0, loser.fatigue + (commanderLost ? 26.0 : 20.0));
             loser.state = hasLivingSoldiers(loser) ? Army.ArmyState.ROUTED : Army.ArmyState.DISBANDED;
             loser.order = Army.ArmyOrder.RETURN_HOME;
         }

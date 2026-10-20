@@ -176,7 +176,7 @@ public class GamePanel extends JPanel implements Runnable{
 		private CampaignTab activeCampaignTab = CampaignTab.OVERVIEW;
 		private final java.util.Map<CampaignTab, Rectangle> campaignTabHitboxes = new java.util.EnumMap<>(CampaignTab.class);
 		private final java.util.Map<String, Rectangle> kingdomManagementHitboxes = new java.util.LinkedHashMap<>();
-		private enum CampaignContextMenu { NONE, SETTLEMENT, MARKET, NOTICE_BOARD, PERSON, ARMY, CARAVAN, ENCOUNTER }
+		private enum CampaignContextMenu { NONE, SETTLEMENT, MARKET, NOTICE_BOARD, PERSON, ARMY, CARAVAN, ENCOUNTER, BATTLE_DECISION }
 		private CampaignContextMenu campaignContextMenu = CampaignContextMenu.NONE;
 		private Long selectedCampaignActorId;
 		private final java.util.Map<String, Rectangle> campaignContextButtons = new java.util.LinkedHashMap<>();
@@ -188,6 +188,20 @@ public class GamePanel extends JPanel implements Runnable{
 		private final java.util.List<LocalPlaceholder> campaignLocalPlaceholders = new java.util.ArrayList<>();
 		private String localInteractionMessage = "Walk near a marker and press F";
 		private BattleContext activeCampaignBattle;
+		/** Preserved tactical projections, so dead units removed from the live sprite lists still reconcile. */
+		private final java.util.List<entity.Troop> campaignBattleTroops = new java.util.ArrayList<>();
+		private final java.util.List<Enemy> campaignBattleEnemies = new java.util.ArrayList<>();
+		private int campaignBattleInitialAttackers;
+		private int campaignBattleInitialDefenders;
+		private int campaignBattlePlayerKillsAtStart;
+		private boolean campaignBattleEnemyBroken;
+		private boolean campaignBattlePursuingRout;
+		private int campaignBattlePursuitTicks;
+		private boolean campaignBattleShowedMercy;
+		private boolean campaignBattleRewardsRecorded;
+		private boolean campaignBattleResolvingPlayerFall;
+		private boolean campaignBattlePlayerDownAutoResolved;
+		private String campaignBattlePhaseMessage = "";
 		/** Transient world-map banner: defeat results, captivity, rest, and action feedback. */
 		private String campaignNotice;
 		private int campaignNoticeTicks;
@@ -340,9 +354,18 @@ public class GamePanel extends JPanel implements Runnable{
 				if (campaignContextMenu != CampaignContextMenu.NONE && code == KeyEvent.VK_ESCAPE) {
 					if (campaignContextMenu == CampaignContextMenu.ENCOUNTER) {
 						leaveCampaignEncounter();
+					} else if (campaignContextMenu == CampaignContextMenu.BATTLE_DECISION) {
+						chooseCampaignBattlePursuit();
 					} else {
 						campaignContextMenu = CampaignContextMenu.NONE;
 					}
+					repaint();
+					return;
+				}
+				if (campaignContextMenu == CampaignContextMenu.BATTLE_DECISION) {
+					if (code == KeyEvent.VK_1) chooseCampaignBattlePursuit();
+					else if (code == KeyEvent.VK_2) chooseCampaignBattleLetGo();
+					else if (code == KeyEvent.VK_3) chooseCampaignBattleDemandSurrender();
 					repaint();
 					return;
 				}
@@ -1493,6 +1516,7 @@ public class GamePanel extends JPanel implements Runnable{
 			troops.clear();
 			allySquad.members.clear();
 			enemySquad.members.clear();
+			resetCampaignBattleProjectionState();
 			int index = 0;
 			for (BattleContext.TacticalCombatant combatant : activeCampaignBattle.attacker.combatants) {
 				entity.Troop.Role role = combatant.role == BattleContext.TacticalRole.ARCHER
@@ -1501,7 +1525,9 @@ public class GamePanel extends JPanel implements Runnable{
 				applyStrategicSource(troop, combatant);
 				troop.maxHealth = Math.max(10, (int) Math.round(30 * combatant.defenseModifier));
 				troop.health = troop.maxHealth;
+				troop.beginCharge();
 				troops.add(troop);
+				campaignBattleTroops.add(troop);
 				allySquad.addMember(troop);
 				index++;
 			}
@@ -1511,12 +1537,17 @@ public class GamePanel extends JPanel implements Runnable{
 				enemy.x = tileSize * (25 + index % 4);
 				enemy.y = tileSize * (7 + index / 4);
 				enemy.setSpawnAnchor(enemy.x, enemy.y);
-				enemy.setType(combatant.role == BattleContext.TacticalRole.ARCHER
-					? Enemy.Type.ARCHER : Enemy.Type.TROOP);
+				boolean enemyCommander = combatant.role == BattleContext.TacticalRole.COMMANDER
+						|| combatant.sourcePersonId == activeCampaignBattle.defender.commanderPersonId;
+				enemy.setType(enemyCommander ? Enemy.Type.COMMANDER
+						: combatant.role == BattleContext.TacticalRole.ARCHER
+								? Enemy.Type.ARCHER : Enemy.Type.TROOP);
 				applyStrategicSource(enemy, combatant);
-				enemy.maxHealth = Math.max(10, (int) Math.round(25 * combatant.defenseModifier));
+				enemy.maxHealth = Math.max(10, (int) Math.round(
+						25 * combatant.defenseModifier * (enemyCommander ? 1.8 : 1.0)));
 				enemy.health = enemy.maxHealth;
 				enemies.add(enemy);
+				campaignBattleEnemies.add(enemy);
 				enemySquad.addMember(enemy);
 				index++;
 			}
@@ -1531,6 +1562,10 @@ public class GamePanel extends JPanel implements Runnable{
 				hero.health = hero.maxHealth;
 				heroIndex++;
 			}
+			campaignBattleInitialAttackers = activeCampaignBattle.attacker.combatants.size();
+			campaignBattleInitialDefenders = activeCampaignBattle.defender.combatants.size();
+			campaignBattlePlayerKillsAtStart = player.totalKills;
+			campaignBattlePhaseMessage = "Break their line: kill them, rout them, or bring down their commander.";
 			currentLayer = GameLayer.BATTLE;
 		}
 
@@ -1540,68 +1575,442 @@ public class GamePanel extends JPanel implements Runnable{
 			entity.sourceArmyId = combatant.sourceArmyId;
 		}
 
+		private void resetCampaignBattleProjectionState() {
+			campaignBattleTroops.clear();
+			campaignBattleEnemies.clear();
+			campaignBattleInitialAttackers = 0;
+			campaignBattleInitialDefenders = 0;
+			campaignBattlePlayerKillsAtStart = player == null ? 0 : player.totalKills;
+			campaignBattleEnemyBroken = false;
+			campaignBattlePursuingRout = false;
+			campaignBattlePursuitTicks = 0;
+			campaignBattleShowedMercy = false;
+			campaignBattleRewardsRecorded = false;
+			campaignBattleResolvingPlayerFall = false;
+			campaignBattlePlayerDownAutoResolved = false;
+			campaignBattlePhaseMessage = "";
+			if (campaignContextMenu == CampaignContextMenu.BATTLE_DECISION) {
+				campaignContextMenu = CampaignContextMenu.NONE;
+			}
+		}
+
+		private boolean campaignBattleTroopStanding(entity.Troop troop) {
+			return troop != null && troop.health > 0 && !troop.isMeleeDying && !troop.isArcherDying;
+		}
+
+		private int campaignBattleFriendlyStanding() {
+			int count = 0;
+			for (entity.Troop troop : campaignBattleTroops) if (campaignBattleTroopStanding(troop)) count++;
+			return count;
+		}
+
+		private int campaignBattleEnemyStanding() {
+			int count = 0;
+			for (Enemy enemy : campaignBattleEnemies) if (enemy != null && enemy.isStandingToFight()) count++;
+			return count;
+		}
+
+		private int campaignBattleEnemyRoutedAlive() {
+			int count = 0;
+			for (Enemy enemy : campaignBattleEnemies) {
+				if (enemy != null && enemy.routed && enemy.isTargetableInBattle()) count++;
+			}
+			return count;
+		}
+
+		private int campaignBattleEnemySurrendered() {
+			int count = 0;
+			for (Enemy enemy : campaignBattleEnemies) if (enemy != null && enemy.surrendered && enemy.health > 0) count++;
+			return count;
+		}
+
+		private int campaignBattleEnemyKilled() {
+			int count = 0;
+			for (Enemy enemy : campaignBattleEnemies) if (enemy != null && enemy.health <= 0) count++;
+			return count;
+		}
+
+		private boolean campaignBattleEnemyCommanderDown() {
+			if (activeCampaignBattle == null) return false;
+			for (Enemy enemy : campaignBattleEnemies) {
+				if (enemy == null) continue;
+				boolean commander = enemy.type == Enemy.Type.COMMANDER
+						|| (enemy.sourcePersonId != null
+								&& enemy.sourcePersonId.longValue() == activeCampaignBattle.defender.commanderPersonId);
+				if (commander && (enemy.health <= 0 || enemy.surrendered)) return true;
+			}
+			return false;
+		}
+
+		private int campaignBattlePersonalKills() {
+			return Math.max(0, player.totalKills - campaignBattlePlayerKillsAtStart);
+		}
+
+		private int campaignBattleOpposingStanding() {
+			return campaignBattleFriendlyStanding() + (player.health > 0 ? 1 : 0);
+		}
+
+		private void breakCampaignEnemyFormation() {
+			if (activeCampaignBattle == null || campaignBattleEnemyBroken) return;
+			campaignBattleEnemyBroken = true;
+			for (Enemy enemy : campaignBattleEnemies) {
+				if (enemy != null && enemy.isStandingToFight()) enemy.beginRout();
+			}
+			campaignBattlePhaseMessage = campaignBattleEnemyCommanderDown()
+					? "Their commander is down and the enemy line breaks!"
+					: "The enemy line breaks!";
+			if (player.health > 0 && !player.isDead) {
+				campaignContextMenu = CampaignContextMenu.BATTLE_DECISION;
+				campaignContextMessage = campaignBattlePhaseMessage;
+				repaint();
+			} else {
+				// Do not pause a dying player's death animation for a menu.
+				campaignBattlePursuingRout = true;
+				campaignBattlePursuitTicks = 60 * 20;
+			}
+		}
+
+		private void chooseCampaignBattlePursuit() {
+			campaignContextMenu = CampaignContextMenu.NONE;
+			campaignContextMessage = "";
+			campaignBattlePursuingRout = true;
+			campaignBattlePursuitTicks = 60 * 20;
+			campaignBattlePhaseMessage = "Pursuit! Cut them down or let the survivors escape. Press R to call it off.";
+			for (entity.Troop troop : campaignBattleTroops) {
+				if (campaignBattleTroopStanding(troop)) troop.beginCharge();
+			}
+			repaint();
+		}
+
+		private void chooseCampaignBattleLetGo() {
+			campaignContextMenu = CampaignContextMenu.NONE;
+			campaignContextMessage = "";
+			campaignBattleShowedMercy = true;
+			campaignBattlePursuingRout = false;
+			for (Enemy enemy : campaignBattleEnemies) {
+				if (enemy != null && enemy.routed && enemy.isTargetableInBattle()) enemy.markEscaped();
+			}
+			finishCampaignBattle(BattleResult.WinningSide.ATTACKER);
+		}
+
+		private void chooseCampaignBattleDemandSurrender() {
+			boolean accepted = activeCampaignBattle != null
+					&& entity.BattlefieldRules.surrenderAccepted(
+							campaignBattleInitialDefenders,
+							campaignBattleEnemyRoutedAlive() + campaignBattleEnemyStanding(),
+							activeCampaignBattle.defender.startingMorale,
+							campaignBattleEnemyCommanderDown(), campaignBattlePersonalKills(),
+							campaignBattleOpposingStanding());
+			campaignContextMenu = CampaignContextMenu.NONE;
+			campaignContextMessage = "";
+			if (!accepted) {
+				campaignBattlePhaseMessage = "They refuse quarter and keep running!";
+				chooseCampaignBattlePursuit();
+				return;
+			}
+			for (Enemy enemy : campaignBattleEnemies) {
+				if (enemy != null && enemy.health > 0 && !enemy.escaped) enemy.surrender();
+			}
+			finishCampaignBattle(BattleResult.WinningSide.ATTACKER);
+		}
+
+		/** Per-frame campaign battle referee: zero standing enemies, routs, pursuit, and player-down resolution. */
+		private void updateCampaignBattleState() {
+			if (activeCampaignBattle == null || campaignSession == null
+					|| currentLayer != GameLayer.BATTLE) return;
+			if (campaignContextMenu == CampaignContextMenu.BATTLE_DECISION) return;
+
+			int enemyStanding = campaignBattleEnemyStanding();
+			if (enemyStanding == 0 && !campaignBattlePursuingRout) {
+				if (player.isDead) resolveCampaignBattleAfterPlayerFalls();
+				else finishCampaignBattle(null);
+				return;
+			}
+
+			if (!campaignBattleEnemyBroken && entity.BattlefieldRules.shouldEnemyBreak(
+					campaignBattleInitialDefenders, enemyStanding,
+					activeCampaignBattle.defender.startingMorale,
+					campaignBattleEnemyCommanderDown(), campaignBattlePersonalKills(),
+					campaignBattleOpposingStanding())) {
+				breakCampaignEnemyFormation();
+				return;
+			}
+
+			if (campaignBattlePursuingRout) {
+				if (player.isDead) {
+					resolveCampaignBattleAfterPlayerFalls();
+					return;
+				}
+				if (campaignBattleEnemyRoutedAlive() == 0) {
+					if (player.isDead) resolveCampaignBattleAfterPlayerFalls();
+					else finishCampaignBattle(BattleResult.WinningSide.ATTACKER);
+					return;
+				}
+				if (--campaignBattlePursuitTicks <= 0) {
+					for (Enemy enemy : campaignBattleEnemies) {
+						if (enemy != null && enemy.routed && enemy.isTargetableInBattle()) enemy.markEscaped();
+					}
+					if (player.isDead) resolveCampaignBattleAfterPlayerFalls();
+					else finishCampaignBattle(BattleResult.WinningSide.ATTACKER);
+					return;
+				}
+			}
+
+			if (player.isDead) {
+				if (campaignBattleFriendlyStanding() > 0) resolveCampaignBattleAfterPlayerFalls();
+				else handleCampaignDefeat();
+			}
+			// If every friendly troop is down but the player still has health, the
+			// battle deliberately continues: the player can finish it alone.
+		}
+
+		private double campaignBattleRemainingFriendlyPower() {
+			double power = 0.0;
+			for (entity.Troop troop : campaignBattleTroops) {
+				if (!campaignBattleTroopStanding(troop)) continue;
+				double healthFraction = troop.maxHealth <= 0 ? 0.0
+						: troop.health / (double) troop.maxHealth;
+				power += healthFraction * (troop.role == entity.Troop.Role.ARCHER ? 0.9 : 1.1);
+			}
+			return power;
+		}
+
+		private double campaignBattleRemainingEnemyPower() {
+			double power = 0.0;
+			for (Enemy enemy : campaignBattleEnemies) {
+				if (enemy == null || !enemy.isStandingToFight()) continue;
+				double healthFraction = enemy.maxHealth <= 0 ? 0.0
+						: enemy.health / (double) enemy.maxHealth;
+				power += healthFraction * (enemy.type == Enemy.Type.COMMANDER ? 1.8
+						: enemy.type == Enemy.Type.ARCHER ? 0.9 : 1.0);
+			}
+			return power;
+		}
+
+		private void applyRemainingBattleCasualties(int result) {
+			java.util.List<entity.Troop> friendly = new java.util.ArrayList<>();
+			for (entity.Troop troop : campaignBattleTroops) {
+				if (campaignBattleTroopStanding(troop)) friendly.add(troop);
+			}
+			friendly.sort(java.util.Comparator.comparingDouble(troop ->
+					troop.maxHealth <= 0 ? 0.0 : troop.health / (double) troop.maxHealth));
+			double friendlyKillFraction = result > 0 ? 0.12 : result == 0 ? 0.22 : 0.35;
+			int friendlyKills = (int) Math.round(friendly.size() * friendlyKillFraction);
+			for (int i = 0; i < friendly.size(); i++) {
+				entity.Troop troop = friendly.get(i);
+				if (i < friendlyKills) troop.health = 0;
+				else if (i < friendlyKills + Math.max(1, friendly.size() / 3)) {
+					troop.health = Math.max(1, troop.health / 2);
+				}
+			}
+
+			java.util.List<Enemy> enemiesStanding = new java.util.ArrayList<>();
+			for (Enemy enemy : campaignBattleEnemies) {
+				if (enemy != null && enemy.isStandingToFight()) enemiesStanding.add(enemy);
+			}
+			enemiesStanding.sort(java.util.Comparator.comparingDouble(enemy ->
+					enemy.maxHealth <= 0 ? 0.0 : enemy.health / (double) enemy.maxHealth));
+			double enemyKillFraction = result > 0 ? 0.30 : result == 0 ? 0.22 : 0.12;
+			int enemyKills = (int) Math.round(enemiesStanding.size() * enemyKillFraction);
+			for (int i = 0; i < enemiesStanding.size(); i++) {
+				Enemy enemy = enemiesStanding.get(i);
+				if (i < enemyKills) enemy.health = 0;
+				else if (i < enemyKills + Math.max(1, enemiesStanding.size() / 3)) {
+					enemy.health = Math.max(1, enemy.health / 2);
+				}
+				if (result >= 0 && enemy.health > 0) enemy.beginRout();
+			}
+			campaignBattleEnemyBroken = campaignBattleEnemyBroken || result >= 0;
+		}
+
+		/** Fast-resolves the rest of a battle after the adventurer is knocked down. */
+		private void resolveCampaignBattleAfterPlayerFalls() {
+			if (activeCampaignBattle == null || campaignBattleResolvingPlayerFall) return;
+			campaignBattleResolvingPlayerFall = true;
+			if (campaignBattleEnemyStanding() == 0) {
+				// The field was already cleared or broken before the fall; do not
+				// invent extra casualties. finishCampaignBattle decides victory
+				// (friendly troops remain) versus draw (nobody remains standing).
+				finishCampaignBattle(null);
+				return;
+			}
+			int result = entity.BattlefieldRules.remainingForceResult(
+					campaignBattleRemainingFriendlyPower(), campaignBattleRemainingEnemyPower());
+			applyRemainingBattleCasualties(result);
+			if (result > 0) {
+				finishCampaignBattle(BattleResult.WinningSide.ATTACKER);
+			} else if (result == 0 && campaignBattleFriendlyStanding() > 0) {
+				finishCampaignBattle(BattleResult.WinningSide.DRAW);
+			} else {
+				campaignBattlePlayerDownAutoResolved = true;
+				handleCampaignDefeat();
+			}
+		}
+
 		private void resolveCampaignTacticalBattle() {
-			finishCampaignBattle(null);
+			if (activeCampaignBattle == null
+					|| campaignContextMenu == CampaignContextMenu.BATTLE_DECISION) return;
+			if (campaignBattleEnemyStanding() == 0) {
+				finishCampaignBattle(null);
+			} else if (campaignBattlePursuingRout) {
+				finishCampaignBattle(BattleResult.WinningSide.ATTACKER);
+			} else {
+				// R is now an explicit withdrawal order while the enemy still stands.
+				finishCampaignBattle(BattleResult.WinningSide.DEFENDER);
+			}
 		}
 
 		/**
 		 * Ends the projected strategic battle and reconciles it exactly once.
-		 * A non-null forcedWinner overrides the living-count result; that is how a player
-		 * defeat is settled. Leaving the context unreconciled used to freeze both armies in
-		 * ENGAGED and permanently block every later campaign battle.
+		 * Victory is not a mere living-count comparison: no standing defenders
+		 * means the attackers hold the field, routed/surrendered defenders no
+		 * longer count as standing, and a living player can win after every
+		 * friendly troop has fallen.
 		 */
 		private void finishCampaignBattle(BattleResult.WinningSide forcedWinner) {
 			if (activeCampaignBattle == null || campaignSession == null) return;
+			BattleContext battle = activeCampaignBattle;
+			java.util.List<entity.Troop> projectedTroops = campaignBattleTroops.isEmpty()
+					? troops : campaignBattleTroops;
+			java.util.List<Enemy> projectedEnemies = campaignBattleEnemies.isEmpty()
+					? enemies : campaignBattleEnemies;
 			java.util.Map<Long, BattleResult.CasualtyOutcome> outcomes = new java.util.HashMap<>();
-			int attackerLiving = 0;
-			for (entity.Troop troop : troops) {
-				if (troop.sourcePersonId == null) continue;
+
+			int attackerStanding = 0;
+			int attackerKilled = 0;
+			for (entity.Troop troop : projectedTroops) {
+				if (troop == null || troop.sourcePersonId == null) continue;
 				BattleResult.CasualtyOutcome outcome;
-				if (troop.health <= 0 || troop.isMeleeDying || troop.isArcherDying) outcome = BattleResult.CasualtyOutcome.KILLED;
-				else if (troop.health < troop.maxHealth / 3) outcome = BattleResult.CasualtyOutcome.SEVERELY_WOUNDED;
-				else if (troop.health < troop.maxHealth) outcome = BattleResult.CasualtyOutcome.WOUNDED;
-				else outcome = BattleResult.CasualtyOutcome.UNHARMED;
-				if (outcome != BattleResult.CasualtyOutcome.KILLED) attackerLiving++;
+				if (troop.health <= 0 || troop.isMeleeDying || troop.isArcherDying) {
+					outcome = BattleResult.CasualtyOutcome.KILLED;
+					attackerKilled++;
+				} else if (troop.health < troop.maxHealth / 3) {
+					outcome = BattleResult.CasualtyOutcome.SEVERELY_WOUNDED;
+					attackerStanding++;
+				} else if (troop.health < troop.maxHealth) {
+					outcome = BattleResult.CasualtyOutcome.WOUNDED;
+					attackerStanding++;
+				} else {
+					outcome = BattleResult.CasualtyOutcome.UNHARMED;
+					attackerStanding++;
+				}
 				outcomes.put(troop.sourcePersonId, outcome);
 			}
-			int defenderLiving = 0;
-			for (Enemy enemy : enemies) {
-				if (enemy.sourcePersonId == null) continue;
+
+			int defenderStanding = 0;
+			int defenderKilled = 0;
+			int defenderRouted = 0;
+			int defenderCaptured = 0;
+			for (Enemy enemy : projectedEnemies) {
+				if (enemy == null || enemy.sourcePersonId == null) continue;
 				BattleResult.CasualtyOutcome outcome;
-				if (enemy.dead || enemy.health <= 0) outcome = BattleResult.CasualtyOutcome.KILLED;
-				else if (enemy.health < enemy.maxHealth / 3) outcome = BattleResult.CasualtyOutcome.SEVERELY_WOUNDED;
-				else if (enemy.health < enemy.maxHealth) outcome = BattleResult.CasualtyOutcome.WOUNDED;
-				else outcome = BattleResult.CasualtyOutcome.UNHARMED;
-				if (outcome != BattleResult.CasualtyOutcome.KILLED) defenderLiving++;
+				if (enemy.surrendered && enemy.health > 0) {
+					outcome = BattleResult.CasualtyOutcome.CAPTURED;
+					defenderCaptured++;
+				} else if (enemy.dead || enemy.health <= 0) {
+					outcome = BattleResult.CasualtyOutcome.KILLED;
+					defenderKilled++;
+				} else if (enemy.health < enemy.maxHealth / 3) {
+					outcome = BattleResult.CasualtyOutcome.SEVERELY_WOUNDED;
+				} else if (enemy.health < enemy.maxHealth) {
+					outcome = BattleResult.CasualtyOutcome.WOUNDED;
+				} else {
+					outcome = BattleResult.CasualtyOutcome.UNHARMED;
+				}
+				if (enemy.isStandingToFight()) defenderStanding++;
+				if (enemy.routed && enemy.health > 0) defenderRouted++;
 				outcomes.put(enemy.sourcePersonId, outcome);
 			}
-			BattleResult.WinningSide winner = forcedWinner != null ? forcedWinner
-				: attackerLiving == defenderLiving ? BattleResult.WinningSide.DRAW
-				: attackerLiving > defenderLiving ? BattleResult.WinningSide.ATTACKER : BattleResult.WinningSide.DEFENDER;
-			BattleResult result = campaignSession.getSimulation().getBattleBridge().resultFromTactical(
-				activeCampaignBattle.battleId, winner, outcomes, 60L);
-			campaignSession.getSimulation().getBattleBridge().reconcile(result);
-			if (forcedWinner == null) {
-				campaignSession.notePlayerBattleResult(winner != BattleResult.WinningSide.DEFENDER);
+
+			boolean playerStanding = player.health > 0 && !player.isDead;
+			BattleResult.WinningSide winner;
+			if (forcedWinner != null) {
+				winner = forcedWinner;
+			} else if (defenderStanding == 0 && (attackerStanding > 0 || playerStanding)) {
+				winner = BattleResult.WinningSide.ATTACKER;
+			} else if (attackerStanding == 0 && !playerStanding && defenderStanding > 0) {
+				winner = BattleResult.WinningSide.DEFENDER;
+			} else if (defenderStanding == 0 && attackerStanding == 0 && !playerStanding) {
+				winner = BattleResult.WinningSide.DRAW;
+			} else {
+				int attackerScore = attackerStanding + (playerStanding ? 1 : 0);
+				winner = attackerScore == defenderStanding ? BattleResult.WinningSide.DRAW
+						: attackerScore > defenderStanding ? BattleResult.WinningSide.ATTACKER
+								: BattleResult.WinningSide.DEFENDER;
 			}
-			// A forced winner means the player died; handleCampaignDefeat already reports that.
-			String fieldReport = forcedWinner == null
-				? (winner == BattleResult.WinningSide.DEFENDER
-					? "You are driven off the field. " + defenderLiving + " of the enemy still stand."
-					: winner == BattleResult.WinningSide.DRAW
-						? "The battle ends indecisively. Both sides pull back."
-						: "You hold the field. " + attackerLiving + " of your troops still stand.")
-				: null;
+
+			BattleResult result = campaignSession.getSimulation().getBattleBridge().resultFromTactical(
+					battle.battleId, winner, outcomes, 60L);
+			campaignSession.getSimulation().getBattleBridge().reconcile(result);
+
+			int personalKills = campaignBattlePersonalKills();
+			boolean commanderDown = campaignBattleEnemyCommanderDown();
+			String rewardSummary = "";
+			if (winner != BattleResult.WinningSide.DEFENDER && !campaignBattleRewardsRecorded) {
+				campaignBattleRewardsRecorded = true;
+				rewardSummary = campaignSession.recordPlayerBattleOutcome(
+						winner == BattleResult.WinningSide.ATTACKER,
+						winner == BattleResult.WinningSide.DRAW,
+						personalKills, defenderKilled, defenderCaptured, defenderRouted,
+						commanderDown, campaignBattlePursuingRout, campaignBattleShowedMercy,
+						battle.defender.realmId);
+				if (activeHero != null && activeHero.isActivePlayer) {
+					activeHero.gainExperience(20 + personalKills * 4 + defenderCaptured * 4
+							+ (commanderDown ? 15 : 0));
+				}
+			}
+
+			String fieldReport;
+			if (forcedWinner == BattleResult.WinningSide.DEFENDER && player.isDead) {
+				fieldReport = null; // handleCampaignDefeat reports the personal consequence.
+			} else if (winner == BattleResult.WinningSide.DEFENDER) {
+				fieldReport = "Your force is driven from the field. " + defenderStanding
+						+ " enemy soldiers still stand; your losses: " + attackerKilled + ".";
+			} else if (winner == BattleResult.WinningSide.DRAW) {
+				fieldReport = "The battle ends indecisively. Enemy losses: " + defenderKilled
+						+ " killed, " + defenderRouted + " routed. " + rewardSummary;
+			} else {
+				fieldReport = "Victory — you hold the field. Enemy: " + defenderKilled
+						+ " killed, " + defenderRouted + " routed/escaped, "
+						+ defenderCaptured + " captured. Your standing troops: "
+						+ attackerStanding + (attackerStanding == 0 && playerStanding
+								? " — you finished it alone" : "") + ". " + rewardSummary;
+			}
+			if (commanderDown && winner == BattleResult.WinningSide.ATTACKER && fieldReport != null) {
+				fieldReport += " Their commander was brought down.";
+			}
+			if (player.isDead && winner != BattleResult.WinningSide.DEFENDER) {
+				world.command.CommandResult knockedOut =
+						campaignSession.recordPlayerKnockedOutArmyHeldField(
+								winner == BattleResult.WinningSide.ATTACKER);
+				respawnPlayer();
+				syncCampaignPlayerHealthFromPerson();
+				fieldReport = knockedOut.message + " " + (fieldReport == null ? "" : fieldReport);
+			}
+
 			activeCampaignBattle = null;
+			campaignContextMenu = CampaignContextMenu.NONE;
+			campaignContextMessage = "";
+			campaignContextButtons.clear();
+			campaignBattleTroops.clear();
+			campaignBattleEnemies.clear();
+			campaignBattleEnemyBroken = false;
+			campaignBattlePursuingRout = false;
+			campaignBattlePursuitTicks = 0;
+			enemies.clear();
+			troops.clear();
+			allySquad.members.clear();
+			enemySquad.members.clear();
 			campaignSnapshot = CampaignSnapshot.capture(campaignSession.getSimulation());
 			currentLayer = GameLayer.WORLD_MAP;
 			if (fieldReport != null) showCampaignNotice(fieldReport);
 		}
 
 		/**
-		 * The adventurer died in campaign mode. Settles any projected battle as a loss and
-		 * lets the session roll the consequence (wounded, captured for ransom, or routed —
-		 * a rout destroys a commanded army and can kill companions).
+		 * The adventurer died in campaign mode. In a projected battle this no
+		 * longer automatically erases a winning army: remaining troops first get
+		 * their fast resolution, and only an actual remaining-force loss settles
+		 * here as a campaign defeat.
 		 */
 		private void handleCampaignDefeat() {
 			if (campaignSession == null) {
@@ -1609,21 +2018,19 @@ public class GamePanel extends JPanel implements Runnable{
 				respawnPlayer();
 				return;
 			}
-			// Dying outside a projected battle (a local skirmish) is a minor setback, not a rout.
+			if (activeCampaignBattle != null && !campaignBattlePlayerDownAutoResolved
+					&& (campaignBattleFriendlyStanding() > 0 || campaignBattleEnemyStanding() == 0)) {
+				resolveCampaignBattleAfterPlayerFalls();
+				return;
+			}
 			double defeatMargin = 0.15;
 			Long captorRealmId = null;
 			if (activeCampaignBattle != null) {
-				int yourLiving = 0;
-				for (entity.Troop troop : troops) {
-					if (troop.health > 0 && !troop.isMeleeDying && !troop.isArcherDying) yourLiving++;
-				}
-				int enemyLiving = 0;
-				for (Enemy enemy : enemies) {
-					if (!enemy.dead && enemy.health > 0) enemyLiving++;
-				}
-				int total = yourLiving + enemyLiving;
-				// 0 = you nearly held the field, 1 = nothing of yours survived
-				defeatMargin = total == 0 ? 1.0 : Math.max(0.0, Math.min(1.0, 1.0 - yourLiving / (double) total));
+				int yourStanding = campaignBattleFriendlyStanding();
+				int enemyStanding = campaignBattleEnemyStanding();
+				int total = yourStanding + enemyStanding;
+				defeatMargin = total == 0 ? 1.0 : Math.max(0.0, Math.min(1.0,
+						1.0 - yourStanding / (double) total));
 				captorRealmId = activeCampaignBattle.defender.realmId;
 				finishCampaignBattle(BattleResult.WinningSide.DEFENDER);
 			}
@@ -1635,7 +2042,6 @@ public class GamePanel extends JPanel implements Runnable{
 			currentLayer = GameLayer.WORLD_MAP;
 			campaignSnapshot = campaignSession.getSnapshot();
 			respawnPlayer();
-			// Wounds live on the world person; the local sprite reads health back from it.
 			syncCampaignPlayerHealthFromPerson();
 			showCampaignNotice(result.message);
 		}
@@ -2309,9 +2715,14 @@ System.nanoTime();
 					deathMenuOpen = true;
 					break;
 				case CAMPAIGN:
-					// Defeat is a real cost now: reconcile any projected battle exactly once,
-					// then roll a graded consequence (wounded / captured / routed).
-					handleCampaignDefeat();
+					if (activeCampaignBattle != null
+							&& (campaignBattleFriendlyStanding() > 0
+									|| campaignBattleEnemyStanding() == 0)) {
+						// Your soldiers get the rest of this frame; the battle referee
+						// at the end of update resolves whether they hold the field.
+					} else {
+						handleCampaignDefeat();
+					}
 					break;
 				case SANDBOX:
 					// Respawn the player
@@ -2534,6 +2945,7 @@ System.nanoTime();
 		}
 		if (activeHero != null && activeHero.isActivePlayer) player.health = activeHero.health;
 
+		updateCampaignBattleState();
 		updateMinimapZoom(1f / FPS);   // FPS = 60, so this advances zoom by a 60th of a second each tick
 		updateCamera();
 		
@@ -2823,11 +3235,27 @@ System.nanoTime();
 		drawMiniMap(g2);
 		drawPlayerStats(g2);
 		if (gameMode == GameMode.CAMPAIGN && activeCampaignBattle != null) {
-			g2.setColor(new Color(0, 0, 0, 190));
-			g2.fillRoundRect(180, 12, 410, 30, 8, 8);
+			g2.setColor(new Color(0, 0, 0, 205));
+			g2.fillRoundRect(118, 10, 532, 50, 9, 9);
+			g2.setColor(new Color(225, 190, 105));
+			g2.drawRoundRect(118, 10, 532, 50, 9, 9);
+			g2.setFont(new Font("SansSerif", Font.BOLD, 12));
 			g2.setColor(Color.YELLOW);
-			g2.drawString("Strategic battle " + activeCampaignBattle.battleId
-				+ " - fight, then press R to reconcile exact participants", 194, 32);
+			String battleCounts = "Battle " + activeCampaignBattle.battleId
+					+ "  |  Your troops " + campaignBattleFriendlyStanding() + "/"
+					+ campaignBattleInitialAttackers
+					+ "  |  Enemy standing " + campaignBattleEnemyStanding()
+					+ ", routed " + campaignBattleEnemyRoutedAlive()
+					+ "  |  Your kills " + campaignBattlePersonalKills();
+			g2.drawString(battleCounts, 132, 29);
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 11));
+			g2.setColor(Color.WHITE);
+			String phase = campaignBattlePhaseMessage == null || campaignBattlePhaseMessage.isBlank()
+					? "Victory: no enemy still stands, or the enemy breaks and runs."
+					: campaignBattlePhaseMessage;
+			String command = campaignBattlePursuingRout ? "  R: call off pursuit."
+					: "  R: withdraw your force.";
+			g2.drawString(phase + command, 132, 48);
 		}
 		if (currentLayer == GameLayer.DEPLOYMENT) {
 			drawDeploymentScreen(g2);
@@ -3007,10 +3435,49 @@ System.nanoTime();
 		g2.drawString(paused, pausedX, screenHeight - 46);
 	}
 
+	/** Post-rout order: pursue for more salvage, show mercy for reputation, or demand prisoners. */
+	private void drawCampaignBattleDecision(Graphics2D g2) {
+		campaignContextButtons.clear();
+		int x = screenWidth / 2 - 246, y = 104, w = 492, h = 286;
+		g2.setColor(new Color(0, 0, 0, 175));
+		g2.fillRect(0, 0, screenWidth, screenHeight);
+		g2.setColor(new Color(22, 30, 38, 246));
+		g2.fillRoundRect(x, y, w, h, 14, 14);
+		g2.setColor(new Color(225, 190, 105));
+		g2.drawRoundRect(x, y, w, h, 14, 14);
+		g2.setFont(new Font("Serif", Font.BOLD, 23));
+		g2.setColor(new Color(235, 205, 130));
+		g2.drawString("THE ENEMY BREAKS!", x + 22, y + 36);
+		g2.setFont(new Font("SansSerif", Font.PLAIN, 12));
+		g2.setColor(Color.WHITE);
+		int routed = campaignBattleEnemyRoutedAlive();
+		int killed = campaignBattleEnemyKilled();
+		boolean surrenderLikely = activeCampaignBattle != null
+				&& entity.BattlefieldRules.surrenderAccepted(
+						campaignBattleInitialDefenders, routed,
+						activeCampaignBattle.defender.startingMorale,
+						campaignBattleEnemyCommanderDown(), campaignBattlePersonalKills(),
+						campaignBattleOpposingStanding());
+		g2.drawString(killed + " enemy dead, " + routed + " running. "
+				+ (campaignBattleEnemyCommanderDown() ? "Their commander is down." : "Their formation has collapsed."), x + 22, y + 62);
+		g2.drawString("Victory is yours. Choose what your soldiers do next:", x + 22, y + 82);
+		addContextButton(g2, "BATTLE_PURSUE", "1  Pursue them — more cuts and salvage (20s)", x + 22, y + 104, w - 44, 42);
+		addContextButton(g2, "BATTLE_LET_GO", "2  Let them go — end cleanly, gain mercy reputation", x + 22, y + 156, w - 44, 42);
+		addContextButton(g2, "BATTLE_DEMAND_SURRENDER",
+				"3  Demand surrender — " + (surrenderLikely ? "likely prisoners" : "they may refuse"), x + 22, y + 208, w - 44, 42);
+		g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
+		g2.setColor(new Color(190, 205, 215));
+		g2.drawString("ESC also chooses pursuit.", x + 22, y + h - 12);
+	}
+
 	private void drawCampaignContextMenu(Graphics2D g2) {
 		if (campaignContextMenu == CampaignContextMenu.NONE || campaignSession == null || campaignSnapshot == null) return;
 		if (campaignContextMenu == CampaignContextMenu.ENCOUNTER) {
 			drawCampaignEncounter(g2);
+			return;
+		}
+		if (campaignContextMenu == CampaignContextMenu.BATTLE_DECISION) {
+			drawCampaignBattleDecision(g2);
 			return;
 		}
 		int x = 145, y = 70, w = 478, h = 410;
@@ -3237,6 +3704,9 @@ System.nanoTime();
 		String clicked = null;
 		for (java.util.Map.Entry<String, Rectangle> entry : campaignContextButtons.entrySet()) if (entry.getValue().contains(point)) { clicked = entry.getKey(); break; }
 		if (clicked == null) return;
+		if ("BATTLE_PURSUE".equals(clicked)) { chooseCampaignBattlePursuit(); return; }
+		if ("BATTLE_LET_GO".equals(clicked)) { chooseCampaignBattleLetGo(); return; }
+		if ("BATTLE_DEMAND_SURRENDER".equals(clicked)) { chooseCampaignBattleDemandSurrender(); return; }
 		if ("CLOSE".equals(clicked)) { campaignContextMenu = CampaignContextMenu.NONE; return; }
 		if ("OPEN_MARKET".equals(clicked)) { campaignContextMenu = CampaignContextMenu.MARKET; return; }
 		if ("OPEN_BOARD".equals(clicked)) { campaignContextMenu = CampaignContextMenu.NOTICE_BOARD; return; }
@@ -4224,7 +4694,8 @@ System.nanoTime();
 				"  N / M      sell 5 grain / 5 vegetables",
 				"  C          accept the first contract offered",
 				"  K          attack the selected enemy army with yours",
-				"  R          (in battle) reconcile casualties",
+				"  R          (in battle) withdraw / call off pursuit",
+				"  1/2/3      after a rout: pursue, mercy, demand surrender",
 				"  1 / 2 / 3  speed: 1x, 1 hour/s, 1 day/s",
 				"  0          pause or resume the world",
 				"  H          this help      F1  cheat menu",
@@ -4267,8 +4738,12 @@ System.nanoTime();
 				"  Besieging needs a war - as ruler, declare one on the WAR",
 				"  tab. A ruler may also take command of a realm army.",
 				"  K attacks a selected enemy army with yours, as a battle",
-				"  you fight yourself. Sieges and victories earn war",
-				"  contribution, which is what lets you claim land.",
+				"  you fight yourself. Kill or rout every standing enemy,",
+				"  or break them by losses and commander kills. If you fall,",
+				"  your remaining troops can still hold the field.",
+				"  Sieges and victories earn war contribution, which is",
+				"  what lets you claim land. Pursuit pays salvage; mercy",
+				"  and prisoners build reputation and conquest credit.",
 				"",
 				"YOUR PATH",
 				"  1. Trade goods and carry contracts to earn coin.",

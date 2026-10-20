@@ -57,6 +57,11 @@ public class Player extends Entity{
 	public int attackCooldownBase = 16; // base cooldown, can be reduced by Attack Speed Up power-up
 	public int meleeDamage = 12; // base melee damage, can be increased by Damage Up power-up
 	public int projectileDamage = 8; // base projectile damage
+	/** Personal combat bookkeeping used by campaign morale and the battle HUD. */
+	public int totalKills;
+	public int lastAttackHits;
+	public int lastAttackKills;
+	public boolean lastAttackExhausted;
 	public int abilityAuraTicks = 0;
 	public int abilityDamageBonus = 0;
 	public int abilityDefenseBonus = 0;
@@ -416,9 +421,17 @@ public class Player extends Entity{
 		if (attackCooldown > 0) {
 			attackCooldown--;
 		}
-		if (keyH.spacePressed && attackCooldown == 0 && stamina >= 10) {
-			stamina -= 10;
-			attackCooldown = attackCooldownBase;
+		// Basic attacks are never stamina-locked while the player is alive.
+		// Exhaustion only makes the swing slower and softer (see performMeleeAttack),
+		// so a surrounded player can keep fighting instead of standing defenceless.
+		if (keyH.spacePressed && BattlefieldRules.canBasicAttack(health, attackCooldown)) {
+			int staminaBeforeSwing = stamina;
+			lastAttackExhausted = staminaBeforeSwing < 10;
+			stamina = Math.max(0, stamina - (lastAttackExhausted ? stamina : 6));
+			attackCooldown = BattlefieldRules.attackCooldownTicks(
+					attackCooldownBase, staminaBeforeSwing);
+			lastAttackHits = 0;
+			lastAttackKills = 0;
 			isAttacking = true;
 			attackAnimationCounter = 0;
 			attackAnimationFrame = 0; // Start attack animation from first frame
@@ -627,56 +640,65 @@ public class Player extends Entity{
 		}
 	}
 
+	/**
+	 * Wide directional cleave rather than the old one-tile box. The nearest
+	 * target takes full damage, additional targets take falloff damage, and
+	 * up to six enemies can be driven back by one swing. Enemies practically
+	 * touching the player count even outside the facing arc, so being boxed in
+	 * by collision never makes the swing whiff in every direction.
+	 */
 	private void performMeleeAttack() {
-		int range = gp.tileSize + 4;
-		float attackX = x;
-		float attackY = y;
-		int attackW = gp.tileSize;
-		int attackH = gp.tileSize;
-
+		float facingX = 0f;
+		float facingY = 1f;
 		switch (direction) {
-		case "up":
-			attackY -= range;
-			break;
-		case "upRight":
-			attackX += range * 0.70710678f;
-			attackY -= range * 0.70710678f;
-			break;
-		case "right":
-			attackX += range;
-			break;
-		case "downRight":
-			attackX += range * 0.70710678f;
-			attackY += range * 0.70710678f;
-			break;
-		case "down":
-			attackY += range;
-			break;
-		case "downLeft":
-			attackX -= range * 0.70710678f;
-			attackY += range * 0.70710678f;
-			break;
-		case "left":
-			attackX -= range;
-			break;
-		case "upLeft":
-			attackX -= range * 0.70710678f;
-			attackY -= range * 0.70710678f;
-			break;
+			case "up" -> { facingX = 0f; facingY = -1f; }
+			case "upRight" -> { facingX = 0.70710678f; facingY = -0.70710678f; }
+			case "right" -> { facingX = 1f; facingY = 0f; }
+			case "downRight" -> { facingX = 0.70710678f; facingY = 0.70710678f; }
+			case "down" -> { facingX = 0f; facingY = 1f; }
+			case "downLeft" -> { facingX = -0.70710678f; facingY = 0.70710678f; }
+			case "left" -> { facingX = -1f; facingY = 0f; }
+			case "upLeft" -> { facingX = -0.70710678f; facingY = -0.70710678f; }
+			default -> { }
 		}
 
+		float playerCenterX = x + gp.tileSize / 2f;
+		float playerCenterY = y + gp.tileSize / 2f;
+		float reach = gp.tileSize * 1.95f;
+		java.util.List<Enemy> targets = new java.util.ArrayList<>();
+		java.util.Map<Enemy, Float> distances = new java.util.IdentityHashMap<>();
 		for (Enemy enemy : gp.enemies) {
-			if (enemy.dead) continue;
-			float ex = enemy.x;
-			float ey = enemy.y;
-			int ew = gp.tileSize;
-			int eh = gp.tileSize;
-			if (ex + ew > attackX && ex < attackX + attackW && ey + eh > attackY && ey < attackY + attackH) {
-				int damage = meleeDamage + (abilityAuraTicks > 0 ? abilityDamageBonus : 0);
-				enemy.health -= damage;
-				enemy.showHealthCounter = 60;
-				enemy.threatTable.addThreat(this, damage);
-				if (enemy.health < 0) enemy.health = 0;
+			if (enemy == null || !enemy.isTargetableInBattle()) continue;
+			float dx = enemy.x + gp.tileSize / 2f - playerCenterX;
+			float dy = enemy.y + gp.tileSize / 2f - playerCenterY;
+			float distance = (float) Math.sqrt(dx * dx + dy * dy);
+			if (distance > reach) continue;
+			float facingDot = distance <= 0.01f ? 1f
+					: (dx * facingX + dy * facingY) / distance;
+			if (distance > gp.tileSize * 0.95f && facingDot < 0.34f) continue;
+			targets.add(enemy);
+			distances.put(enemy, distance);
+		}
+		targets.sort(java.util.Comparator.comparing(distances::get));
+
+		int staminaForDamage = lastAttackExhausted ? 0 : Math.max(10, stamina);
+		int baseDamage = meleeDamage + (abilityAuraTicks > 0 ? abilityDamageBonus : 0);
+		int hits = Math.min(6, targets.size());
+		for (int i = 0; i < hits; i++) {
+			Enemy enemy = targets.get(i);
+			int damage = BattlefieldRules.cleaveDamage(baseDamage, i, staminaForDamage);
+			boolean wasAlive = enemy.health > 0;
+			enemy.health = Math.max(0, enemy.health - damage);
+			enemy.showHealthCounter = 60;
+			enemy.threatTable.addThreat(this, damage);
+			float dx = enemy.x + gp.tileSize / 2f - playerCenterX;
+			float dy = enemy.y + gp.tileSize / 2f - playerCenterY;
+			float distance = Math.max(1f, (float) Math.sqrt(dx * dx + dy * dy));
+			enemy.applyKnockback(dx / distance, dy / distance, i == 0 ? 13f : 9f);
+			lastAttackHits++;
+			if (wasAlive && enemy.health <= 0) {
+				lastAttackKills++;
+				totalKills++;
 			}
 		}
 	}

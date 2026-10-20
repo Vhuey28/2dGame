@@ -188,7 +188,8 @@ public class Troop extends Entity {
     }
 
     private boolean isValidTarget(Enemy enemy) {
-        return enemy != null && !enemy.dead && enemy.health > 0;
+        // Routed enemies can be pursued; surrendered and escaped enemies cannot be hit.
+        return enemy != null && enemy.isTargetableInBattle();
     }
 
     private Enemy findNearestLivingEnemy() {

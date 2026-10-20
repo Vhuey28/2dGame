@@ -1307,7 +1307,106 @@ public final class CampaignSession {
 
     /** Records that you fought a strategic battle, so conquest can be earned from it. */
     public void notePlayerBattleResult(boolean playerHeldField) {
-        if (playerHeldField) playerState.conquestContribution += 25.0;
+        recordPlayerBattleOutcome(playerHeldField, false, 0, 0, 0, 0,
+                false, false, false, null);
+    }
+
+    /**
+     * Applies the personal consequences of a personally fought campaign battle.
+     * The strategic armies, casualties, prisoners, and supply loot are reconciled
+     * by BattleBridge; this method adds what belongs to the adventurer: conquest
+     * credit, battlefield salvage, military experience, and reputation. Pursuing a
+     * broken enemy pays more salvage, while showing mercy pays more reputation.
+     *
+     * @return a short player-readable reward summary, or an empty string for defeat
+     */
+    public String recordPlayerBattleOutcome(boolean playerHeldField, boolean draw,
+            int personalKills, int enemyKilled, int prisonersTaken, int routedEnemies,
+            boolean enemyCommanderDown, boolean pursuedRout, boolean showedMercy,
+            Long enemyRealmId) {
+        if (!playerHeldField && !draw) return "";
+
+        int kills = Math.max(0, personalKills);
+        int lossesInflicted = Math.max(0, enemyKilled);
+        int prisoners = Math.max(0, prisonersTaken);
+        int routed = Math.max(0, routedEnemies);
+
+        double contribution = playerHeldField
+                ? 25.0 + Math.min(20.0, kills * 1.5) + prisoners * 2.0 + routed * 0.5
+                        + (enemyCommanderDown ? 10.0 : 0.0)
+                : 8.0 + Math.min(5.0, kills * 0.5);
+        playerState.conquestContribution += contribution;
+
+        long salvageCoins = playerHeldField
+                ? 20L + lossesInflicted * 4L + kills * 2L + prisoners * 15L
+                        + (pursuedRout ? routed * 2L : 0L)
+                        + (enemyCommanderDown ? 50L : 0L)
+                : Math.min(30L, lossesInflicted * 2L);
+        WorldParty party = world.parties.get(playerState.partyId);
+        if (party != null && salvageCoins > 0L) party.money.add(salvageCoins);
+
+        Person adventurer = world.people.get(playerState.personId);
+        if (adventurer != null) {
+            double experience = (playerHeldField ? 10.0 : 4.0) + kills * 1.25
+                    + prisoners * 0.75 + (enemyCommanderDown ? 8.0 : 0.0);
+            adventurer.militaryExperience = Math.min(100.0,
+                    adventurer.militaryExperience + experience);
+            if (playerHeldField && kills >= 5) {
+                adventurer.skills.martial = Math.min(100, adventurer.skills.martial + 1);
+            }
+            if (playerHeldField && (prisoners > 0 || enemyCommanderDown)) {
+                adventurer.skills.leadership = Math.min(100,
+                        adventurer.skills.leadership + 1);
+            }
+        }
+
+        int localReputation = playerHeldField
+                ? 2 + kills / 5 + (showedMercy ? 3 : 0)
+                : 1;
+        playerState.changeSettlementReputation(playerState.currentSettlementId, localReputation);
+        Realm friendlyRealm = effectivePlayerRealm();
+        if (friendlyRealm != null) {
+            int realmReputation = playerHeldField
+                    ? 2 + (enemyCommanderDown ? 2 : 0) + prisoners / 3 : 1;
+            playerState.realmReputation.merge(friendlyRealm.id, realmReputation, Integer::sum);
+        }
+        if (enemyRealmId != null) {
+            int enemyReputation = showedMercy ? 1 : pursuedRout ? -3 : -2;
+            playerState.realmReputation.merge(enemyRealmId,
+                    playerHeldField ? enemyReputation : 0, Integer::sum);
+        }
+
+        publish(playerHeldField ? "PLAYER_BATTLE_VICTORY" : "PLAYER_BATTLE_DRAW",
+                clock.getWorldMinute());
+        refreshSnapshot();
+        StringBuilder summary = new StringBuilder();
+        summary.append("Personal spoils: ").append(Math.round(contribution))
+                .append(" conquest credit");
+        if (salvageCoins > 0L) summary.append(", ").append(salvageCoins).append("c salvage");
+        if (prisoners > 0) summary.append(", ").append(prisoners).append(" prisoners taken by your army");
+        if (kills > 0) summary.append(", ").append(kills).append(" personal kills");
+        summary.append('.');
+        return summary.toString();
+    }
+
+    /**
+     * The adventurer was knocked down, but their remaining soldiers held or
+     * safely left the field. This is a serious wound, not captivity or a rout.
+     */
+    public CommandResult recordPlayerKnockedOutArmyHeldField(boolean victory) {
+        long minute = clock.getWorldMinute();
+        Person adventurer = world.people.get(playerState.personId);
+        if (adventurer == null) {
+            return CommandResult.rejected("INVALID_STATE", "The adventurer cannot be resolved");
+        }
+        woundPlayer(adventurer, victory ? 65.0 : 55.0);
+        adventurer.militaryExperience = Math.min(100.0, adventurer.militaryExperience + 5.0);
+        publish("PLAYER_KNOCKED_OUT", minute);
+        refreshSnapshot();
+        return new CommandResult(true, victory ? "KNOCKED_OUT_VICTORY" : "KNOCKED_OUT_DRAW",
+                victory
+                        ? "You are knocked senseless, but your soldiers carry the field and drag you clear."
+                        : "You are knocked senseless; your soldiers pull you back as both sides disengage.");
     }
 
     /**
