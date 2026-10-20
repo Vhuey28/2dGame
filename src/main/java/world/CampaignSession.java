@@ -10,6 +10,7 @@ import world.military.BattleContext;
 import world.military.Siege;
 import world.politics.Claim;
 import world.politics.Government;
+import world.politics.Office;
 import world.politics.Title;
 import world.save.CampaignSaveCodec;
 
@@ -758,17 +759,17 @@ public final class CampaignSession {
         } else {
             playerState.titleIds.clear();
         }
-        for (world.politics.Office office : world.offices.values()) {
+        for (Office office : world.offices.values()) {
             boolean targetRulerOffice = office.realmId == realm.id
-                    && office.type == world.politics.Office.OfficeType.RULER;
+                    && office.type == Office.OfficeType.RULER;
             if (!targetRulerOffice && office.holderPersonId != null
                     && office.holderPersonId.longValue() == player.id) {
                 office.holderPersonId = null;
             }
         }
         player.officeId = null;
-        for (world.politics.Office office : world.offices.values()) {
-            if (office.realmId != realm.id || office.type != world.politics.Office.OfficeType.RULER) continue;
+        for (Office office : world.offices.values()) {
+            if (office.realmId != realm.id || office.type != Office.OfficeType.RULER) continue;
             Person previous = office.holderPersonId == null ? null : world.people.get(office.holderPersonId);
             if (previous != null && previous.id != player.id && previous.officeId != null
                     && previous.officeId.longValue() == office.id) previous.officeId = null;
