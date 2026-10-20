@@ -377,6 +377,17 @@ public class GamePanel extends JPanel implements Runnable{
 					repaint();
 					return;
 				}
+				if (code == KeyEvent.VK_K && gameStarted && gameMode == GameMode.CAMPAIGN
+						&& currentLayer == GameLayer.WORLD_MAP
+						&& (campaignContextMenu == CampaignContextMenu.ARMY
+								|| campaignContextMenu == CampaignContextMenu.ENCOUNTER)) {
+					// Right-clicking an army both selects it and opens its menu.
+					// K must still work from that menu; otherwise the documented
+					// "select army, press K" battle shortcut appears to do nothing.
+					startCampaignTacticalBattle();
+					repaint();
+					return;
+				}
 				if (campaignContextMenu != CampaignContextMenu.NONE) return;
 				if (!gameStarted && code == KeyEvent.VK_ENTER && menuStage == MenuStage.READY) {
 					gameStarted = true;
@@ -1480,18 +1491,44 @@ public class GamePanel extends JPanel implements Runnable{
 
 	private void startCampaignTacticalBattle() {
 			if (campaignSession == null || activeCampaignBattle != null) return;
+			if (campaignSnapshot == null) campaignSnapshot = campaignSession.getSnapshot();
 			if (campaignSnapshot == null || campaignSnapshot.player == null) return;
-			if (selectedCampaignActorId == null) {
+			CampaignContextMenu sourceMenu = campaignContextMenu;
+			Long targetArmyId = sourceMenu == CampaignContextMenu.ENCOUNTER
+					&& campaignEncounterArmyId != null
+					? campaignEncounterArmyId : selectedCampaignActorId;
+			if (targetArmyId == null) {
 				showCampaignNotice("Right-click an enemy army on the map to select it, then press K to attack it. "
 						+ "You may fight with your party even if you command no army.");
 				return;
 			}
-			world.command.CommandResult cleared = campaignSession.canEngageArmy(selectedCampaignActorId);
+			world.command.CommandResult cleared = campaignSession.canEngageArmy(targetArmyId);
 			if (!cleared.accepted) {
-				showCampaignNotice(cleared.message);
+				if (sourceMenu == CampaignContextMenu.ARMY
+						|| sourceMenu == CampaignContextMenu.ENCOUNTER) {
+					campaignContextMessage = cleared.message;
+				} else {
+					showCampaignNotice(cleared.message);
+				}
 				return;
 			}
-			launchCampaignBattle(selectedCampaignActorId);
+			selectedCampaignActorId = targetArmyId;
+			campaignContextMenu = CampaignContextMenu.NONE;
+			campaignContextMessage = "";
+			campaignContextButtons.clear();
+			if (sourceMenu == CampaignContextMenu.ENCOUNTER) {
+				campaignEncounterArmyId = null;
+				campaignFollowArmyId = null;
+				campaignFollowAnchorSettlementId = null;
+			}
+			launchCampaignBattle(targetArmyId);
+			if (sourceMenu == CampaignContextMenu.ENCOUNTER && activeCampaignBattle == null
+					&& currentLayer == GameLayer.WORLD_MAP) {
+				// Launch refused after validation (for example, the army vanished):
+				// do not immediately reopen the same encounter forever.
+				campaignEncounterIgnoredArmyId = targetArmyId;
+				campaignEncounterGraceUntilMinute = campaignSnapshot.worldMinute + 60L;
+			}
 		}
 
 		/**
@@ -1509,6 +1546,11 @@ public class GamePanel extends JPanel implements Runnable{
 			world.command.CommandResult health = campaignSession.playerCanFight();
 			if (!health.accepted) {
 				showCampaignNotice(health.message);
+				return;
+			}
+			if (campaignSnapshot == null) campaignSnapshot = campaignSession.getSnapshot();
+			if (campaignSnapshot == null || campaignSnapshot.player == null) {
+				showCampaignNotice("The campaign state is not ready to start a battle yet.");
 				return;
 			}
 			// Companions fight beside you, and their wounds and deaths are reconciled.
@@ -3274,8 +3316,8 @@ System.nanoTime();
 			g2.setFont(new Font("SansSerif", Font.BOLD, 12));
 			g2.setColor(Color.YELLOW);
 			String battleCounts = "Battle " + activeCampaignBattle.battleId
-					+ "  |  Your troops " + campaignBattleFriendlyStanding() + "/"
-					+ campaignBattleInitialAttackers
+					+ "  |  Your force " + campaignBattleOpposingStanding() + "/"
+					+ (campaignBattleInitialAttackers + 1)
 					+ "  |  Enemy standing " + campaignBattleEnemyStanding()
 					+ ", routed " + campaignBattleEnemyRoutedAlive()
 					+ "  |  Your kills " + campaignBattlePersonalKills();

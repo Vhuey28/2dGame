@@ -388,7 +388,15 @@ public final class MilitarySystem {
                 continue;
             }
             if (army.state != Army.ArmyState.MUSTERED) continue;
-            if (army.order == Army.ArmyOrder.BESIEGE && activeSiegeWithArmy(army)) continue;
+            boolean inSiegePosition = army.destinationSettlementId != null
+                    && army.destinationSettlementId.longValue() == army.currentSettlementId;
+            if (army.order == Army.ArmyOrder.BESIEGE
+                    && (activeSiegeWithArmy(army) || inSiegePosition)) {
+                // WarSystem runs after MilitarySystem each day. Do not replace
+                // a just-arrived besieger's ongoing order before WarSystem has
+                // its daily chance to open or continue the siege.
+                continue;
+            }
 
             int armyStrength = strength(army);
             int grainNeededPerDay = Math.max(1, (armyStrength + 1) / 2);

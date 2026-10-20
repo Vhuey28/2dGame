@@ -273,6 +273,31 @@ class SoloBattleArmyGenerationAndWarTest {
     }
 
     @Test
+    void independentOrdersRespectAnArmyAlreadyInSiegePosition() {
+        CampaignSession session = new CampaignSession(20261103L);
+        WorldState world = session.getWorld();
+        MilitarySystem military = session.getSimulation().getMilitarySystem();
+        List<Realm> realms = sortedRealms(world);
+        resetWars(world);
+        Army besieger = armyForRealm(world, military, realms.get(0).id);
+        for (Army army : world.armies.values()) {
+            if (army.id != besieger.id) army.state = Army.ArmyState.DISBANDED;
+        }
+        Settlement target = settlementControlledBy(world, realms.get(1).id);
+        prepareIdleArmy(besieger, target);
+        besieger.order = Army.ArmyOrder.BESIEGE;
+        besieger.destinationSettlementId = target.id;
+
+        military.issueIndependentArmyOrders(session.getSimulation().getClock().getWorldMinute());
+
+        assertEquals(Army.ArmyState.MUSTERED, besieger.state);
+        assertEquals(Army.ArmyOrder.BESIEGE, besieger.order);
+        assertEquals(target.id, besieger.currentSettlementId);
+        assertEquals(target.id, besieger.destinationSettlementId.longValue());
+        assertTrue(besieger.routeRoadIds.isEmpty());
+    }
+
+    @Test
     void strongestIndependentArmyAdvancesToBesiegeDuringWarAndRoutedArmyReturnsToSafety() {
         CampaignSession session = new CampaignSession(20261101L);
         WorldState world = session.getWorld();
