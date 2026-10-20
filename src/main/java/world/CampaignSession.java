@@ -1129,7 +1129,7 @@ public final class CampaignSession {
     /** Joins one specific active siege, as selected from the WAR tab. */
     public CommandResult joinSiege(long siegeId) {
         world.military.Siege siege = world.sieges.get(siegeId);
-        if (siege == null || siege.state != world.military.Siege.SiegeState.ACTIVE) {
+        if (siege == null || siege.state != Siege.SiegeState.ACTIVE) {
             return CommandResult.rejected("INVALID_SIEGE", "That siege is no longer active");
         }
         return startOrJoinSiege(siege.settlementId, siege);
@@ -1288,7 +1288,7 @@ public final class CampaignSession {
         world.military.Siege best = null;
         for (world.military.Siege siege : world.sieges.values()) {
             if (siege.settlementId != settlementId
-                    || siege.state != world.military.Siege.SiegeState.ACTIVE) continue;
+                    || siege.state != Siege.SiegeState.ACTIVE) continue;
             if (best == null || siege.id < best.id) best = siege;
         }
         return best;
