@@ -47,7 +47,7 @@ class PlayerCommandAndHoldingsTest {
     private static Settlement preparedHome(CampaignSession session, int weapons, long coins) {
         WorldState world = session.getWorld();
         PlayerCampaignState player = session.getPlayerState();
-        if (player.currentSettlementId == null) {
+        if (world.geography.getSettlement(player.currentSettlementId) == null) {
             List<Settlement> settlements = new ArrayList<>(world.geography.getSettlements().values());
             settlements.sort(Comparator.comparingLong(settlement -> settlement.id));
             session.travelPlayerTo(settlements.get(0).id);
