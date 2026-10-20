@@ -1,12 +1,16 @@
 package world;
 
 import world.command.CommandResult;
+import world.diplomacy.Grievance;
 import world.economy.GoodType;
 import world.geography.Road;
 import world.geography.Settlement;
 import world.geography.WorldPosition;
-import world.save.CampaignSaveCodec;
+import world.military.Siege;
+import world.politics.Claim;
 import world.politics.Government;
+import world.politics.Title;
+import world.save.CampaignSaveCodec;
 
 import java.util.ArrayList;
 
@@ -561,7 +565,7 @@ public final class CampaignSession {
             if (deposed != null && deposed.alive) {
                 world.politics.Claim counter = new world.politics.Claim(world.idGenerator.next(),
                         deposedId, crown.id, hasClaim ? 45.0 : 70.0,
-                        world.politics.Claim.ClaimSource.DISPUTED_SUCCESSION, minute);
+                        Claim.ClaimSource.DISPUTED_SUCCESSION, minute);
                 world.claims.put(counter.id, counter);
                 crown.claimIds.add(counter.id);
             }
@@ -876,7 +880,7 @@ public final class CampaignSession {
     public CommandResult assaultSiege(long siegeId) {
         long minute = clock.getWorldMinute();
         world.military.Siege siege = world.sieges.get(siegeId);
-        if (siege == null || siege.state != world.military.Siege.SiegeState.ACTIVE) {
+        if (siege == null || siege.state != Siege.SiegeState.ACTIVE) {
             return CommandResult.rejected("INVALID_SIEGE", "There is no active siege to assault");
         }
         Army mine = playerState.commandedArmyId == null
@@ -963,7 +967,7 @@ public final class CampaignSession {
     /** What a title pays its holder each day, out of the settlement's own treasury. */
     public static long dailyRent(world.politics.Title title, Settlement settlement) {
         if (title == null || settlement == null) return 0L;
-        long base = title.rank == world.politics.Title.Rank.BARONY ? 5L : 12L;
+        long base = title.rank == Title.Rank.BARONY ? 5L : 12L;
         double prosperity = 1.0 + Math.max(0.0, Math.min(1.5, settlement.prosperity));
         double calm = 1.0 - Math.min(0.8, Math.max(0.0, settlement.unrest));
         return Math.max(1L, Math.round(base * prosperity * calm));
@@ -1036,7 +1040,7 @@ public final class CampaignSession {
         Long dispossessed = settlement.controllerRealmId;
         world.politics.Title title = new world.politics.Title(world.idGenerator.next(),
                 (county ? "County of " : "Barony of ") + settlement.name,
-                county ? world.politics.Title.Rank.COUNTY : world.politics.Title.Rank.BARONY, realm.id);
+                county ? Title.Rank.COUNTY : Title.Rank.BARONY, realm.id);
         title.deJureProvinceId = settlement.provinceId;
         title.settlementId = settlement.id;
         title.installHolder(playerState.personId, minute, "CONQUEST");
@@ -1073,14 +1077,14 @@ public final class CampaignSession {
         // The diplomatic cost of keeping conquered land.
         if (dispossessed != null && dispossessed != realm.id && world.realms.containsKey(dispossessed)) {
             world.diplomacy.Grievance grievance = new world.diplomacy.Grievance(world.idGenerator.next(),
-                    dispossessed, realm.id, world.diplomacy.Grievance.GrievanceType.BORDER_DISPUTE,
+                    dispossessed, realm.id, Grievance.GrievanceType.BORDER_DISPUTE,
                     county ? 70 : 45, minute, minute + 360L * WorldConfig.MINUTES_PER_DAY);
             world.grievances.put(grievance.id, grievance);
             Realm loser = world.realms.get(dispossessed);
             if (loser != null && loser.rulerPersonId != null) {
                 world.politics.Claim counter = new world.politics.Claim(world.idGenerator.next(),
                         loser.rulerPersonId, title.id, county ? 70.0 : 55.0,
-                        world.politics.Claim.ClaimSource.DISPUTED_SUCCESSION, minute);
+                        Claim.ClaimSource.DISPUTED_SUCCESSION, minute);
                 world.claims.put(counter.id, counter);
                 title.claimIds.add(counter.id);
             }

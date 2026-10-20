@@ -324,11 +324,11 @@ public final class CampaignSnapshot {
                     daysSince(war.startMinute, minute), war.declarationReason,
                     involvesPlayerRealm(world, war)));
         }
-        warViews.sort((first, second) -> {
-            boolean firstActive = "ACTIVE".equals(first.state);
-            boolean secondActive = "ACTIVE".equals(second.state);
+        warViews.sort((a, b) -> {
+            boolean firstActive = "ACTIVE".equals(a.state);
+            boolean secondActive = "ACTIVE".equals(b.state);
             if (firstActive != secondActive) return firstActive ? -1 : 1;
-            return Long.compare(first.id, second.id);
+            return Long.compare(a.id, b.id);
         });
 
         List<SiegeView> siegeViews = new ArrayList<>();
@@ -346,12 +346,12 @@ public final class CampaignSnapshot {
                     siegeWar == null ? null : siegeWar.goal.toString(),
                     involvesPlayerRealmSiege(world, siege)));
         }
-        siegeViews.sort((first, second) -> {
-            boolean firstActive = "ACTIVE".equals(first.state);
-            boolean secondActive = "ACTIVE".equals(second.state);
+        siegeViews.sort((a, b) -> {
+            boolean firstActive = "ACTIVE".equals(a.state);
+            boolean secondActive = "ACTIVE".equals(b.state);
             if (firstActive != secondActive) return firstActive ? -1 : 1;
-            int byBreach = Double.compare(second.breachProgress, first.breachProgress);
-            return byBreach != 0 ? byBreach : Long.compare(first.id, second.id);
+            int byBreach = Double.compare(b.breachProgress, a.breachProgress);
+            return byBreach != 0 ? byBreach : Long.compare(a.id, b.id);
         });
 
         List<TitleView> titleViews = new ArrayList<>();
@@ -374,10 +374,10 @@ public final class CampaignSnapshot {
                     holding == null ? null : holding.name,
                     CampaignSession.dailyRent(title, holding)));
         }
-        titleViews.sort((first, second) -> {
-            if (first.heldByPlayer != second.heldByPlayer) return first.heldByPlayer ? -1 : 1;
-            if (first.isCrown != second.isCrown) return first.isCrown ? -1 : 1;
-            return Long.compare(first.id, second.id);
+        titleViews.sort((a, b) -> {
+            if (a.heldByPlayer != b.heldByPlayer) return a.heldByPlayer ? -1 : 1;
+            if (a.isCrown != b.isCrown) return a.isCrown ? -1 : 1;
+            return Long.compare(a.id, b.id);
         });
 
         return new CampaignSnapshot(minute, simulation.getClock().getSpeed(),
