@@ -153,6 +153,11 @@ public final class CampaignSnapshot {
         }
         realmViews.sort(Comparator.comparing(view -> view.name));
 
+        Set<Long> capitalSettlementIds = new HashSet<>();
+        for (Realm realm : world.realms.values()) {
+            if (realm.capitalSettlementId != null) capitalSettlementIds.add(realm.capitalSettlementId);
+        }
+
         List<SettlementView> settlementViews = new ArrayList<>();
         for (Settlement settlement : world.geography.getSettlements().values()) {
             int population = countPopulation(world, settlement.id);
@@ -170,13 +175,19 @@ public final class CampaignSnapshot {
                 }
             }
             double food = households == 0 ? 0.0 : settlementFood / households;
+            world.geography.Province province = world.geography.getProvince(settlement.provinceId);
             settlementViews.add(new SettlementView(settlement.id, settlement.name,
                     settlement.controllerRealmId, settlement.occupyingRealmId,
                     settlement.position.x, settlement.position.y,
                     population, households, settlement.treasury.copperCoins, grain,
                     vegetables, settlement.market.getLastPrice(GoodType.GRAIN),
                     settlement.market.getLastPrice(GoodType.VEGETABLES),
-                    food, settlement.security, settlement.unrest));
+                    food, settlement.security, settlement.unrest,
+                    settlement.type == null ? "VILLAGE" : settlement.type.toString(),
+                    province == null ? "Unknown province" : province.name,
+                    province == null || province.terrain == null
+                            ? "PLAINS" : province.terrain.toString(),
+                    capitalSettlementIds.contains(settlement.id)));
         }
         settlementViews.sort(Comparator.comparing(view -> view.name));
 
@@ -198,11 +209,43 @@ public final class CampaignSnapshot {
         for (Caravan caravan : world.caravans.values()) {
             if (caravan.position == null || caravan.state == Caravan.CaravanState.DESTROYED) continue;
             GoodType cargoType = caravan.primaryCargo();
+            Person caravanLeader = world.people.get(caravan.leaderPersonId);
             caravanViews.add(new CaravanView(caravan.id, caravan.position.x, caravan.position.y,
                     caravan.state.toString(), cargoType == null ? "Empty" : cargoType.toString(),
-                    caravan.cargoQuantity(), caravan.cash.copperCoins, caravan.completedTrips));
+                    caravan.cargoQuantity(), caravan.cash.copperCoins, caravan.completedTrips,
+                    caravan.currentSettlementId, caravan.destinationSettlementId,
+                    caravanLeader == null ? "Unknown merchant"
+                            : caravanLeader.givenName + " " + caravanLeader.familyName,
+                    caravan.guardPersonIds.size()));
         }
         caravanViews.sort(Comparator.comparingLong(view -> view.id));
+
+        Long playerRealmForHostility = null;
+        if (world.player != null) {
+            playerRealmForHostility = world.player.affiliatedRealmId;
+            for (Realm realm : world.realms.values()) {
+                if (realm.rulerPersonId != null && realm.rulerPersonId == world.player.personId) {
+                    playerRealmForHostility = realm.id;
+                    break;
+                }
+            }
+            if (playerRealmForHostility == null && world.player.commandedArmyId != null) {
+                Army commanded = world.armies.get(world.player.commandedArmyId);
+                if (commanded != null) playerRealmForHostility = commanded.realmId;
+            }
+        }
+        Set<Long> hostileRealmIds = new HashSet<>();
+        if (playerRealmForHostility != null) {
+            for (War war : world.wars.values()) {
+                if (war.state == War.WarState.ENDED) continue;
+                if (war.attackerRealmIds.contains(playerRealmForHostility)) {
+                    hostileRealmIds.addAll(war.defenderRealmIds);
+                }
+                if (war.defenderRealmIds.contains(playerRealmForHostility)) {
+                    hostileRealmIds.addAll(war.attackerRealmIds);
+                }
+            }
+        }
 
         List<ArmyView> armyViews = new ArrayList<>();
         for (Army army : world.armies.values()) {
@@ -212,11 +255,15 @@ public final class CampaignSnapshot {
                 world.military.Regiment regiment = world.regiments.get(regimentId);
                 if (regiment != null) strength += regiment.livingStrength(world);
             }
+            Person commander = world.people.get(army.commanderPersonId);
             armyViews.add(new ArmyView(army.id, army.realmId, army.position.x, army.position.y,
                     strength, army.morale, army.fatigue,
                     army.supplies.getQuantity(GoodType.GRAIN), army.order.toString(), army.state.toString(),
                     army.currentSettlementId, army.destinationSettlementId,
-                    army.daysWithoutFood, army.playerCommanded));
+                    army.daysWithoutFood, army.playerCommanded,
+                    commander == null ? "Unknown commander"
+                            : commander.givenName + " " + commander.familyName,
+                    !army.playerCommanded && hostileRealmIds.contains(army.realmId)));
         }
         armyViews.sort(Comparator.comparingLong(view -> view.id));
 
@@ -282,6 +329,19 @@ public final class CampaignSnapshot {
             Realm affiliatedRealm = affiliatedRealmId == null ? null : world.realms.get(affiliatedRealmId);
             Realm captorRealm = world.player.captorRealmId == null
                     ? null : world.realms.get(world.player.captorRealmId);
+            Settlement playerSettlement = world.geography.getSettlement(world.player.currentSettlementId);
+            double playerWorldX = playerParty != null && playerParty.position != null
+                    ? playerParty.position.x
+                    : playerSettlement == null || playerSettlement.position == null
+                            ? 0.0 : playerSettlement.position.x;
+            double playerWorldY = playerParty != null && playerParty.position != null
+                    ? playerParty.position.y
+                    : playerSettlement == null || playerSettlement.position == null
+                            ? 0.0 : playerSettlement.position.y;
+            Long travelDestinationId = world.player.isTraveling()
+                    ? world.player.travelDestinationSettlementId : null;
+            Settlement travelDestination = travelDestinationId == null
+                    ? null : world.geography.getSettlement(travelDestinationId);
             playerView = new PlayerView(world.player.currentSettlementId, coins,
                     world.player.cargo.getQuantity(GoodType.GRAIN),
                     world.player.cargo.getQuantity(GoodType.VEGETABLES),
@@ -293,7 +353,10 @@ public final class CampaignSnapshot {
                     playerIsRuler, world.player.captiveDaysRemaining(minute), world.player.ransomCoins,
                     captorRealm == null ? null : captorRealm.name, world.player.commandedArmyId,
                     affiliatedRealmId == null ? 0
-                            : world.player.realmReputation.getOrDefault(affiliatedRealmId, 0));
+                            : world.player.realmReputation.getOrDefault(affiliatedRealmId, 0),
+                    playerWorldX, playerWorldY, world.player.isTraveling(), travelDestinationId,
+                    travelDestination == null ? null : travelDestination.name,
+                    world.player.travelSpeedPerHour, playerTravelEtaMinutes(world));
         }
 
         List<EventView> eventViews = new ArrayList<>();
@@ -475,6 +538,27 @@ public final class CampaignSnapshot {
         return world.player != null && world.player.currentSettlementId == settlementId;
     }
 
+    /** Remaining road time for the continuously moving player party, in world minutes. */
+    private static long playerTravelEtaMinutes(WorldState world) {
+        if (world.player == null || !world.player.isTraveling()
+                || world.player.travelSpeedPerHour <= 0.0) return 0L;
+        double remainingDistance = 0.0;
+        java.util.List<Long> route = world.player.travelRouteSettlementIds;
+        for (int i = Math.max(1, world.player.travelRouteIndex); i < route.size(); i++) {
+            Settlement from = world.geography.getSettlement(route.get(i - 1));
+            Settlement to = world.geography.getSettlement(route.get(i));
+            if (from == null || to == null || from.position == null || to.position == null) continue;
+            double segment = Math.hypot(to.position.x - from.position.x,
+                    to.position.y - from.position.y);
+            if (i == world.player.travelRouteIndex) {
+                remainingDistance += (1.0 - world.player.travelSegmentProgress) * segment;
+            } else {
+                remainingDistance += segment;
+            }
+        }
+        return Math.max(0L, Math.round(remainingDistance / world.player.travelSpeedPerHour * 60.0));
+    }
+
     private static int countPopulation(WorldState world, long settlementId) {
         return world.indexes.livingPeopleAt(settlementId).size();
     }
@@ -488,6 +572,16 @@ public final class CampaignSnapshot {
 
     public RealmView findRealm(long id) {
         for (RealmView realm : realms) if (realm.id == id) return realm;
+        return null;
+    }
+
+    public ArmyView findArmy(long id) {
+        for (ArmyView army : armies) if (army.id == id) return army;
+        return null;
+    }
+
+    public CaravanView findCaravan(long id) {
+        for (CaravanView caravan : caravans) if (caravan.id == id) return caravan;
         return null;
     }
 
@@ -562,11 +656,17 @@ public final class CampaignSnapshot {
         public final double foodSecurity;
         public final double security;
         public final double unrest;
+        /** Map presentation: settlement type, province/terrain, and capital marker. */
+        public final String type;
+        public final String provinceName;
+        public final String terrain;
+        public final boolean capital;
 
         SettlementView(long id, String name, Long realmId, Long occupyingRealmId,
                 double worldX, double worldY, int population, int households, long treasury,
                 int grain, int vegetables, long grainPrice, long vegetablePrice,
-                double foodSecurity, double security, double unrest) {
+                double foodSecurity, double security, double unrest,
+                String type, String provinceName, String terrain, boolean capital) {
             this.id = id;
             this.name = name;
             this.realmId = realmId;
@@ -583,6 +683,10 @@ public final class CampaignSnapshot {
             this.foodSecurity = foodSecurity;
             this.security = security;
             this.unrest = unrest;
+            this.type = type;
+            this.provinceName = provinceName;
+            this.terrain = terrain;
+            this.capital = capital;
         }
     }
 
@@ -627,6 +731,14 @@ public final class CampaignSnapshot {
         /** Army the adventurer personally commands, if any. */
         public final Long commandedArmyId;
         public final int realmReputation;
+        /** Live campaign-map position and continuous road-travel state. */
+        public final double worldX;
+        public final double worldY;
+        public final boolean traveling;
+        public final Long travelDestinationSettlementId;
+        public final String travelDestinationName;
+        public final double travelSpeedPerHour;
+        public final long travelEtaMinutes;
 
         public boolean isCaptive() {
             return captiveDaysRemaining > 0;
@@ -637,7 +749,9 @@ public final class CampaignSnapshot {
                 List<Long> partyMemberIds, int activeContracts, Long affiliatedRealmId,
                 String kingdomRole, String kingdomName, boolean canManageKingdom,
                 int captiveDaysRemaining, long ransomCoins, String captorRealmName,
-                Long commandedArmyId, int realmReputation) {
+                Long commandedArmyId, int realmReputation,
+                double worldX, double worldY, boolean traveling, Long travelDestinationSettlementId,
+                String travelDestinationName, double travelSpeedPerHour, long travelEtaMinutes) {
             this.settlementId = settlementId;
             this.coins = coins;
             this.grain = grain;
@@ -657,6 +771,13 @@ public final class CampaignSnapshot {
             this.captorRealmName = captorRealmName;
             this.commandedArmyId = commandedArmyId;
             this.realmReputation = realmReputation;
+            this.worldX = worldX;
+            this.worldY = worldY;
+            this.traveling = traveling;
+            this.travelDestinationSettlementId = travelDestinationSettlementId;
+            this.travelDestinationName = travelDestinationName;
+            this.travelSpeedPerHour = travelSpeedPerHour;
+            this.travelEtaMinutes = travelEtaMinutes;
         }
     }
 
@@ -756,9 +877,15 @@ public final class CampaignSnapshot {
         public final int cargoQuantity;
         public final long cash;
         public final int completedTrips;
+        public final Long currentSettlementId;
+        public final Long destinationSettlementId;
+        public final String leaderName;
+        public final int guardCount;
 
         CaravanView(long id, double worldX, double worldY, String state,
-                String cargo, int cargoQuantity, long cash, int completedTrips) {
+                String cargo, int cargoQuantity, long cash, int completedTrips,
+                Long currentSettlementId, Long destinationSettlementId,
+                String leaderName, int guardCount) {
             this.id = id;
             this.worldX = worldX;
             this.worldY = worldY;
@@ -767,6 +894,10 @@ public final class CampaignSnapshot {
             this.cargoQuantity = cargoQuantity;
             this.cash = cash;
             this.completedTrips = completedTrips;
+            this.currentSettlementId = currentSettlementId;
+            this.destinationSettlementId = destinationSettlementId;
+            this.leaderName = leaderName;
+            this.guardCount = guardCount;
         }
     }
 
@@ -787,11 +918,15 @@ public final class CampaignSnapshot {
         public final int daysWithoutFood;
         /** True when the adventurer personally commands this army. */
         public final boolean playerCommanded;
+        public final String commanderName;
+        /** At war with the player's realm or commanded army's realm. */
+        public final boolean hostileToPlayer;
 
         ArmyView(long id, long realmId, double worldX, double worldY, int strength,
                 double morale, double fatigue, int grain, String order, String state,
                 Long currentSettlementId, Long destinationSettlementId,
-                int daysWithoutFood, boolean playerCommanded) {
+                int daysWithoutFood, boolean playerCommanded,
+                String commanderName, boolean hostileToPlayer) {
             this.id = id;
             this.realmId = realmId;
             this.worldX = worldX;
@@ -806,6 +941,8 @@ public final class CampaignSnapshot {
             this.destinationSettlementId = destinationSettlementId;
             this.daysWithoutFood = daysWithoutFood;
             this.playerCommanded = playerCommanded;
+            this.commanderName = commanderName;
+            this.hostileToPlayer = hostileToPlayer;
         }
     }
 

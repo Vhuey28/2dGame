@@ -24,7 +24,8 @@ import world.politics.Government;
 /** Versioned Phase 4 campaign checkpoint. Derived caches are rebuilt rather than serialized. */
 public final class CampaignSaveCodec {
     private static final int MAGIC = 0x43435134; // CCQ4
-    private static final int VERSION = 3;
+    private static final int VERSION = 4;
+    private static final int LEGACY_VERSION = 3;
 
     private CampaignSaveCodec() {}
 
@@ -51,7 +52,7 @@ public final class CampaignSaveCodec {
 
     public static CampaignSession load(Path path) throws IOException {
         try (DataInputStream in = new DataInputStream(new BufferedInputStream(Files.newInputStream(path)))) {
-            validateHeader(in);
+            int version = validateHeader(in);
             long seed = in.readLong();
             long minute = in.readLong();
             int speed = in.readInt();
@@ -60,7 +61,7 @@ public final class CampaignSaveCodec {
             CampaignSession session = new CampaignSession(seed);
             session.setWorldPaused(false);
             if (minute > 0L) session.getSimulation().advanceMinutes(minute);
-            restoreWorld(session, in);
+            restoreWorld(session, in, version);
             session.getWorld().idGenerator.restoreNextId(nextId);
             session.setSpeed(speed);
             session.setWorldPaused(paused);
@@ -132,9 +133,25 @@ public final class CampaignSaveCodec {
             out.writeLong(contract.resolvedMinute);
             out.writeLong(contract.escrowCoins);
         }
+
+        // Version 4 appends continuous road travel after the v3 payload. Keeping
+        // it at the end lets the loader share the complete v3 restore path.
+        out.writeBoolean(player.isTraveling());
+        if (player.isTraveling()) {
+            out.writeLong(player.travelDestinationSettlementId);
+            out.writeInt(player.travelRouteSettlementIds.size());
+            for (Long settlementId : player.travelRouteSettlementIds) out.writeLong(settlementId);
+            out.writeInt(player.travelRouteIndex);
+            out.writeDouble(player.travelSegmentProgress);
+            out.writeDouble(player.travelSpeedPerHour);
+            out.writeLong(player.travelLastMinute);
+            out.writeDouble(party.position == null ? Double.NaN : party.position.x);
+            out.writeDouble(party.position == null ? Double.NaN : party.position.y);
+        }
     }
 
-    private static void restoreWorld(CampaignSession session, DataInputStream in) throws IOException {
+    private static void restoreWorld(CampaignSession session, DataInputStream in, int version)
+            throws IOException {
         WorldState world = session.getWorld();
         PlayerCampaignState player = session.getPlayerState();
         long personId = in.readLong();
@@ -229,12 +246,84 @@ public final class CampaignSaveCodec {
             if (contract.status == Contract.ContractStatus.ACTIVE && contract.takerPartyId != null
                     && contract.takerPartyId == player.partyId) player.acceptedContractIds.add(id);
         }
+
+        player.clearTravel();
+        if (version >= 4 && in.readBoolean()) {
+            restoreTravel(session, in);
+        }
     }
 
-    private static void validateHeader(DataInputStream in) throws IOException {
+    /** Restores a v4 party token in the middle of its road segment. */
+    private static void restoreTravel(CampaignSession session, DataInputStream in)
+            throws IOException {
+        WorldState world = session.getWorld();
+        PlayerCampaignState player = session.getPlayerState();
+        WorldParty party = world.parties.get(player.partyId);
+        long destinationId = in.readLong();
+        if (world.geography.getSettlement(destinationId) == null) {
+            throw new IOException("Save references unknown travel destination " + destinationId);
+        }
+        int routeSize = in.readInt();
+        if (routeSize < 2 || routeSize > 4096) {
+            throw new IOException("Invalid saved travel route length " + routeSize);
+        }
+        java.util.List<Long> route = new java.util.ArrayList<>(routeSize);
+        for (int i = 0; i < routeSize; i++) {
+            long routeSettlementId = in.readLong();
+            if (world.geography.getSettlement(routeSettlementId) == null) {
+                throw new IOException("Save references unknown travel route settlement "
+                        + routeSettlementId);
+            }
+            route.add(routeSettlementId);
+        }
+        int routeIndex = in.readInt();
+        double segmentProgress = in.readDouble();
+        double speedPerHour = in.readDouble();
+        long lastMinute = in.readLong();
+        double savedX = in.readDouble();
+        double savedY = in.readDouble();
+        if (route.get(route.size() - 1).longValue() != destinationId
+                || routeIndex < 1 || routeIndex >= route.size()
+                || !Double.isFinite(segmentProgress) || segmentProgress < 0.0
+                || segmentProgress > 1.0 || !Double.isFinite(speedPerHour)
+                || speedPerHour <= 0.0) {
+            throw new IOException("Invalid saved travel state");
+        }
+
+        player.traveling = true;
+        player.travelDestinationSettlementId = destinationId;
+        player.travelRouteSettlementIds.clear();
+        player.travelRouteSettlementIds.addAll(route);
+        player.travelRouteIndex = routeIndex;
+        player.travelSegmentProgress = segmentProgress;
+        player.travelSpeedPerHour = Math.max(1.0, Math.min(20.0, speedPerHour));
+        long currentMinute = session.getSimulation().getClock().getWorldMinute();
+        player.travelLastMinute = lastMinute == Long.MIN_VALUE
+                ? currentMinute : Math.min(lastMinute, currentMinute);
+
+        party.state = WorldParty.PartyState.TRAVELING;
+        party.currentSettlementId = null;
+        party.destinationSettlementId = destinationId;
+        if (Double.isFinite(savedX) && Double.isFinite(savedY)) {
+            party.position = new WorldPosition(savedX, savedY);
+        } else {
+            Settlement from = world.geography.getSettlement(route.get(routeIndex - 1));
+            Settlement to = world.geography.getSettlement(route.get(routeIndex));
+            if (from != null && to != null && from.position != null && to.position != null) {
+                party.position = new WorldPosition(
+                        from.position.x + (to.position.x - from.position.x) * segmentProgress,
+                        from.position.y + (to.position.y - from.position.y) * segmentProgress);
+            }
+        }
+    }
+
+    private static int validateHeader(DataInputStream in) throws IOException {
         if (in.readInt() != MAGIC) throw new IOException("Not a Chronicle Conquest campaign save");
         int version = in.readInt();
-        if (version != VERSION) throw new IOException("Unsupported campaign save version " + version);
+        if (version != VERSION && version != LEGACY_VERSION) {
+            throw new IOException("Unsupported campaign save version " + version);
+        }
+        return version;
     }
 
     private static void writeInventory(DataOutputStream out, Inventory inventory) throws IOException {

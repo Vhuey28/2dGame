@@ -144,12 +144,39 @@ public class GamePanel extends JPanel implements Runnable{
 		private volatile CampaignSnapshot campaignSnapshot;
 		private Long selectedCampaignSettlementId;
 		private Long hoveredCampaignSettlementId;
+		private Long hoveredCampaignArmyId;
+		private Long hoveredCampaignCaravanId;
+		private Rectangle campaignPlayerHitbox;
 		private java.awt.Point campaignMousePoint = new java.awt.Point();
+		/** Bannerlord-style strategic camera: drag pan, cursor-centred wheel zoom. */
+		private final CampaignMapCamera campaignCamera = new CampaignMapCamera();
+		private boolean campaignCameraInitialized;
+		private java.awt.Point campaignDragStart;
+		private java.awt.Point campaignDragLast;
+		private boolean campaignDraggingMap;
+		private boolean campaignSuppressNextMapClick;
+		private final java.util.Map<String, Rectangle> campaignHudHitboxes =
+				new java.util.LinkedHashMap<>();
+		/** Moving map actors the player party is riding to intercept or shadow. */
+		private Long campaignFollowArmyId;
+		private Long campaignFollowCaravanId;
+		private Long campaignFollowAnchorSettlementId;
+		/** Hostile contact state for the paused encounter screen. */
+		private Long campaignEncounterArmyId;
+		private Long campaignEncounterIgnoredArmyId;
+		private long campaignEncounterGraceUntilMinute = Long.MIN_VALUE;
+		/** Used to open a settlement once, when a road journey actually arrives. */
+		private boolean campaignWasTraveling;
+		private Long campaignTravelDestinationSeen;
+		/** Deterministic pre-rendered terrain, regenerated only for a new world layout. */
+		private java.awt.image.BufferedImage campaignTerrainImage;
+		private int campaignTerrainImageKey;
+		private double[] campaignTerrainBounds;
 		private enum CampaignTab { OVERVIEW, INVENTORY, PARTY, CONTRACTS, KINGDOM, WAR, FIEFS, ENCYCLOPEDIA, CRIME }
 		private CampaignTab activeCampaignTab = CampaignTab.OVERVIEW;
 		private final java.util.Map<CampaignTab, Rectangle> campaignTabHitboxes = new java.util.EnumMap<>(CampaignTab.class);
 		private final java.util.Map<String, Rectangle> kingdomManagementHitboxes = new java.util.LinkedHashMap<>();
-		private enum CampaignContextMenu { NONE, SETTLEMENT, MARKET, NOTICE_BOARD, PERSON, ARMY, CARAVAN }
+		private enum CampaignContextMenu { NONE, SETTLEMENT, MARKET, NOTICE_BOARD, PERSON, ARMY, CARAVAN, ENCOUNTER }
 		private CampaignContextMenu campaignContextMenu = CampaignContextMenu.NONE;
 		private Long selectedCampaignActorId;
 		private final java.util.Map<String, Rectangle> campaignContextButtons = new java.util.LinkedHashMap<>();
@@ -311,7 +338,11 @@ public class GamePanel extends JPanel implements Runnable{
 					return;
 				}
 				if (campaignContextMenu != CampaignContextMenu.NONE && code == KeyEvent.VK_ESCAPE) {
-					campaignContextMenu = CampaignContextMenu.NONE;
+					if (campaignContextMenu == CampaignContextMenu.ENCOUNTER) {
+						leaveCampaignEncounter();
+					} else {
+						campaignContextMenu = CampaignContextMenu.NONE;
+					}
 					repaint();
 					return;
 				}
@@ -359,6 +390,7 @@ public class GamePanel extends JPanel implements Runnable{
 						if (code == KeyEvent.VK_F9) {
 							try {
 								campaignSession = CampaignSession.load(campaignSavePath);
+								resetCampaignMapState();
 								campaignSnapshot = campaignSession.getSnapshot();
 								selectedCampaignSettlementId = campaignSnapshot.player.settlementId;
 								currentLayer = GameLayer.WORLD_MAP;
@@ -419,6 +451,26 @@ public class GamePanel extends JPanel implements Runnable{
 							if (code == KeyEvent.VK_3) campaignSession.setSpeed(1440);
 							if (code == KeyEvent.VK_0) campaignSession.toggleWorldPaused();
 							if (code == KeyEvent.VK_F6) campaignSession.advanceOneDayForTesting();
+							if (code == KeyEvent.VK_HOME) centerCampaignCameraOnPlayer();
+							if (code == KeyEvent.VK_EQUALS || code == KeyEvent.VK_ADD) {
+								campaignCamera.zoomAt(screenWidth / 2, screenHeight / 2,
+										screenWidth, screenHeight, 1.16, 0.22, 4.0);
+							}
+							if (code == KeyEvent.VK_MINUS || code == KeyEvent.VK_SUBTRACT) {
+								campaignCamera.zoomAt(screenWidth / 2, screenHeight / 2,
+										screenWidth, screenHeight, 1.0 / 1.16, 0.22, 4.0);
+							}
+							if (code == KeyEvent.VK_X && campaignSnapshot != null
+									&& campaignSnapshot.player != null && campaignSnapshot.player.traveling) {
+								campaignFollowArmyId = null;
+								campaignFollowCaravanId = null;
+								campaignFollowAnchorSettlementId = null;
+								world.command.CommandResult result = campaignSession.cancelTravel();
+								if (result != null && result.message != null && !result.message.isBlank()) {
+									showCampaignNotice(result.accepted
+											? "You turn back along the road." : result.message);
+								}
+							}
 							if (selectedCampaignSettlementId != null) {
 								if (code == KeyEvent.VK_B) campaignSession.buyFromSettlement(
 									selectedCampaignSettlementId, GoodType.GRAIN, 5);
@@ -433,7 +485,16 @@ public class GamePanel extends JPanel implements Runnable{
 										selectedCampaignSettlementId);
 									if (!offers.isEmpty()) campaignSession.acceptContract(offers.get(0).id);
 								}
-								if (code == KeyEvent.VK_T) campaignSession.travelPlayerTo(selectedCampaignSettlementId);
+								if (code == KeyEvent.VK_T) {
+									campaignFollowArmyId = null;
+									campaignFollowCaravanId = null;
+									campaignFollowAnchorSettlementId = null;
+									world.command.CommandResult result =
+											campaignSession.beginTravelTo(selectedCampaignSettlementId);
+									if (result != null && result.message != null && !result.message.isBlank()) {
+										showCampaignNotice(result.message);
+									}
+								}
 							}
 							campaignSnapshot = campaignSession.getSnapshot();
 							repaint();
@@ -504,6 +565,33 @@ public class GamePanel extends JPanel implements Runnable{
 		playerParty.factionName = "Player";
 		this.addMouseListener(new MouseAdapter() {
 			@Override
+			public void mousePressed(MouseEvent e) {
+				java.awt.Point point = toGamePoint(e.getPoint());
+				campaignMousePoint = point;
+				if (gameStarted && gameMode == GameMode.CAMPAIGN
+						&& currentLayer == GameLayer.WORLD_MAP && !gamePaused
+						&& campaignContextMenu == CampaignContextMenu.NONE && !campaignHelpOpen
+						&& !cheatMenuOpen && e.getButton() == MouseEvent.BUTTON1
+						&& point.y < screenHeight - 32
+						&& (activeCampaignTab == CampaignTab.OVERVIEW
+								|| point.y < screenHeight - 39
+										- (activeCampaignTab == CampaignTab.WAR
+												|| activeCampaignTab == CampaignTab.FIEFS ? 212 : 166))) {
+					campaignDragStart = point;
+					campaignDragLast = point;
+					campaignDraggingMap = false;
+				}
+			}
+
+			@Override
+			public void mouseReleased(MouseEvent e) {
+				if (campaignDraggingMap) campaignSuppressNextMapClick = true;
+				campaignDragStart = null;
+				campaignDragLast = null;
+				campaignDraggingMap = false;
+			}
+
+			@Override
 			public void mouseClicked(MouseEvent e) {
 				java.awt.Point point = toGamePoint(e.getPoint());
 				if (cheatMenuOpen) {
@@ -556,7 +644,11 @@ public class GamePanel extends JPanel implements Runnable{
 					return;
 				}
 				if (gameMode == GameMode.CAMPAIGN && currentLayer == GameLayer.WORLD_MAP && !gamePaused) {
-					handleCampaignMapClick(point);
+					if (campaignSuppressNextMapClick) {
+						campaignSuppressNextMapClick = false;
+						return;
+					}
+					handleCampaignMapClick(point, e.getButton());
 					return;
 				}
 				if (gamePaused && settingsMenuOpen && !survivalPowerUpMenuOpen) {
@@ -637,6 +729,22 @@ public class GamePanel extends JPanel implements Runnable{
 				}
 			}
 			@Override public void mouseWheelMoved(java.awt.event.MouseWheelEvent e) {
+				if (gameStarted && gameMode == GameMode.CAMPAIGN
+						&& currentLayer == GameLayer.WORLD_MAP
+						&& campaignContextMenu == CampaignContextMenu.NONE && !campaignHelpOpen) {
+					java.awt.Point point = toGamePoint(e.getPoint());
+					campaignMousePoint = point;
+					double factor = e.getWheelRotation() < 0 ? 1.16 : 1.0 / 1.16;
+					campaignCamera.zoomAt(point.x, point.y, screenWidth, screenHeight,
+							factor, 0.22, 4.0);
+					if (campaignSnapshot != null) {
+						double[] bounds = getCampaignBounds(campaignSnapshot);
+						campaignCamera.clampTo(bounds[0] - 90, bounds[1] + 90,
+								bounds[2] - 90, bounds[3] + 90, screenWidth, screenHeight, 70);
+					}
+					repaint();
+					return;
+				}
         		if (miniMapVisible) {
            		 // scrolling up (negative rotation) zooms in
             	adjustMinimapZoom(-e.getWheelRotation() * 0.2f);
@@ -645,14 +753,55 @@ public class GamePanel extends JPanel implements Runnable{
 		});
 	
 		this.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+			@Override public void mouseDragged(MouseEvent e) {
+				java.awt.Point point = toGamePoint(e.getPoint());
+				campaignMousePoint = point;
+				if (campaignDragStart != null && campaignDragLast != null
+						&& gameMode == GameMode.CAMPAIGN && currentLayer == GameLayer.WORLD_MAP) {
+					if (campaignDragStart.distance(point) > 4.0) campaignDraggingMap = true;
+					if (campaignDraggingMap) {
+						campaignCamera.panByScreenDelta(point.x - campaignDragLast.x,
+								point.y - campaignDragLast.y);
+						if (campaignSnapshot != null) {
+							double[] bounds = getCampaignBounds(campaignSnapshot);
+							campaignCamera.clampTo(bounds[0] - 90, bounds[1] + 90,
+									bounds[2] - 90, bounds[3] + 90, screenWidth, screenHeight, 70);
+						}
+					}
+					campaignDragLast = point;
+				}
+				repaint();
+			}
+
 			@Override public void mouseMoved(MouseEvent e) {
 				campaignMousePoint = toGamePoint(e.getPoint());
 				hoveredCampaignSettlementId = null;
+				hoveredCampaignArmyId = null;
+				hoveredCampaignCaravanId = null;
 				if (gameMode == GameMode.CAMPAIGN && currentLayer == GameLayer.WORLD_MAP) {
-					for (java.util.Map.Entry<Long, Rectangle> entry : campaignSettlementHitboxes.entrySet()) {
+					// Moving tokens sit above settlement art, so test them first.
+					for (java.util.Map.Entry<Long, Rectangle> entry : campaignArmyHitboxes.entrySet()) {
 						if (entry.getValue().contains(campaignMousePoint)) {
-							hoveredCampaignSettlementId = entry.getKey();
+							hoveredCampaignArmyId = entry.getKey();
 							break;
+						}
+					}
+					if (hoveredCampaignArmyId == null) {
+						for (java.util.Map.Entry<Long, Rectangle> entry : campaignCaravanHitboxes.entrySet()) {
+							if (entry.getValue().contains(campaignMousePoint)) {
+								hoveredCampaignCaravanId = entry.getKey();
+								break;
+							}
+						}
+					}
+					if (hoveredCampaignArmyId == null && hoveredCampaignCaravanId == null
+							&& (campaignPlayerHitbox == null
+									|| !campaignPlayerHitbox.contains(campaignMousePoint))) {
+						for (java.util.Map.Entry<Long, Rectangle> entry : campaignSettlementHitboxes.entrySet()) {
+							if (entry.getValue().contains(campaignMousePoint)) {
+								hoveredCampaignSettlementId = entry.getKey();
+								break;
+							}
 						}
 					}
 				}
@@ -974,7 +1123,166 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 		}
 
+		private void resetCampaignMapState() {
+			campaignCameraInitialized = false;
+			campaignTerrainImage = null;
+			campaignTerrainImageKey = 0;
+			campaignTerrainBounds = null;
+			campaignFollowArmyId = null;
+			campaignFollowCaravanId = null;
+			campaignFollowAnchorSettlementId = null;
+			campaignEncounterArmyId = null;
+			campaignEncounterIgnoredArmyId = null;
+			campaignEncounterGraceUntilMinute = Long.MIN_VALUE;
+			campaignWasTraveling = false;
+			campaignTravelDestinationSeen = null;
+			campaignDragStart = null;
+			campaignDragLast = null;
+			campaignDraggingMap = false;
+			campaignSuppressNextMapClick = false;
+		}
+
+		/** Centres the strategic camera on the moving player-party token. */
+		private void centerCampaignCameraOnPlayer() {
+			if (campaignSnapshot == null || campaignSnapshot.player == null) return;
+			campaignCamera.centerX = campaignSnapshot.player.worldX;
+			campaignCamera.centerY = campaignSnapshot.player.worldY;
+			campaignCameraInitialized = true;
+		}
+
+		/**
+		 * Per-frame campaign-map bookkeeping: camera bounds, riding to intercept a
+		 * moving army/caravan, hostile contact, and opening a settlement on arrival.
+		 */
+		private void updateCampaignMapState() {
+			CampaignSnapshot snapshot = campaignSnapshot;
+			if (snapshot == null || snapshot.player == null || campaignSession == null) return;
+			double[] bounds = getCampaignBounds(snapshot);
+			if (!campaignCameraInitialized) {
+				campaignCamera.fit(bounds[0] - 100, bounds[1] + 100,
+						bounds[2] - 100, bounds[3] + 100, screenWidth, screenHeight, 42);
+				campaignCameraInitialized = true;
+			}
+			campaignCamera.clampTo(bounds[0] - 90, bounds[1] + 90,
+					bounds[2] - 90, bounds[3] + 90, screenWidth, screenHeight, 70);
+
+			// Follow a moving target by riding to the settlement it is currently
+			// marching toward. Re-issue only when that anchor changes, so the road
+			// route is not rebuilt every frame.
+			Long followAnchor = null;
+			if (campaignFollowArmyId != null) {
+				CampaignSnapshot.ArmyView target = snapshot.findArmy(campaignFollowArmyId);
+				if (target == null) {
+					campaignFollowArmyId = null;
+					campaignFollowAnchorSettlementId = null;
+				} else {
+					followAnchor = target.destinationSettlementId != null
+							? target.destinationSettlementId : target.currentSettlementId;
+				}
+			} else if (campaignFollowCaravanId != null) {
+				CampaignSnapshot.CaravanView target = snapshot.findCaravan(campaignFollowCaravanId);
+				if (target == null) {
+					campaignFollowCaravanId = null;
+					campaignFollowAnchorSettlementId = null;
+				} else {
+					followAnchor = target.destinationSettlementId != null
+							? target.destinationSettlementId : target.currentSettlementId;
+				}
+			}
+			if (followAnchor != null) {
+				boolean needsRide = !followAnchor.equals(campaignFollowAnchorSettlementId)
+						|| (!snapshot.player.traveling
+								&& followAnchor.longValue() != snapshot.player.settlementId);
+				if (needsRide && followAnchor.longValue() != snapshot.player.settlementId) {
+					campaignFollowAnchorSettlementId = followAnchor;
+					world.command.CommandResult result = campaignSession.beginTravelTo(followAnchor);
+					if (result != null && !result.accepted) {
+						campaignFollowArmyId = null;
+						campaignFollowCaravanId = null;
+						campaignFollowAnchorSettlementId = null;
+						showCampaignNotice(result.message);
+					} else {
+						campaignSnapshot = campaignSession.getSnapshot();
+						snapshot = campaignSnapshot;
+					}
+				}
+			}
+
+			boolean traveling = snapshot.player.traveling;
+			if (tryOpenCampaignEncounter(snapshot)) {
+				if (traveling) {
+					campaignTravelDestinationSeen = snapshot.player.travelDestinationSettlementId;
+				}
+				campaignWasTraveling = traveling;
+				return;
+			}
+
+			if (traveling) {
+				campaignTravelDestinationSeen = snapshot.player.travelDestinationSettlementId;
+			} else if (campaignWasTraveling) {
+				Long arrivedAt = campaignTravelDestinationSeen;
+				campaignTravelDestinationSeen = null;
+				if (arrivedAt != null && snapshot.player.settlementId == arrivedAt.longValue()
+						&& campaignFollowArmyId == null && campaignFollowCaravanId == null
+						&& campaignContextMenu == CampaignContextMenu.NONE) {
+					selectedCampaignSettlementId = arrivedAt;
+					campaignContextMenu = CampaignContextMenu.SETTLEMENT;
+					campaignContextMessage = "You have arrived.";
+				}
+			}
+			campaignWasTraveling = traveling;
+		}
+
+		/**
+		 * Opens the paused encounter when a hostile army reaches your commanded
+		 * army (or, if you have none, your own party). Clicking an army to ride to
+		 * it makes that army a valid contact even before a formal war exists; the
+		 * session still validates the actual attack.
+		 */
+		private boolean tryOpenCampaignEncounter(CampaignSnapshot snapshot) {
+			if (snapshot == null || snapshot.player == null || activeCampaignBattle != null
+					|| campaignContextMenu != CampaignContextMenu.NONE
+					|| currentLayer != GameLayer.WORLD_MAP || snapshot.player.isCaptive()) return false;
+			CampaignSnapshot.ArmyView mine = findCommandedArmy(snapshot);
+			CampaignSnapshot.ArmyView best = null;
+			double bestDistance = Double.MAX_VALUE;
+			for (CampaignSnapshot.ArmyView army : snapshot.armies) {
+				if (army.strength <= 0 || "ENGAGED".equals(army.state)
+						|| "DISBANDED".equals(army.state) || army.playerCommanded) continue;
+				if (mine != null && army.id == mine.id) continue;
+				if (campaignEncounterIgnoredArmyId != null
+						&& campaignEncounterIgnoredArmyId.longValue() == army.id
+						&& snapshot.worldMinute < campaignEncounterGraceUntilMinute) continue;
+				boolean followed = campaignFollowArmyId != null
+						&& campaignFollowArmyId.longValue() == army.id;
+				double distance;
+				boolean contact;
+				if (mine != null) {
+					distance = Math.hypot(mine.worldX - army.worldX, mine.worldY - army.worldY);
+					contact = distance <= 12.0 && mine.realmId != army.realmId
+							&& (army.hostileToPlayer || followed);
+				} else {
+					distance = Math.hypot(snapshot.player.worldX - army.worldX,
+							snapshot.player.worldY - army.worldY);
+					contact = distance <= 12.0 && army.hostileToPlayer;
+				}
+				if (contact && (followed || distance < bestDistance)) {
+					best = army;
+					bestDistance = distance;
+					if (followed) break;
+				}
+			}
+			if (best == null) return false;
+			selectedCampaignActorId = best.id;
+			campaignEncounterArmyId = best.id;
+			campaignContextMenu = CampaignContextMenu.ENCOUNTER;
+			campaignContextMessage = "";
+			repaint();
+			return true;
+		}
+
 		private void startCampaignMode() {
+			resetCampaignMapState();
 			campaignSession = new CampaignSession(CAMPAIGN_SEED);
 			campaignSnapshot = campaignSession.getSnapshot();
 			selectedCampaignSettlementId = campaignSnapshot.settlements.isEmpty()
@@ -989,6 +1297,13 @@ public class GamePanel extends JPanel implements Runnable{
 
 		private void enterCampaignLocalView() {
 			if (campaignSession == null || campaignSnapshot == null || campaignSnapshot.player == null) return;
+			if (campaignSnapshot.player.traveling) {
+				showCampaignNotice("You are on the road to "
+						+ (campaignSnapshot.player.travelDestinationName == null
+								? "your destination" : campaignSnapshot.player.travelDestinationName)
+						+ ". Arrive there, or press X to turn back, before entering a settlement.");
+				return;
+			}
 			CampaignSnapshot.SettlementView settlement = campaignSnapshot.findSettlement(
 				campaignSnapshot.player.settlementId);
 			String[] settlementMaps = {"map1.txt", "mapA.txt", "home.txt"};
@@ -1914,6 +2229,7 @@ System.nanoTime();
 				campaignSession.update(1.0 / FPS);
 				campaignSnapshot = campaignSession.getSnapshot();
 				pumpCampaignToasts(campaignSnapshot);
+				if (currentLayer == GameLayer.WORLD_MAP) updateCampaignMapState();
 				if (currentLayer == GameLayer.OVERWORLD) {
 					campaignSession.updateLocalScene(1.0 / FPS,
 						getCurrentMapWidthTiles() * tileSize, getCurrentMapHeightTiles() * tileSize);
@@ -2545,8 +2861,158 @@ System.nanoTime();
 		g2.dispose();
 	}
 
+	/** Closes an encounter without fighting and suppresses immediate re-triggering. */
+	private void leaveCampaignEncounter() {
+		campaignEncounterIgnoredArmyId = campaignEncounterArmyId != null
+				? campaignEncounterArmyId : selectedCampaignActorId;
+		campaignEncounterGraceUntilMinute = campaignSnapshot == null ? Long.MAX_VALUE
+				: campaignSnapshot.worldMinute + 12L * 60L;
+		campaignEncounterArmyId = null;
+		campaignFollowArmyId = null;
+		campaignFollowAnchorSettlementId = null;
+		campaignContextMenu = CampaignContextMenu.NONE;
+		campaignContextMessage = "";
+	}
+
+	/**
+	 * Bannerlord-style paused encounter: force comparison across the top, choices
+	 * on the left, and the live campaign map still visible behind them.
+	 */
+	private void drawCampaignEncounter(Graphics2D g2) {
+		campaignContextButtons.clear();
+		Long targetId = campaignEncounterArmyId != null
+				? campaignEncounterArmyId : selectedCampaignActorId;
+		CampaignSnapshot.ArmyView enemy = targetId == null
+				? null : campaignSnapshot.findArmy(targetId);
+		CampaignSnapshot.ArmyView mine = findCommandedArmy(campaignSnapshot);
+
+		// Top comparison bar.
+		g2.setColor(new Color(16, 18, 20, 238));
+		g2.fillRect(0, 0, screenWidth, 58);
+		g2.setColor(new Color(190, 160, 95));
+		g2.drawLine(0, 58, screenWidth, 58);
+		g2.setFont(new Font("Serif", Font.BOLD, 20));
+		g2.setColor(new Color(240, 228, 200));
+		String title = "Battle";
+		g2.drawString(title, screenWidth / 2 - g2.getFontMetrics().stringWidth(title) / 2, 24);
+		g2.setStroke(new BasicStroke(2f));
+		g2.drawLine(screenWidth / 2 - 8, 34, screenWidth / 2 + 8, 52);
+		g2.drawLine(screenWidth / 2 - 8, 52, screenWidth / 2 + 8, 34);
+		g2.setStroke(new BasicStroke(1f));
+
+		int yourStrength = mine != null ? mine.strength
+				: campaignSnapshot.player == null ? 0 : campaignSnapshot.player.partySize;
+		int enemyStrength = enemy == null ? 0 : enemy.strength;
+		g2.setFont(new Font("SansSerif", Font.BOLD, 17));
+		g2.setColor(new Color(150, 230, 160));
+		String yourNumber = Integer.toString(yourStrength);
+		g2.drawString(yourNumber, screenWidth / 2 - 42 - g2.getFontMetrics().stringWidth(yourNumber), 50);
+		g2.setColor(new Color(255, 140, 120));
+		g2.drawString(Integer.toString(enemyStrength), screenWidth / 2 + 42, 50);
+
+		// Heraldic blocks: yours on the left of the title, theirs on the right.
+		int leftShieldX = screenWidth / 2 - 176;
+		g2.setColor(mine == null ? new Color(245, 196, 65) : colorForRealm(mine.realmId));
+		g2.fillRect(leftShieldX, 12, 34, 30);
+		g2.fillPolygon(new int[] {leftShieldX, leftShieldX + 34, leftShieldX + 17},
+				new int[] {42, 42, 54}, 3);
+		g2.setColor(new Color(230, 205, 150));
+		g2.drawRect(leftShieldX, 12, 34, 30);
+		g2.setFont(new Font("SansSerif", Font.BOLD, 10));
+		g2.setColor(new Color(150, 230, 160));
+		String yourLabel = mine == null ? "Your Party" : "Your Army";
+		g2.drawString(yourLabel, leftShieldX - 48, 32);
+
+		int rightShieldX = screenWidth / 2 + 142;
+		g2.setColor(enemy == null ? Color.GRAY : colorForRealm(enemy.realmId));
+		g2.fillRect(rightShieldX, 12, 34, 30);
+		g2.fillPolygon(new int[] {rightShieldX, rightShieldX + 34, rightShieldX + 17},
+				new int[] {42, 42, 54}, 3);
+		g2.setColor(new Color(230, 205, 150));
+		g2.drawRect(rightShieldX, 12, 34, 30);
+		g2.setColor(new Color(255, 140, 120));
+		String enemyLabel = enemy == null ? "Gone"
+				: campaignRealmName(campaignSnapshot, enemy.realmId) + " Army";
+		g2.drawString(enemyLabel, rightShieldX + 42, 32);
+
+		// Choice panel.
+		int x = 10, y = 68, w = 226, h = 318;
+		g2.setColor(new Color(18, 42, 62, 242));
+		g2.fillRoundRect(x, y, w, h, 8, 8);
+		g2.setColor(new Color(205, 178, 112));
+		g2.drawRoundRect(x, y, w, h, 8, 8);
+		g2.setFont(new Font("SansSerif", Font.PLAIN, 12));
+		g2.setColor(Color.WHITE);
+		int textY = y + 24;
+		String encounterText = enemy == null
+				? "That army is no longer here."
+				: "You encountered the " + campaignRealmName(campaignSnapshot, enemy.realmId)
+						+ " army.";
+		for (String line : wrapCampaignText(g2, encounterText, w - 20, 3)) {
+			g2.drawString(line, x + 10, textY);
+			textY += 15;
+		}
+		textY += 4;
+		g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+		g2.setColor(new Color(205, 215, 225));
+		if (enemy != null) {
+			g2.drawString("Commander:", x + 10, textY); textY += 13;
+			for (String line : wrapCampaignText(g2, enemy.commanderName, w - 28, 2)) {
+				g2.drawString("  " + line, x + 10, textY);
+				textY += 13;
+			}
+			g2.drawString("Troops " + enemy.strength + "  morale " + Math.round(enemy.morale) + "%",
+					x + 10, textY); textY += 13;
+			g2.drawString(enemy.order + " -> " + settlementName(campaignSnapshot,
+					enemy.destinationSettlementId), x + 10, textY); textY += 18;
+		}
+		if (mine != null) {
+			g2.setColor(new Color(255, 224, 145));
+			g2.drawString("Yours: " + mine.strength + " troops, morale "
+					+ Math.round(mine.morale) + "%", x + 10, textY);
+			textY += 15;
+			g2.drawString("Grain " + mine.grain + (mine.daysWithoutFood > 0
+					? "  (" + mine.daysWithoutFood + "d unfed)" : ""), x + 10, textY);
+			textY += 18;
+		} else {
+			g2.setColor(new Color(255, 190, 140));
+			for (String line : wrapCampaignText(g2,
+					"You command no army. Raise a company at a settlement to fight one.",
+					w - 20, 3)) {
+				g2.drawString(line, x + 10, textY);
+				textY += 13;
+			}
+			textY += 5;
+		}
+		addContextButton(g2, "ENCOUNTER_ATTACK", "Attack!", x + 12, y + 176, w - 24, 34);
+		addContextButton(g2, "ENCOUNTER_SEND", "Send in your troops.", x + 12, y + 216, w - 24, 34);
+		addContextButton(g2, "ENCOUNTER_LEAVE", "Leave...", x + 12, y + 256, w - 24, 34);
+		if (campaignContextMessage != null && !campaignContextMessage.isBlank()) {
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
+			g2.setColor(new Color(255, 205, 160));
+			int messageY = y + h - 8;
+			java.util.List<String> lines = wrapCampaignText(g2, campaignContextMessage, w - 20, 2);
+			for (int i = lines.size() - 1; i >= 0; i--) {
+				g2.drawString(lines.get(i), x + 10, messageY);
+				messageY -= 12;
+			}
+		}
+
+		g2.setFont(new Font("SansSerif", Font.BOLD, 16));
+		String paused = "PAUSED";
+		int pausedX = screenWidth / 2 - g2.getFontMetrics().stringWidth(paused) / 2;
+		g2.setColor(Color.BLACK);
+		g2.drawString(paused, pausedX + 1, screenHeight - 45);
+		g2.setColor(Color.WHITE);
+		g2.drawString(paused, pausedX, screenHeight - 46);
+	}
+
 	private void drawCampaignContextMenu(Graphics2D g2) {
 		if (campaignContextMenu == CampaignContextMenu.NONE || campaignSession == null || campaignSnapshot == null) return;
+		if (campaignContextMenu == CampaignContextMenu.ENCOUNTER) {
+			drawCampaignEncounter(g2);
+			return;
+		}
 		int x = 145, y = 70, w = 478, h = 410;
 		g2.setColor(new Color(0, 0, 0, 195)); g2.fillRect(0, 0, screenWidth, screenHeight);
 		g2.setColor(new Color(20, 28, 36)); g2.fillRoundRect(x, y, w, h, 16, 16);
@@ -2797,6 +3263,50 @@ System.nanoTime();
 		}
 		if ("PREV_GOOD".equals(clicked)) { marketGoodIndex--; return; }
 		if ("NEXT_GOOD".equals(clicked)) { marketGoodIndex++; return; }
+		if ("ENCOUNTER_LEAVE".equals(clicked)) {
+			leaveCampaignEncounter();
+			return;
+		}
+		if ("ENCOUNTER_ATTACK".equals(clicked) || "ENCOUNTER_SEND".equals(clicked)) {
+			Long targetId = campaignEncounterArmyId != null
+					? campaignEncounterArmyId : selectedCampaignActorId;
+			if (targetId == null || campaignSnapshot.player == null
+					|| campaignSnapshot.player.commandedArmyId == null) {
+				campaignContextMessage = "You command no army. Raise a company at a settlement first.";
+				return;
+			}
+			if ("ENCOUNTER_ATTACK".equals(clicked)) {
+				world.command.CommandResult cleared = campaignSession.canEngageArmy(targetId);
+				if (!cleared.accepted) {
+					campaignContextMessage = cleared.message;
+					return;
+				}
+				long attackerId = campaignSnapshot.player.commandedArmyId;
+				campaignContextMenu = CampaignContextMenu.NONE;
+				campaignEncounterArmyId = null;
+				campaignFollowArmyId = null;
+				campaignFollowAnchorSettlementId = null;
+				launchCampaignBattle(attackerId, targetId);
+				if (activeCampaignBattle == null && currentLayer == GameLayer.WORLD_MAP) {
+					// Launch refused (for example, the army vanished): do not reopen forever.
+					campaignEncounterIgnoredArmyId = targetId;
+					campaignEncounterGraceUntilMinute = campaignSnapshot.worldMinute + 60L;
+				}
+				return;
+			}
+			world.command.CommandResult result = campaignSession.autoResolveEngagement(targetId);
+			campaignSnapshot = campaignSession.getSnapshot();
+			if (result != null && result.accepted) {
+				campaignContextMenu = CampaignContextMenu.NONE;
+				campaignEncounterArmyId = null;
+				campaignFollowArmyId = null;
+				campaignFollowAnchorSettlementId = null;
+				showCampaignNotice(result.message);
+			} else {
+				campaignContextMessage = result == null ? "The armies could not engage." : result.message;
+			}
+			return;
+		}
 		GoodType good = GoodType.values()[Math.floorMod(marketGoodIndex, GoodType.values().length)];
 		world.command.CommandResult result = null;
 		if ("SUPPLY_ARMY".equals(clicked) && selectedCampaignActorId != null) {
@@ -3194,7 +3704,35 @@ System.nanoTime();
 		return Math.max(nearest, Math.round((float) value / nearest) * nearest);
 	}
 
-		private void handleCampaignMapClick(java.awt.Point point) {
+		private void handleCampaignMapClick(java.awt.Point point, int button) {
+			boolean rightClick = button == MouseEvent.BUTTON3;
+			if (campaignSession != null) {
+				for (java.util.Map.Entry<String, Rectangle> entry : campaignHudHitboxes.entrySet()) {
+					if (!entry.getValue().contains(point)) continue;
+					switch (entry.getKey()) {
+						case "PAUSE" -> campaignSession.toggleWorldPaused();
+						case "SPEED_1" -> campaignSession.setSpeed(1);
+						case "SPEED_60" -> campaignSession.setSpeed(60);
+						case "SPEED_1440" -> campaignSession.setSpeed(1440);
+						case "CENTER" -> centerCampaignCameraOnPlayer();
+						case "STOP_TRAVEL" -> {
+							campaignFollowArmyId = null;
+							campaignFollowCaravanId = null;
+							campaignFollowAnchorSettlementId = null;
+							world.command.CommandResult result = campaignSession.cancelTravel();
+							if (result != null && !result.accepted && result.message != null) {
+								showCampaignNotice(result.message);
+							} else {
+								showCampaignNotice("You turn back along the road.");
+							}
+						}
+						default -> { }
+					}
+					campaignSnapshot = campaignSession.getSnapshot();
+					repaint();
+					return;
+				}
+			}
 			if (campaignSession != null && !kingdomManagementHitboxes.isEmpty()) {
 				for (java.util.Map.Entry<String, Rectangle> entry : kingdomManagementHitboxes.entrySet()) {
 					if (!entry.getValue().contains(point)) continue;
@@ -3237,11 +3775,56 @@ System.nanoTime();
 					return;
 				}
 			}
+			if (campaignPlayerHitbox != null && campaignPlayerHitbox.contains(point)) {
+				if (rightClick) {
+					activeCampaignTab = CampaignTab.PARTY;
+				} else {
+					centerCampaignCameraOnPlayer();
+				}
+				repaint();
+				return;
+			}
 			for (java.util.Map.Entry<Long, Rectangle> entry : campaignArmyHitboxes.entrySet()) {
 				if (entry.getValue().contains(point)) {
 					selectedCampaignActorId = entry.getKey();
-					campaignContextMenu = CampaignContextMenu.ARMY;
-					campaignContextMessage = "Inspect this army and its commander";
+					CampaignSnapshot.ArmyView army = campaignSnapshot == null
+							? null : campaignSnapshot.findArmy(entry.getKey());
+					boolean yours = army != null && (army.playerCommanded
+							|| (campaignSnapshot.player != null
+									&& campaignSnapshot.player.commandedArmyId != null
+									&& campaignSnapshot.player.commandedArmyId.longValue() == army.id));
+					if (rightClick || yours || army == null || campaignSnapshot.player == null) {
+						campaignContextMenu = CampaignContextMenu.ARMY;
+						campaignContextMessage = yours
+								? "Your army. Orders use the right-click-selected settlement."
+								: "Inspect this army and its commander";
+						repaint();
+						return;
+					}
+					// Bannerlord behaviour: left-click a party to ride to it. The
+					// per-frame updater keeps retargeting the moving army's anchor.
+					campaignFollowArmyId = army.id;
+					campaignFollowCaravanId = null;
+					campaignFollowAnchorSettlementId = null;
+					Long anchor = army.destinationSettlementId != null
+							? army.destinationSettlementId : army.currentSettlementId;
+					if (anchor != null && anchor.longValue() != campaignSnapshot.player.settlementId) {
+						campaignFollowAnchorSettlementId = anchor;
+						world.command.CommandResult result = campaignSession.beginTravelTo(anchor);
+						campaignSnapshot = campaignSession.getSnapshot();
+						if (result != null && !result.accepted) {
+							campaignFollowArmyId = null;
+							campaignFollowAnchorSettlementId = null;
+							showCampaignNotice(result.message);
+						} else {
+							showCampaignNotice("Riding to intercept "
+									+ campaignRealmName(campaignSnapshot, army.realmId)
+									+ " army under " + army.commanderName + ".");
+						}
+					} else if (!tryOpenCampaignEncounter(campaignSnapshot)) {
+						showCampaignNotice("That army is here. Right-click it to inspect it; "
+								+ "an encounter opens when your own army is in reach.");
+					}
 					repaint();
 					return;
 				}
@@ -3249,8 +3832,33 @@ System.nanoTime();
 			for (java.util.Map.Entry<Long, Rectangle> entry : campaignCaravanHitboxes.entrySet()) {
 				if (entry.getValue().contains(point)) {
 					selectedCampaignActorId = entry.getKey();
-					campaignContextMenu = CampaignContextMenu.CARAVAN;
-					campaignContextMessage = "Inspect this merchant caravan";
+					CampaignSnapshot.CaravanView caravan = campaignSnapshot == null
+							? null : campaignSnapshot.findCaravan(entry.getKey());
+					if (rightClick || caravan == null || campaignSnapshot.player == null) {
+						campaignContextMenu = CampaignContextMenu.CARAVAN;
+						campaignContextMessage = "Inspect this merchant caravan";
+						repaint();
+						return;
+					}
+					campaignFollowCaravanId = caravan.id;
+					campaignFollowArmyId = null;
+					campaignFollowAnchorSettlementId = null;
+					Long anchor = caravan.destinationSettlementId != null
+							? caravan.destinationSettlementId : caravan.currentSettlementId;
+					if (anchor != null && anchor.longValue() != campaignSnapshot.player.settlementId) {
+						campaignFollowAnchorSettlementId = anchor;
+						world.command.CommandResult result = campaignSession.beginTravelTo(anchor);
+						campaignSnapshot = campaignSession.getSnapshot();
+						if (result != null && !result.accepted) {
+							campaignFollowCaravanId = null;
+							campaignFollowAnchorSettlementId = null;
+							showCampaignNotice(result.message);
+						} else {
+							showCampaignNotice("Following the caravan of " + caravan.leaderName + ".");
+						}
+					} else {
+						showCampaignNotice("That caravan is here. Right-click it to inspect it.");
+					}
 					repaint();
 					return;
 				}
@@ -3258,10 +3866,24 @@ System.nanoTime();
 			for (java.util.Map.Entry<Long, Rectangle> entry : campaignSettlementHitboxes.entrySet()) {
 				if (entry.getValue().contains(point)) {
 					selectedCampaignSettlementId = entry.getKey();
-					if (campaignSnapshot != null && campaignSnapshot.player != null
-							&& campaignSnapshot.player.settlementId == entry.getKey()) {
+					boolean playerHere = campaignSnapshot != null && campaignSnapshot.player != null
+							&& !campaignSnapshot.player.traveling
+							&& campaignSnapshot.player.settlementId == entry.getKey().longValue();
+					if (playerHere) {
 						campaignContextMenu = CampaignContextMenu.SETTLEMENT;
 						campaignContextMessage = "You are currently at this settlement";
+					} else if (!rightClick && campaignSession != null) {
+						// Right-click remains "select only", preserving its use as an
+						// army-order destination; left-click rides there on the roads.
+						campaignFollowArmyId = null;
+						campaignFollowCaravanId = null;
+						campaignFollowAnchorSettlementId = null;
+						world.command.CommandResult result =
+								campaignSession.beginTravelTo(entry.getKey());
+						campaignSnapshot = campaignSession.getSnapshot();
+						if (result != null && result.message != null && !result.message.isBlank()) {
+							showCampaignNotice(result.message);
+						}
 					}
 					repaint();
 					return;
@@ -3513,21 +4135,27 @@ System.nanoTime();
 			int col1 = x + 8;
 			int col2 = x + 140;
 
-			// Settlement: realm-coloured dot.
+			// Settlement: house/keep with a banner tag in the owner realm's colour.
+			g2.setColor(new Color(190, 158, 110));
+			g2.fillRect(col1 + 1, row1 - 2, 8, 6);
 			g2.setColor(colorForRealm(1L));
-			g2.fillOval(col1, row1 - 5, 8, 8);
-			g2.setColor(Color.WHITE);
-			g2.drawOval(col1, row1 - 5, 8, 8);
+			g2.fillPolygon(new int[] {col1, col1 + 10, col1 + 5},
+					new int[] {row1 - 2, row1 - 2, row1 - 8}, 3);
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("Settlement (owner colour)", col1 + 13, row1 + 2);
+			g2.drawString("Settlement (banner = owner)", col1 + 14, row1 + 2);
 
-			// Army: realm-coloured square with its strength.
+			// Army: token ringed by realm colour, number is troops. Gold = yours.
+			g2.setColor(new Color(25, 28, 28));
+			g2.fillOval(col1, row2 - 7, 11, 11);
 			g2.setColor(colorForRealm(2L));
-			g2.fillRect(col1, row2 - 6, 9, 9);
+			g2.setStroke(new BasicStroke(2f));
+			g2.drawOval(col1, row2 - 7, 11, 11);
+			g2.setStroke(new BasicStroke(1f));
 			g2.setColor(Color.WHITE);
-			g2.drawRect(col1, row2 - 6, 9, 9);
+			g2.drawLine(col1 + 3, row2 - 4, col1 + 8, row2 + 1);
+			g2.drawLine(col1 + 3, row2 + 1, col1 + 8, row2 - 4);
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("Army (number = troops)", col1 + 13, row2 + 2);
+			g2.drawString("Army (number = troops)", col1 + 15, row2 + 2);
 
 			// Caravan: yellow diamond.
 			g2.setColor(new Color(245, 196, 65));
@@ -3536,11 +4164,17 @@ System.nanoTime();
 			g2.setColor(Color.LIGHT_GRAY);
 			g2.drawString("Merchant caravan", col1 + 13, row3 + 2);
 
-			// You are here: cyan ring.
-			g2.setColor(Color.CYAN);
-			g2.drawOval(col2, row1 - 7, 11, 11);
+			// You are here: gold-rimmed portrait token (number = party size).
+			g2.setColor(new Color(30, 88, 98));
+			g2.fillOval(col2, row1 - 7, 12, 12);
+			g2.setColor(new Color(255, 215, 90));
+			g2.setStroke(new BasicStroke(2f));
+			g2.drawOval(col2, row1 - 7, 12, 12);
+			g2.setStroke(new BasicStroke(1f));
+			g2.setColor(new Color(238, 205, 165));
+			g2.fillOval(col2 + 4, row1 - 4, 4, 4);
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("You are here", col2 + 16, row1 + 2);
+			g2.drawString("Your party", col2 + 17, row1 + 2);
 
 			// Contract destination: gold ring.
 			g2.setColor(new Color(255, 190, 45));
@@ -3577,10 +4211,15 @@ System.nanoTime();
 
 			String[] left = {
 				"WORLD MAP",
-				"  click settlement/army/caravan   inspect it",
+				"  LEFT-click settlement  ride there on the roads",
+				"  LEFT-click army/caravan ride to intercept/follow",
+				"  RIGHT-click anything   inspect / select target",
 				"  click your own settlement       full menu",
+				"  drag map   pan        mouse wheel  zoom",
+				"  Home       centre on your party",
+				"  X          turn back on the current road",
 				"  TAB        enter/leave the local settlement",
-				"  T          travel to the selected settlement",
+				"  T          ride to the selected settlement",
 				"  B / V      buy 5 grain / 5 vegetables",
 				"  N / M      sell 5 grain / 5 vegetables",
 				"  C          accept the first contract offered",
@@ -3672,241 +4311,814 @@ System.nanoTime();
 			g2.drawString("Press H or ESC, or click anywhere, to close.", x + 18, y + h - 12);
 		}
 
+		/**
+		 * Full-screen Bannerlord-style strategic map. Settlements are fixed places
+		 * with banner nameplates; every simulated army, caravan, and the player's
+		 * own party is a moving token on the road network. Co-located tokens are
+		 * fanned out in screen space, so nothing important can hide behind a town.
+		 */
 		private void drawCampaignWorld(Graphics2D g2) {
 			CampaignSnapshot snapshot = campaignSnapshot;
-			g2.setColor(new Color(16, 22, 29));
+			campaignHudHitboxes.clear();
+			campaignPlayerHitbox = null;
+			g2.setColor(new Color(35, 62, 70));
 			g2.fillRect(0, 0, screenWidth, screenHeight);
 
-			g2.setColor(new Color(222, 204, 155));
-			g2.setFont(new Font("Serif", Font.BOLD, 28));
-			g2.drawString("Chronicle Conquest - Campaign", 20, 34);
-			g2.setFont(new Font("Monospaced", Font.PLAIN, 12));
-			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("TAB local | T travel | C contract | K battle | 0-3 speed | F1 cheats | F5 save | F9 load", 20, 55);
-
 			if (snapshot == null) {
+				g2.setColor(new Color(222, 204, 155));
+				g2.setFont(new Font("Serif", Font.BOLD, 28));
+				g2.drawString("Chronicle Conquest - Campaign", 20, 38);
+				g2.setFont(new Font("SansSerif", Font.PLAIN, 13));
 				g2.setColor(Color.WHITE);
-				g2.drawString("Generating campaign world...", 20, 90);
+				g2.drawString("Generating campaign world...", 20, 70);
 				return;
 			}
 
-			final int mapX = 20;
-			final int mapY = 72;
-			final int mapW = 500;
-			final int mapH = 468;
-			g2.setColor(new Color(35, 52, 48));
-			g2.fillRoundRect(mapX, mapY, mapW, mapH, 14, 14);
-			g2.setColor(new Color(90, 110, 92));
-			g2.drawRoundRect(mapX, mapY, mapW, mapH, 14, 14);
-
-			double[] bounds = getCampaignBounds(snapshot);
-			// Soft territory fields make the two regional clusters readable before
-			// roads and symbols are drawn.
-			for (CampaignSnapshot.SettlementView settlement : snapshot.settlements) {
-				int x = campaignMapCoordinate(settlement.worldX, bounds[0], bounds[1], mapX, mapW);
-				int y = campaignMapCoordinate(settlement.worldY, bounds[2], bounds[3], mapY, mapH);
-				Color realmColor = colorForRealm(settlement.realmId);
-				g2.setColor(new Color(realmColor.getRed(), realmColor.getGreen(), realmColor.getBlue(), 28));
-				g2.fillOval(x - 78, y - 62, 156, 124);
+			double[] rawBounds = getCampaignBounds(snapshot);
+			double minX = rawBounds[0] - 110.0;
+			double maxX = rawBounds[1] + 110.0;
+			double minY = rawBounds[2] - 110.0;
+			double maxY = rawBounds[3] + 110.0;
+			if (!campaignCameraInitialized) {
+				campaignCamera.fit(minX, maxX, minY, maxY, screenWidth, screenHeight, 42);
+				campaignCameraInitialized = true;
 			}
+			campaignCamera.clampTo(minX, maxX, minY, maxY, screenWidth, screenHeight, 70);
+
+			drawCampaignTerrain(g2, snapshot, minX, maxX, minY, maxY);
+
+			// Dirt roads: a broad worn track with a lighter centre line.
 			for (CampaignSnapshot.RoadView road : snapshot.roads) {
-				int x1 = campaignMapCoordinate(road.fromX, bounds[0], bounds[1], mapX, mapW);
-				int y1 = campaignMapCoordinate(road.fromY, bounds[2], bounds[3], mapY, mapH);
-				int x2 = campaignMapCoordinate(road.toX, bounds[0], bounds[1], mapX, mapW);
-				int y2 = campaignMapCoordinate(road.toY, bounds[2], bounds[3], mapY, mapH);
-				g2.setColor(road.blocked ? new Color(160, 60, 60) : new Color(137, 116, 80));
-				g2.setStroke(new BasicStroke(road.danger > 0.5 ? 1f : 2f));
+				int x1 = campaignCamera.worldToScreenX(road.fromX, screenWidth);
+				int y1 = campaignCamera.worldToScreenY(road.fromY, screenHeight);
+				int x2 = campaignCamera.worldToScreenX(road.toX, screenWidth);
+				int y2 = campaignCamera.worldToScreenY(road.toY, screenHeight);
+				if ((x1 < -80 && x2 < -80) || (x1 > screenWidth + 80 && x2 > screenWidth + 80)
+						|| (y1 < -80 && y2 < -80) || (y1 > screenHeight + 80 && y2 > screenHeight + 80)) continue;
+				float width = (float) Math.max(2.0, Math.min(8.0, 5.0 * campaignCamera.zoom));
+				g2.setStroke(new BasicStroke(width, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+				g2.setColor(road.blocked ? new Color(145, 55, 45, 210) : new Color(112, 92, 64, 190));
+				g2.drawLine(x1, y1, x2, y2);
+				g2.setStroke(new BasicStroke(Math.max(1f, width * 0.42f),
+						BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+				g2.setColor(road.danger > 0.5 ? new Color(205, 150, 110, 220)
+						: new Color(188, 159, 108, 220));
 				g2.drawLine(x1, y1, x2, y2);
 			}
 			g2.setStroke(new BasicStroke(1f));
 
-			campaignSettlementHitboxes.clear();
-			java.util.List<Rectangle> occupiedMapLabels = new java.util.ArrayList<>();
+			java.util.Map<Long, java.awt.Point> settlementPoints = new java.util.HashMap<>();
 			for (CampaignSnapshot.SettlementView settlement : snapshot.settlements) {
-				int x = campaignMapCoordinate(settlement.worldX, bounds[0], bounds[1], mapX, mapW);
-				int y = campaignMapCoordinate(settlement.worldY, bounds[2], bounds[3], mapY, mapH);
-				int radius = selectedCampaignSettlementId != null && selectedCampaignSettlementId == settlement.id ? 10 : 7;
-				Rectangle hitbox = new Rectangle(x - 12, y - 12, 24, 24);
-				campaignSettlementHitboxes.put(settlement.id, hitbox);
-				if (snapshot.player != null && snapshot.player.settlementId == settlement.id) {
-					g2.setColor(Color.CYAN);
-					g2.drawOval(x - radius - 4, y - radius - 4, radius * 2 + 8, radius * 2 + 8);
+				settlementPoints.put(settlement.id, new java.awt.Point(
+						campaignCamera.worldToScreenX(settlement.worldX, screenWidth),
+						campaignCamera.worldToScreenY(settlement.worldY, screenHeight)));
+			}
+
+			// Count co-located moving tokens first. Their simulated point does not
+			// change; only the drawing is fanned out around it.
+			java.util.Map<String, Integer> tokenGroupCounts = new java.util.HashMap<>();
+			if (snapshot.player != null) {
+				tokenGroupCounts.merge(campaignTokenGroupKey(snapshot,
+						snapshot.player.worldX, snapshot.player.worldY), 1, Integer::sum);
+			}
+			for (CampaignSnapshot.ArmyView army : snapshot.armies) {
+				tokenGroupCounts.merge(campaignTokenGroupKey(snapshot, army.worldX, army.worldY),
+						1, Integer::sum);
+			}
+			for (CampaignSnapshot.CaravanView caravan : snapshot.caravans) {
+				tokenGroupCounts.merge(campaignTokenGroupKey(snapshot, caravan.worldX, caravan.worldY),
+						1, Integer::sum);
+			}
+			java.util.Map<String, Integer> nextTokenSlots = new java.util.HashMap<>();
+			java.awt.Point playerPoint = snapshot.player == null ? null
+					: campaignTokenPoint(snapshot, snapshot.player.worldX, snapshot.player.worldY,
+							tokenGroupCounts, nextTokenSlots);
+
+			java.util.List<Rectangle> occupiedLabels = new java.util.ArrayList<>();
+			campaignSettlementHitboxes.clear();
+			for (CampaignSnapshot.SettlementView settlement : snapshot.settlements) {
+				java.awt.Point point = settlementPoints.get(settlement.id);
+				int x = point.x;
+				int y = point.y;
+				if (x < -140 || x > screenWidth + 140 || y < -80 || y > screenHeight + 80) continue;
+				int radius = settlement.capital ? 13
+						: "CITY".equals(settlement.type) ? 12
+						: "TOWN".equals(settlement.type) || "FORT".equals(settlement.type) ? 10 : 8;
+				if (campaignCamera.zoom < 0.55) radius = Math.max(6, radius - 2);
+				campaignSettlementHitboxes.put(settlement.id,
+						new Rectangle(x - radius - 5, y - radius - 5, radius * 2 + 10, radius * 2 + 10));
+
+				boolean selected = selectedCampaignSettlementId != null
+						&& selectedCampaignSettlementId.longValue() == settlement.id;
+				if (selected) {
+					g2.setColor(new Color(255, 220, 105));
+					g2.setStroke(new BasicStroke(2f));
+					g2.drawOval(x - radius - 5, y - radius - 5, radius * 2 + 10, radius * 2 + 10);
+					g2.setStroke(new BasicStroke(1f));
 				}
 				if (isActiveContractDestination(snapshot, settlement.id)) {
 					g2.setColor(new Color(255, 190, 45));
-					g2.setStroke(new BasicStroke(3f));
-					g2.drawOval(x - radius - 8, y - radius - 8, radius * 2 + 16, radius * 2 + 16);
-					g2.drawString("CONTRACT", x + 11, y - 11);
+					g2.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
+							1f, new float[] {5f, 4f}, 0f));
+					g2.drawOval(x - radius - 9, y - radius - 9, radius * 2 + 18, radius * 2 + 18);
 					g2.setStroke(new BasicStroke(1f));
 				}
-				g2.setColor(colorForRealm(settlement.realmId));
-				g2.fillOval(x - radius, y - radius, radius * 2, radius * 2);
-				g2.setColor(Color.WHITE);
-				g2.drawOval(x - radius, y - radius, radius * 2, radius * 2);
+				if (snapshot.player != null && snapshot.player.traveling
+						&& snapshot.player.travelDestinationSettlementId != null
+						&& snapshot.player.travelDestinationSettlementId.longValue() == settlement.id) {
+					int pulse = 3 + (int) ((snapshot.worldMinute / 20L) % 3L);
+					g2.setColor(new Color(120, 235, 255));
+					g2.setStroke(new BasicStroke(2f));
+					g2.drawOval(x - radius - 7 - pulse, y - radius - 7 - pulse,
+							radius * 2 + 14 + pulse * 2, radius * 2 + 14 + pulse * 2);
+					g2.setStroke(new BasicStroke(1f));
+				}
+
+				drawCampaignSettlementIcon(g2, settlement, x, y, radius);
 				if (settlement.occupyingRealmId != null) {
 					g2.setColor(colorForRealm(settlement.occupyingRealmId));
-					g2.setStroke(new BasicStroke(3f));
-					g2.drawRect(x - radius - 4, y - radius - 4, radius * 2 + 8, radius * 2 + 8);
+					g2.setStroke(new BasicStroke(2f));
+					g2.drawRect(x - radius - 3, y - radius - 3, radius * 2 + 6, radius * 2 + 6);
 					g2.setStroke(new BasicStroke(1f));
 				}
 				boolean underSiege = snapshot.findActiveSiegeAt(settlement.id) != null;
 				if (underSiege) {
-					// Crossed blades over the settlement: the clearest possible "this is under siege".
-					g2.setColor(new Color(255, 92, 62));
+					g2.setColor(new Color(255, 75, 50));
 					g2.setStroke(new BasicStroke(2f));
-					g2.drawLine(x - radius - 7, y - radius - 7, x + radius + 7, y + radius + 7);
-					g2.drawLine(x - radius - 7, y + radius + 7, x + radius + 7, y - radius - 7);
+					g2.drawLine(x - radius - 4, y - radius - 4, x + radius + 4, y + radius + 4);
+					g2.drawLine(x - radius - 4, y + radius + 4, x + radius + 4, y - radius - 4);
 					g2.setStroke(new BasicStroke(1f));
 				}
-				g2.setFont(new Font("SansSerif", Font.BOLD, 11));
-				String settlementLabel = underSiege ? settlement.name + " (SIEGE)" : settlement.name;
-				int labelWidth = Math.max(g2.getFontMetrics().stringWidth(settlementLabel), 66) + 8;
-				Rectangle label = placeCampaignLabel(x, y, labelWidth, 29,
-					mapX + 4, mapY + 4, mapX + mapW - 4, mapY + mapH - 4, occupiedMapLabels);
-				occupiedMapLabels.add(label);
-				g2.setColor(new Color(9, 16, 22, 205));
-				g2.fillRoundRect(label.x, label.y, label.width, label.height, 6, 6);
-				g2.setColor(new Color(205, 205, 190));
-				g2.drawLine(x, y, label.x + label.width / 2, label.y + label.height / 2);
-				g2.setColor(underSiege ? new Color(255, 170, 140) : Color.WHITE);
-				g2.drawString(settlementLabel, label.x + 4, label.y + 11);
-				g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
-				g2.drawString("Pop " + settlement.population, label.x + 4, label.y + 23);
-			}
 
-			campaignArmyHitboxes.clear();
-			Long yourArmyId = snapshot.player == null ? null : snapshot.player.commandedArmyId;
-			for (CampaignSnapshot.ArmyView army : snapshot.armies) {
-				int x = campaignMapCoordinate(army.worldX, bounds[0], bounds[1], mapX, mapW);
-				int y = campaignMapCoordinate(army.worldY, bounds[2], bounds[3], mapY, mapH);
-				boolean isYours = yourArmyId != null && yourArmyId == army.id;
-				g2.setColor(colorForRealm(army.realmId));
-				g2.fillRect(x - 6, y - 6, 12, 12);
-				g2.setColor(isYours ? new Color(255, 215, 90) : Color.WHITE);
-				g2.drawRect(x - 6, y - 6, 12, 12);
-				if (isYours) {
-					g2.drawRect(x - 9, y - 9, 18, 18);
-					g2.setFont(new Font("SansSerif", Font.BOLD, 9));
-					g2.drawString("YOU", x - 9, y - 12);
-					g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
-				}
-				g2.drawString(Integer.toString(army.strength), x + 11, y + 4);
-				campaignArmyHitboxes.put(army.id, new Rectangle(x - 12, y - 12, 34, 24));
+				String labelText = settlement.name + (underSiege ? "  SIEGE" : "");
+				g2.setFont(new Font("SansSerif", Font.BOLD, 10));
+				int labelWidth = g2.getFontMetrics().stringWidth(labelText) + 31;
+				Rectangle label = placeCampaignLabel(x, y, labelWidth, 17,
+						4, 50, screenWidth - 4, screenHeight - 36, occupiedLabels);
+				occupiedLabels.add(label);
+				drawCampaignBannerTag(g2, label, x, y, labelText,
+						colorForRealm(settlement.realmId), underSiege);
 			}
 
 			campaignCaravanHitboxes.clear();
 			for (CampaignSnapshot.CaravanView caravan : snapshot.caravans) {
-				int x = campaignMapCoordinate(caravan.worldX, bounds[0], bounds[1], mapX, mapW);
-				int y = campaignMapCoordinate(caravan.worldY, bounds[2], bounds[3], mapY, mapH);
-				g2.setColor(new Color(245, 196, 65));
-				int[] xs = {x, x + 6, x, x - 6};
-				int[] ys = {y - 6, y, y + 6, y};
+				java.awt.Point point = campaignTokenPoint(snapshot, caravan.worldX, caravan.worldY,
+						tokenGroupCounts, nextTokenSlots);
+				int x = point.x;
+				int y = point.y;
+				if (x < -50 || x > screenWidth + 50 || y < -50 || y > screenHeight + 50) continue;
+				campaignCaravanHitboxes.put(caravan.id, new Rectangle(x - 13, y - 13, 34, 26));
+				g2.setColor(new Color(0, 0, 0, 70));
+				g2.fillOval(x - 7, y + 5, 15, 6);
+				int[] xs = {x, x + 8, x, x - 8};
+				int[] ys = {y - 8, y, y + 8, y};
+				g2.setColor(new Color(238, 184, 65));
 				g2.fillPolygon(xs, ys, 4);
-				g2.setColor(Color.BLACK);
+				g2.setColor(new Color(95, 62, 25));
 				g2.drawPolygon(xs, ys, 4);
-				campaignCaravanHitboxes.put(caravan.id, new Rectangle(x - 10, y - 10, 20, 20));
-			}
-
-			drawCampaignMapLegend(g2, mapX, mapY, mapW, mapH);
-
-			int panelX = 535;
-			int y = 80;
-			g2.setFont(new Font("SansSerif", Font.BOLD, 15));
-			g2.setColor(new Color(222, 204, 155));
-			g2.drawString("WORLD STATUS", panelX, y); y += 22;
-			g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
-			g2.setColor(Color.WHITE);
-			g2.drawString(snapshot.getDateLabel(), panelX, y); y += 17;
-			String speedText = snapshot.paused ? "PAUSED" : snapshot.speed + "x";
-			g2.drawString("Time: " + speedText, panelX, y); y += 17;
-			g2.drawString("Population: " + snapshot.livingPopulation, panelX, y); y += 17;
-			g2.drawString("Households: " + snapshot.householdCount, panelX, y); y += 17;
-			g2.drawString(String.format("Food security: %.0f%%", snapshot.averageFoodSecurity * 100.0), panelX, y); y += 17;
-			g2.drawString("Armies/Caravans: " + snapshot.armyCount + "/" + snapshot.caravanCount, panelX, y); y += 17;
-			g2.drawString("Wars/Sieges/Treaties: " + snapshot.warCount + "/"
-				+ snapshot.activeSiegeCount + "/" + snapshot.activeTreatyCount, panelX, y); y += 17;
-			if (!snapshot.armies.isEmpty()) {
-				CampaignSnapshot.ArmyView army = snapshot.armies.get(0);
-				g2.drawString("Army: " + army.strength + " " + army.order + " food " + army.grain, panelX, y); y += 17;
-			}
-			if (!snapshot.caravans.isEmpty()) {
-				CampaignSnapshot.CaravanView caravan = snapshot.caravans.get(0);
-				g2.drawString("Merchant: " + caravan.state + " " + caravan.cargoQuantity, panelX, y); y += 17;
-			}
-			if (snapshot.player != null) {
-				g2.setColor(new Color(245, 196, 65));
-				g2.drawString("You: " + snapshot.player.coins + "c cargo "
-					+ snapshot.player.cargoUsed + "/" + snapshot.player.cargoCapacity, panelX, y); y += 17;
-				g2.drawString("Party " + snapshot.player.partySize + " contracts "
-						+ snapshot.player.activeContracts + " rep " + snapshot.player.reputation, panelX, y); y += 17;
-				CampaignSnapshot.ArmyView yourArmy = findCommandedArmy(snapshot);
-				if (yourArmy != null) {
-					g2.setColor(new Color(255, 220, 130));
-					g2.drawString("YOUR ARMY: " + yourArmy.strength + " troops, morale "
-						+ Math.round(yourArmy.morale) + "%, " + yourArmy.grain + " grain"
-						+ (yourArmy.daysWithoutFood > 0 ? " (" + yourArmy.daysWithoutFood + "d unfed)" : ""),
-						panelX, y); y += 16;
-					g2.drawString("   " + yourArmy.order + " at " + settlementName(snapshot, yourArmy.currentSettlementId)
-						+ (yourArmy.destinationSettlementId == null ? ""
-							: " -> " + settlementName(snapshot, yourArmy.destinationSettlementId)), panelX, y); y += 16;
-					g2.setColor(new Color(200, 205, 210));
-					g2.drawString("   It is ringed gold on the map. Right-click it for orders; K attacks.",
-						panelX, y); y += 17;
-				} else if (snapshot.player.commandedArmyId != null) {
-					g2.drawString("Your army is gone - disbanded or destroyed.", panelX, y); y += 17;
+				g2.setColor(new Color(255, 226, 130));
+				g2.fillOval(x - 2, y - 2, 5, 5);
+				if (caravan.cargoQuantity > 0) {
+					g2.setFont(new Font("SansSerif", Font.BOLD, 9));
+					g2.setColor(Color.BLACK);
+					g2.drawString(Integer.toString(caravan.cargoQuantity), x + 11, y + 4);
+					g2.setColor(Color.WHITE);
+					g2.drawString(Integer.toString(caravan.cargoQuantity), x + 10, y + 3);
 				}
-				if (snapshot.player.isCaptive()) {
-					g2.setColor(new Color(255, 140, 110));
-					g2.drawString("PRISONER: " + snapshot.player.captiveDaysRemaining + " day(s), ransom "
-							+ snapshot.player.ransomCoins + "c", panelX, y); y += 17;
-				}
-			}
-			g2.setColor(new Color(160, 145, 120));
-			g2.drawString("Saves are partial (beta): wars, sieges,", panelX, y); y += 12;
-			g2.drawString("titles and armies are re-simulated on load.", panelX, y); y += 17;
-			y += 7;
-
-			g2.setColor(new Color(222, 204, 155));
-			g2.setFont(new Font("SansSerif", Font.BOLD, 13));
-			g2.drawString("REALMS", panelX, y); y += 18;
-			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
-			for (CampaignSnapshot.RealmView realm : snapshot.realms) {
-				g2.setColor(colorForRealm(realm.id));
-				g2.drawString(realm.name, panelX, y); y += 13;
-				g2.setColor(Color.LIGHT_GRAY);
-				g2.drawString(" " + realm.rulerName + "  leg " + Math.round(realm.legitimacy), panelX, y); y += 13;
-				g2.drawString(" pop " + realm.population + " treasury " + realm.treasury, panelX, y); y += 13;
-				g2.drawString(" " + realm.successionLaw + " factions " + realm.factionCount, panelX, y); y += 13;
-				g2.drawString(" treaties " + realm.treatyCount + " " + realm.diplomacySummary, panelX, y); y += 14;
-			}
-
-			y += 5;
-			g2.setColor(new Color(222, 204, 155));
-			g2.setFont(new Font("SansSerif", Font.BOLD, 12));
-			g2.drawString("RECENT EVENTS", panelX, y); y += 16;
-			g2.setFont(new Font("Monospaced", Font.PLAIN, 9));
-			g2.setColor(Color.LIGHT_GRAY);
-			if (snapshot.recentEvents.isEmpty()) {
-				g2.drawString("No major events yet", panelX, y);
-			} else {
-				for (CampaignSnapshot.EventView event : snapshot.recentEvents) {
-					String line = readableEvent(event);
-					if (line == null) continue;
-					g2.setColor(eventColor(event.type));
-					for (String part : wrapCampaignText(g2, line, screenWidth - panelX - 10, 2)) {
-						g2.drawString(part, panelX, y);
-						y += 11;
-					}
-					y += 2;
-					if (y > screenHeight - 48) break;
+				boolean labelled = (hoveredCampaignCaravanId != null
+						&& hoveredCampaignCaravanId.longValue() == caravan.id)
+						|| (campaignFollowCaravanId != null
+								&& campaignFollowCaravanId.longValue() == caravan.id);
+				if (labelled) {
+					String text = caravan.leaderName + "  ·  " + caravan.cargoQuantity;
+					g2.setFont(new Font("SansSerif", Font.BOLD, 9));
+					int width = g2.getFontMetrics().stringWidth(text) + 14;
+					Rectangle label = placeCampaignLabel(x, y, width, 15,
+							4, 50, screenWidth - 4, screenHeight - 36, occupiedLabels);
+					occupiedLabels.add(label);
+					drawCampaignNamePill(g2, label, text, new Color(112, 78, 26), Color.WHITE);
 				}
 			}
 
+			campaignArmyHitboxes.clear();
+			java.util.List<CampaignSnapshot.ArmyView> armiesByPriority =
+					new java.util.ArrayList<>(snapshot.armies);
+			armiesByPriority.sort((first, second) -> {
+				int byCommand = Boolean.compare(second.playerCommanded, first.playerCommanded);
+				return byCommand != 0 ? byCommand : Long.compare(first.id, second.id);
+			});
+			for (CampaignSnapshot.ArmyView army : armiesByPriority) {
+				java.awt.Point point = campaignTokenPoint(snapshot, army.worldX, army.worldY,
+						tokenGroupCounts, nextTokenSlots);
+				int x = point.x;
+				int y = point.y;
+				if (x < -60 || x > screenWidth + 60 || y < -60 || y > screenHeight + 60) continue;
+				boolean yours = army.playerCommanded || (snapshot.player != null
+						&& snapshot.player.commandedArmyId != null
+						&& snapshot.player.commandedArmyId.longValue() == army.id);
+				int radius = yours ? 11 : 9;
+				campaignArmyHitboxes.put(army.id, new Rectangle(x - 14, y - 14, 42, 28));
+				g2.setColor(new Color(0, 0, 0, 75));
+				g2.fillOval(x - radius, y + radius - 4, radius * 2, 7);
+				g2.setColor(new Color(25, 28, 28));
+				g2.fillOval(x - radius, y - radius, radius * 2, radius * 2);
+				g2.setStroke(new BasicStroke(3f));
+				g2.setColor(colorForRealm(army.realmId));
+				g2.drawOval(x - radius, y - radius, radius * 2, radius * 2);
+				if (yours) {
+					g2.setStroke(new BasicStroke(2f));
+					g2.setColor(new Color(255, 215, 90));
+					g2.drawOval(x - radius - 3, y - radius - 3, radius * 2 + 6, radius * 2 + 6);
+				} else if (army.hostileToPlayer) {
+					g2.setStroke(new BasicStroke(2f));
+					g2.setColor(new Color(255, 80, 60));
+					g2.drawOval(x - radius - 3, y - radius - 3, radius * 2 + 6, radius * 2 + 6);
+				}
+				g2.setStroke(new BasicStroke(2f));
+				g2.setColor(Color.WHITE);
+				g2.drawLine(x - 4, y - 4, x + 4, y + 4);
+				g2.drawLine(x - 4, y + 4, x + 4, y - 4);
+				g2.setStroke(new BasicStroke(1f));
+				g2.setFont(new Font("SansSerif", Font.BOLD, 10));
+				String strength = Integer.toString(army.strength);
+				g2.setColor(Color.BLACK);
+				g2.drawString(strength, x + radius + 4, y + 5);
+				g2.setColor(yours ? new Color(255, 228, 140) : Color.WHITE);
+				g2.drawString(strength, x + radius + 3, y + 4);
+
+				boolean labelled = yours
+						|| (hoveredCampaignArmyId != null && hoveredCampaignArmyId.longValue() == army.id)
+						|| (selectedCampaignActorId != null && selectedCampaignActorId.longValue() == army.id)
+						|| (campaignFollowArmyId != null && campaignFollowArmyId.longValue() == army.id);
+				if (labelled) {
+					String text = (yours ? "YOUR ARMY"
+							: campaignRealmName(snapshot, army.realmId) + " Army") + "  ·  " + army.strength;
+					g2.setFont(new Font("SansSerif", Font.BOLD, 9));
+					int width = g2.getFontMetrics().stringWidth(text) + 14;
+					Rectangle label = placeCampaignLabel(x, y, width, 15,
+							4, 50, screenWidth - 4, screenHeight - 36, occupiedLabels);
+					occupiedLabels.add(label);
+					drawCampaignNamePill(g2, label, text, colorForRealm(army.realmId), Color.WHITE);
+				}
+			}
+
+			if (snapshot.player != null && playerPoint != null) {
+				int x = playerPoint.x;
+				int y = playerPoint.y;
+				if (x >= -50 && x <= screenWidth + 50 && y >= -50 && y <= screenHeight + 50) {
+					int radius = 12;
+					campaignPlayerHitbox = new Rectangle(x - 16, y - 16, 38, 32);
+					g2.setColor(new Color(0, 0, 0, 80));
+					g2.fillOval(x - radius, y + radius - 4, radius * 2, 7);
+					g2.setColor(new Color(30, 88, 98));
+					g2.fillOval(x - radius, y - radius, radius * 2, radius * 2);
+					g2.setStroke(new BasicStroke(3f));
+					g2.setColor(new Color(255, 215, 90));
+					g2.drawOval(x - radius, y - radius, radius * 2, radius * 2);
+					g2.setStroke(new BasicStroke(1f));
+					// Simple portrait token: head and shoulders inside the gold ring.
+					g2.setColor(new Color(238, 205, 165));
+					g2.fillOval(x - 4, y - 8, 8, 8);
+					g2.setColor(new Color(245, 238, 210));
+					g2.fillOval(x - 7, y + 1, 14, 9);
+					String partySize = Integer.toString(snapshot.player.partySize);
+					g2.setFont(new Font("SansSerif", Font.BOLD, 9));
+					int badgeW = Math.max(16, g2.getFontMetrics().stringWidth(partySize) + 7);
+					g2.setColor(new Color(10, 14, 18, 230));
+					g2.fillRoundRect(x + radius - 4, y + radius - 7, badgeW, 14, 6, 6);
+					g2.setColor(Color.WHITE);
+					g2.drawString(partySize, x + radius, y + radius + 3);
+					String text = snapshot.player.traveling ? "Your Party  ·  riding" : "YOUR PARTY";
+					g2.setFont(new Font("SansSerif", Font.BOLD, 9));
+					int width = g2.getFontMetrics().stringWidth(text) + 14;
+					Rectangle label = placeCampaignLabel(x, y, width, 15,
+							4, 50, screenWidth - 4, screenHeight - 36, occupiedLabels);
+					occupiedLabels.add(label);
+					drawCampaignNamePill(g2, label, text, new Color(20, 72, 82), Color.WHITE);
+				}
+			}
+
+			if (activeCampaignTab == CampaignTab.OVERVIEW) {
+				drawCampaignMapLegend(g2, 0, 0, screenWidth, screenHeight - 32);
+			}
+			drawCampaignHud(g2, snapshot);
 			drawCampaignTabs(g2, snapshot);
 			drawSettlementHoverCard(g2, snapshot);
+			drawCampaignArmyHoverCard(g2, snapshot);
+			drawCampaignCaravanHoverCard(g2, snapshot);
+			drawCampaignPlayerHoverCard(g2, snapshot);
 			drawCaptivityBanner(g2, snapshot);
 			drawCampaignToasts(g2);
 			drawCampaignNotice(g2);
+		}
+
+		/** Group key for tokens sharing a simulated point, with exact settlement matches named. */
+		private String campaignTokenGroupKey(CampaignSnapshot snapshot, double worldX, double worldY) {
+			for (CampaignSnapshot.SettlementView settlement : snapshot.settlements) {
+				if (Math.abs(settlement.worldX - worldX) <= 0.01
+						&& Math.abs(settlement.worldY - worldY) <= 0.01) {
+					return "S:" + settlement.id;
+				}
+			}
+			return "W:" + Math.round(worldX) + ":" + Math.round(worldY);
+		}
+
+		/** Converts a token position and applies its deterministic de-overlap slot. */
+		private java.awt.Point campaignTokenPoint(CampaignSnapshot snapshot, double worldX, double worldY,
+				java.util.Map<String, Integer> groupCounts,
+				java.util.Map<String, Integer> nextSlots) {
+			String key = campaignTokenGroupKey(snapshot, worldX, worldY);
+			int slot = nextSlots.merge(key, 1, Integer::sum) - 1;
+			int count = groupCounts.getOrDefault(key, 1);
+			int[] fan = CampaignMapCamera.fanOutOffset(slot, count, 17);
+			int baseX = key.startsWith("S:") ? 21 : 0;
+			int baseY = key.startsWith("S:") ? 14 : 0;
+			return new java.awt.Point(
+					campaignCamera.worldToScreenX(worldX, screenWidth) + baseX + fan[0],
+					campaignCamera.worldToScreenY(worldY, screenHeight) + baseY + fan[1]);
+		}
+
+		/** Pre-renders deterministic plains, forests, hills, mountains, and fields once per world. */
+		private void drawCampaignTerrain(Graphics2D g2, CampaignSnapshot snapshot,
+				double minX, double maxX, double minY, double maxY) {
+			int key = 1;
+			for (CampaignSnapshot.SettlementView settlement : snapshot.settlements) {
+				key = 31 * key + Long.hashCode(settlement.id);
+				key = 31 * key + (int) Math.round(settlement.worldX * 10.0);
+				key = 31 * key + (int) Math.round(settlement.worldY * 10.0);
+				key = 31 * key + settlement.terrain.hashCode();
+			}
+			boolean boundsChanged = campaignTerrainBounds == null
+					|| Math.abs(campaignTerrainBounds[0] - minX) > 0.01
+					|| Math.abs(campaignTerrainBounds[1] - maxX) > 0.01
+					|| Math.abs(campaignTerrainBounds[2] - minY) > 0.01
+					|| Math.abs(campaignTerrainBounds[3] - maxY) > 0.01;
+			if (campaignTerrainImage == null || campaignTerrainImageKey != key || boundsChanged) {
+				double scale = 1.25;
+				int imageWidth = Math.max(2, (int) Math.ceil((maxX - minX) * scale));
+				int imageHeight = Math.max(2, (int) Math.ceil((maxY - minY) * scale));
+				java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
+						imageWidth, imageHeight, java.awt.image.BufferedImage.TYPE_INT_RGB);
+				Graphics2D terrain = image.createGraphics();
+				terrain.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+						java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+				terrain.scale(scale, scale);
+				terrain.translate(-minX, -minY);
+				terrain.setPaint(new java.awt.GradientPaint((float) minX, (float) minY,
+						new Color(111, 128, 76), (float) maxX, (float) maxY,
+						new Color(145, 132, 84)));
+				terrain.fillRect((int) Math.floor(minX), (int) Math.floor(minY),
+						(int) Math.ceil(maxX - minX) + 2, (int) Math.ceil(maxY - minY) + 2);
+
+				Random scatter = new Random(987654321L ^ key);
+				for (int i = 0; i < 280; i++) {
+					double cx = minX + scatter.nextDouble() * (maxX - minX);
+					double cy = minY + scatter.nextDouble() * (maxY - minY);
+					int radius = 16 + scatter.nextInt(70);
+					Color[] tints = {
+							new Color(88, 116, 62, 34), new Color(150, 143, 88, 30),
+							new Color(70, 96, 58, 28), new Color(173, 151, 92, 24)};
+					terrain.setColor(tints[scatter.nextInt(tints.length)]);
+					terrain.fillOval((int) (cx - radius), (int) (cy - radius * 0.65),
+							radius * 2, (int) (radius * 1.3));
+				}
+
+				for (CampaignSnapshot.SettlementView settlement : snapshot.settlements) {
+					Color realm = colorForRealm(settlement.realmId);
+					terrain.setColor(new Color(realm.getRed(), realm.getGreen(), realm.getBlue(), 18));
+					terrain.fillOval((int) settlement.worldX - 72, (int) settlement.worldY - 55, 144, 110);
+					Random local = new Random(settlement.id * 7919L + 17L);
+					String terrainType = settlement.terrain == null ? "PLAINS" : settlement.terrain;
+					if ("FORESTS".equals(terrainType)) {
+						terrain.setColor(new Color(45, 82, 48, 52));
+						terrain.fillOval((int) settlement.worldX - 92, (int) settlement.worldY - 72, 184, 144);
+						for (int i = 0; i < 58; i++) {
+							double angle = local.nextDouble() * Math.PI * 2.0;
+							double distance = 14.0 + local.nextDouble() * 78.0;
+							int tx = (int) (settlement.worldX + Math.cos(angle) * distance);
+							int ty = (int) (settlement.worldY + Math.sin(angle) * distance * 0.72);
+							int crown = 3 + local.nextInt(4);
+							terrain.setColor(new Color(91, 67, 38));
+							terrain.drawLine(tx, ty + crown, tx, ty + crown + 3);
+							terrain.setColor(new Color(48, 92, 48));
+							terrain.fillOval(tx - crown, ty - crown, crown * 2, crown * 2);
+							terrain.setColor(new Color(82, 122, 63));
+							terrain.fillOval(tx - crown / 2, ty - crown, Math.max(2, crown), Math.max(2, crown));
+						}
+					} else if ("HILLS".equals(terrainType)) {
+						terrain.setStroke(new BasicStroke(2f));
+						for (int i = 0; i < 18; i++) {
+							int hx = (int) settlement.worldX - 80 + local.nextInt(160);
+							int hy = (int) settlement.worldY - 55 + local.nextInt(110);
+							int width = 18 + local.nextInt(26);
+							terrain.setColor(new Color(126, 105, 70, 150));
+							terrain.drawArc(hx, hy, width, width / 2, 0, 180);
+						}
+						terrain.setStroke(new BasicStroke(1f));
+					} else if ("MOUNTAINS".equals(terrainType)) {
+						for (int i = 0; i < 15; i++) {
+							int mx = (int) settlement.worldX - 80 + local.nextInt(160);
+							int my = (int) settlement.worldY - 45 + local.nextInt(95);
+							int width = 16 + local.nextInt(18);
+							terrain.setColor(new Color(112, 112, 112));
+							terrain.fillPolygon(new int[] {mx, mx + width, mx + width / 2},
+									new int[] {my + width / 2, my + width / 2, my}, 3);
+							terrain.setColor(new Color(220, 220, 215));
+							terrain.fillPolygon(new int[] {mx + width / 2 - 3, mx + width / 2 + 3, mx + width / 2},
+									new int[] {my + 5, my + 5, my}, 3);
+						}
+					} else if ("DESERT".equals(terrainType)) {
+						terrain.setColor(new Color(197, 164, 94, 70));
+						terrain.fillOval((int) settlement.worldX - 90, (int) settlement.worldY - 65, 180, 130);
+					} else if ("SWAMP".equals(terrainType)) {
+						for (int i = 0; i < 18; i++) {
+							int sx = (int) settlement.worldX - 75 + local.nextInt(150);
+							int sy = (int) settlement.worldY - 50 + local.nextInt(100);
+							terrain.setColor(new Color(61, 105, 105, 120));
+							terrain.fillOval(sx, sy, 18 + local.nextInt(22), 7 + local.nextInt(8));
+						}
+					}
+					// Cultivated plots make inhabited land read differently from wilderness.
+					for (int i = 0; i < 6; i++) {
+						int fx = (int) settlement.worldX - 48 + local.nextInt(92);
+						int fy = (int) settlement.worldY - 34 + local.nextInt(68);
+						terrain.setColor(i % 2 == 0 ? new Color(154, 132, 70, 95)
+								: new Color(105, 139, 66, 95));
+						terrain.fillRect(fx, fy, 13 + local.nextInt(12), 8 + local.nextInt(8));
+					}
+				}
+				terrain.dispose();
+				campaignTerrainImage = image;
+				campaignTerrainImageKey = key;
+				campaignTerrainBounds = new double[] {minX, maxX, minY, maxY};
+			}
+			int sx = campaignCamera.worldToScreenX(minX, screenWidth);
+			int sy = campaignCamera.worldToScreenY(minY, screenHeight);
+			int ex = campaignCamera.worldToScreenX(maxX, screenWidth);
+			int ey = campaignCamera.worldToScreenY(maxY, screenHeight);
+			g2.drawImage(campaignTerrainImage, sx, sy, Math.max(1, ex - sx), Math.max(1, ey - sy), null);
+			g2.setColor(new Color(224, 198, 135, 75));
+			g2.drawRect(sx, sy, Math.max(1, ex - sx), Math.max(1, ey - sy));
+		}
+
+		/** Small 2D settlement silhouette: village house, or a stone keep for larger places. */
+		private void drawCampaignSettlementIcon(Graphics2D g2,
+				CampaignSnapshot.SettlementView settlement, int x, int y, int radius) {
+			Color realm = colorForRealm(settlement.realmId);
+			g2.setColor(new Color(0, 0, 0, 75));
+			g2.fillOval(x - radius, y + radius - 3, radius * 2, 7);
+			boolean fortified = settlement.capital || "CITY".equals(settlement.type)
+					|| "TOWN".equals(settlement.type) || "FORT".equals(settlement.type)
+					|| "CAPITAL".equals(settlement.type);
+			if (fortified) {
+				g2.setColor(new Color(178, 169, 151));
+				g2.fillRect(x - radius, y - radius + 3, radius * 2, radius * 2 - 3);
+				g2.setColor(new Color(91, 84, 72));
+				g2.drawRect(x - radius, y - radius + 3, radius * 2, radius * 2 - 3);
+				for (int i = -1; i <= 1; i++) {
+					g2.setColor(new Color(178, 169, 151));
+					g2.fillRect(x + i * (radius - 1) - 2, y - radius, 4, 5);
+					g2.setColor(new Color(91, 84, 72));
+					g2.drawRect(x + i * (radius - 1) - 2, y - radius, 4, 5);
+				}
+				g2.setColor(realm);
+				g2.fillPolygon(new int[] {x - radius - 1, x + radius + 1, x},
+						new int[] {y - radius + 3, y - radius + 3, y - radius - 3}, 3);
+				g2.setColor(new Color(54, 42, 32));
+				g2.fillRect(x - 2, y + 1, 4, Math.max(4, radius - 1));
+				if (settlement.capital) {
+					g2.setColor(new Color(255, 215, 90));
+					g2.fillPolygon(new int[] {x - 5, x - 2, x, x + 2, x + 5, x + 5, x - 5},
+							new int[] {y - radius - 4, y - radius - 8, y - radius - 5,
+									y - radius - 8, y - radius - 4, y - radius - 1, y - radius - 1}, 7);
+				}
+			} else {
+				g2.setColor(new Color(190, 158, 110));
+				g2.fillRect(x - radius + 1, y - 1, radius * 2 - 2, radius);
+				g2.setColor(new Color(105, 76, 48));
+				g2.drawRect(x - radius + 1, y - 1, radius * 2 - 2, radius);
+				g2.setColor(realm);
+				g2.fillPolygon(new int[] {x - radius - 1, x + radius + 1, x},
+						new int[] {y, y, y - radius}, 3);
+				g2.setColor(new Color(70, 48, 30));
+				g2.fillRect(x - 2, y + 2, 4, Math.max(3, radius - 2));
+			}
+		}
+
+		/** Realm-coloured pointed name tag with a tiny shield, after the Bannerlord map tags. */
+		private void drawCampaignBannerTag(Graphics2D g2, Rectangle label, int anchorX, int anchorY,
+				String text, Color realmColor, boolean urgent) {
+			int centerX = label.x + label.width / 2;
+			int centerY = label.y + label.height / 2;
+			if (Math.hypot(centerX - anchorX, centerY - anchorY) > 34) {
+				g2.setColor(new Color(245, 235, 205, 150));
+				g2.drawLine(anchorX, anchorY, centerX, centerY);
+			}
+			boolean pointsLeft = label.x + label.width < anchorX;
+			Color fill = new Color(realmColor.getRed(), realmColor.getGreen(), realmColor.getBlue(), 228);
+			g2.setColor(fill);
+			if (pointsLeft) {
+				g2.fillPolygon(new int[] {label.x + 8, label.x + label.width, label.x + label.width,
+								label.x + 8, label.x},
+						new int[] {label.y, label.y, label.y + label.height,
+								label.y + label.height, label.y + label.height / 2}, 5);
+			} else {
+				g2.fillPolygon(new int[] {label.x, label.x + label.width - 8, label.x + label.width,
+								label.x + label.width - 8, label.x},
+						new int[] {label.y, label.y, label.y + label.height / 2,
+								label.y + label.height, label.y + label.height}, 5);
+			}
+			g2.setColor(new Color(18, 20, 20, 190));
+			g2.drawPolygon(pointsLeft
+					? new int[] {label.x + 8, label.x + label.width, label.x + label.width,
+							label.x + 8, label.x}
+					: new int[] {label.x, label.x + label.width - 8, label.x + label.width,
+							label.x + label.width - 8, label.x},
+					pointsLeft
+					? new int[] {label.y, label.y, label.y + label.height,
+							label.y + label.height, label.y + label.height / 2}
+					: new int[] {label.y, label.y, label.y + label.height / 2,
+							label.y + label.height, label.y + label.height}, 5);
+			int shieldX = label.x + 3;
+			g2.setColor(new Color(245, 226, 160));
+			g2.fillPolygon(new int[] {shieldX, shieldX + 10, shieldX + 10, shieldX + 5, shieldX},
+					new int[] {label.y + 2, label.y + 2, label.y + 10, label.y + 15, label.y + 10}, 5);
+			g2.setColor(urgent ? new Color(255, 210, 190) : Color.WHITE);
+			g2.setFont(new Font("SansSerif", Font.BOLD, 10));
+			g2.drawString(text, label.x + 17, label.y + 12);
+		}
+
+		/** Shared dark pill for token nameplates. */
+		private void drawCampaignNamePill(Graphics2D g2, Rectangle label, String text,
+				Color background, Color foreground) {
+			g2.setColor(new Color(background.getRed(), background.getGreen(), background.getBlue(), 225));
+			g2.fillRoundRect(label.x, label.y, label.width, label.height, 6, 6);
+			g2.setColor(new Color(230, 210, 160));
+			g2.drawRoundRect(label.x, label.y, label.width, label.height, 6, 6);
+			g2.setColor(foreground);
+			g2.setFont(new Font("SansSerif", Font.BOLD, 9));
+			g2.drawString(text, label.x + 7, label.y + 11);
+		}
+
+		/** Compact Bannerlord-like frame: date and speed controls, purse/party, local news. */
+		private void drawCampaignHud(Graphics2D g2, CampaignSnapshot snapshot) {
+			// Date / world summary.
+			g2.setColor(new Color(12, 16, 20, 220));
+			g2.fillRoundRect(8, 7, 238, 38, 8, 8);
+			g2.setColor(new Color(205, 178, 112));
+			g2.drawRoundRect(8, 7, 238, 38, 8, 8);
+			g2.setFont(new Font("Serif", Font.BOLD, 13));
+			g2.setColor(new Color(240, 224, 175));
+			g2.drawString(snapshot.getDateLabel(), 16, 23);
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+			g2.setColor(new Color(205, 215, 220));
+			g2.drawString("Pop " + snapshot.livingPopulation + " · Wars " + snapshot.warCount
+					+ " · Sieges " + snapshot.activeSiegeCount + " · Food "
+					+ Math.round(snapshot.averageFoodSecurity * 100.0) + "%", 16, 37);
+
+			// Speed controls.
+			int controlW = 214;
+			int controlX = screenWidth / 2 - controlW / 2;
+			g2.setColor(new Color(12, 16, 20, 220));
+			g2.fillRoundRect(controlX, 7, controlW, 38, 8, 8);
+			g2.setColor(new Color(205, 178, 112));
+			g2.drawRoundRect(controlX, 7, controlW, 38, 8, 8);
+			String[][] controls = {
+					{"PAUSE", snapshot.paused ? ">" : "II"},
+					{"SPEED_1", "1x"}, {"SPEED_60", "60x"}, {"SPEED_1440", "1d/s"},
+					{"CENTER", "Party"}};
+			int buttonX = controlX + 7;
+			for (String[] control : controls) {
+				int width = "CENTER".equals(control[0]) ? 48 : 36;
+				Rectangle button = new Rectangle(buttonX, 13, width, 26);
+				campaignHudHitboxes.put(control[0], button);
+				boolean active = ("PAUSE".equals(control[0]) && snapshot.paused)
+						|| ("SPEED_1".equals(control[0]) && snapshot.speed == 1)
+						|| ("SPEED_60".equals(control[0]) && snapshot.speed == 60)
+						|| ("SPEED_1440".equals(control[0]) && snapshot.speed == 1440);
+				g2.setColor(active ? new Color(174, 132, 58) : new Color(45, 58, 68));
+				g2.fillRoundRect(button.x, button.y, button.width, button.height, 6, 6);
+				g2.setColor(new Color(220, 196, 140));
+				g2.drawRoundRect(button.x, button.y, button.width, button.height, 6, 6);
+				g2.setFont(new Font("SansSerif", Font.BOLD, 10));
+				g2.setColor(Color.WHITE);
+				int textW = g2.getFontMetrics().stringWidth(control[1]);
+				g2.drawString(control[1], button.x + (button.width - textW) / 2, button.y + 17);
+				buttonX += width + 5;
+			}
+			if (snapshot.player != null && snapshot.player.traveling) {
+				Rectangle stop = new Rectangle(controlX + controlW + 6, 13, 58, 26);
+				campaignHudHitboxes.put("STOP_TRAVEL", stop);
+				g2.setColor(new Color(110, 58, 42, 235));
+				g2.fillRoundRect(stop.x, stop.y, stop.width, stop.height, 6, 6);
+				g2.setColor(new Color(230, 190, 130));
+				g2.drawRoundRect(stop.x, stop.y, stop.width, stop.height, 6, 6);
+				g2.setColor(Color.WHITE);
+				g2.setFont(new Font("SansSerif", Font.BOLD, 9));
+				g2.drawString("Turn back", stop.x + 7, stop.y + 17);
+			}
+
+			// Party resources, top right.
+			if (snapshot.player != null) {
+				int x = screenWidth - 252;
+				g2.setColor(new Color(12, 16, 20, 220));
+				g2.fillRoundRect(x, 7, 244, 38, 8, 8);
+				g2.setColor(new Color(205, 178, 112));
+				g2.drawRoundRect(x, 7, 244, 38, 8, 8);
+				g2.setColor(new Color(245, 196, 65));
+				g2.fillOval(x + 9, 17, 11, 11);
+				g2.setColor(new Color(120, 82, 20));
+				g2.drawOval(x + 9, 17, 11, 11);
+				g2.setFont(new Font("SansSerif", Font.BOLD, 10));
+				g2.setColor(Color.WHITE);
+				g2.drawString(Long.toString(snapshot.player.coins), x + 24, 26);
+				g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+				g2.setColor(new Color(205, 215, 220));
+				g2.drawString("Party " + snapshot.player.partySize + " · Food "
+						+ (snapshot.player.grain + snapshot.player.vegetables) + " · Rep "
+						+ snapshot.player.reputation, x + 78, 26);
+				String place = snapshot.player.traveling
+						? "Riding to " + snapshot.player.travelDestinationName
+								+ " · " + campaignEtaText(snapshot.player.travelEtaMinutes)
+						: "At " + settlementName(snapshot, snapshot.player.settlementId);
+				g2.drawString(place, x + 10, 39);
+			}
+
+			String hint = "Left-click: ride   Right-click: inspect/select   Drag: pan   Wheel: zoom   TAB: local   H: help";
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+			int hintX = screenWidth / 2 - g2.getFontMetrics().stringWidth(hint) / 2;
+			g2.setColor(Color.BLACK);
+			g2.drawString(hint, hintX + 1, 58);
+			g2.setColor(new Color(240, 235, 215));
+			g2.drawString(hint, hintX, 57);
+
+			if (snapshot.paused) {
+				g2.setFont(new Font("SansSerif", Font.BOLD, 16));
+				String paused = "PAUSED";
+				int px = screenWidth / 2 - g2.getFontMetrics().stringWidth(paused) / 2;
+				g2.setColor(Color.BLACK);
+				g2.drawString(paused, px + 1, screenHeight - 47);
+				g2.setColor(Color.WHITE);
+				g2.drawString(paused, px, screenHeight - 48);
+			}
+
+			if (activeCampaignTab != CampaignTab.OVERVIEW || snapshot.player == null) return;
+			java.util.List<String> eventLines = new java.util.ArrayList<>();
+			for (int i = snapshot.recentEvents.size() - 1; i >= 0 && eventLines.size() < 4; i--) {
+				String line = readableEvent(snapshot.recentEvents.get(i));
+				if (line != null && !line.isBlank()) eventLines.add(0, line);
+			}
+			CampaignSnapshot.ArmyView yourArmy = findCommandedArmy(snapshot);
+			int statusLines = yourArmy == null ? 1 : 2;
+			int panelHeight = 10 + statusLines * 13 + (eventLines.isEmpty() ? 0 : 7 + eventLines.size() * 12);
+			int panelY = screenHeight - 32 - panelHeight - 8;
+			int panelX = 8;
+			int panelW = 354;
+			g2.setColor(new Color(10, 15, 20, 190));
+			g2.fillRoundRect(panelX, panelY, panelW, panelHeight, 8, 8);
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+			int lineY = panelY + 14;
+			g2.setColor(new Color(255, 224, 145));
+			String partyLine = snapshot.player.traveling
+					? "Your party (" + snapshot.player.partySize + ") rides to "
+							+ snapshot.player.travelDestinationName + " · "
+							+ String.format("%.1f", snapshot.player.travelSpeedPerHour) + "/h · "
+							+ campaignEtaText(snapshot.player.travelEtaMinutes)
+					: "Your party (" + snapshot.player.partySize + ") at "
+							+ settlementName(snapshot, snapshot.player.settlementId);
+			g2.drawString(partyLine, panelX + 8, lineY);
+			lineY += 13;
+			if (yourArmy != null) {
+				g2.setColor(new Color(205, 220, 225));
+				g2.drawString("Your army: " + yourArmy.strength + " · morale "
+						+ Math.round(yourArmy.morale) + "% · " + yourArmy.grain + " grain · "
+						+ yourArmy.order, panelX + 8, lineY);
+				lineY += 13;
+			}
+			if (!eventLines.isEmpty()) {
+				lineY += 2;
+				g2.setColor(new Color(150, 130, 90));
+				g2.drawLine(panelX + 8, lineY - 7, panelX + panelW - 8, lineY - 7);
+				for (String line : eventLines) {
+					java.util.List<String> wrapped = wrapCampaignText(g2, line, panelW - 16, 1);
+					g2.setColor(new Color(220, 224, 220));
+					if (!wrapped.isEmpty()) g2.drawString(wrapped.get(0), panelX + 8, lineY);
+					lineY += 12;
+				}
+			}
+		}
+
+		/** Short ETA such as "5h 20m" or "2d 3h". */
+		private String campaignEtaText(long minutes) {
+			if (minutes <= 0) return "arriving";
+			long days = minutes / (24L * 60L);
+			long hours = (minutes % (24L * 60L)) / 60L;
+			long mins = minutes % 60L;
+			if (days > 0) return days + "d " + hours + "h";
+			if (hours > 0) return hours + "h " + mins + "m";
+			return mins + "m";
+		}
+
+		/** Bannerlord-like hover card for an army token. */
+		private void drawCampaignArmyHoverCard(Graphics2D g2, CampaignSnapshot snapshot) {
+			if (hoveredCampaignArmyId == null) return;
+			CampaignSnapshot.ArmyView army = snapshot.findArmy(hoveredCampaignArmyId);
+			if (army == null) return;
+			int width = 252;
+			int height = 148;
+			int x = Math.max(6, Math.min(screenWidth - width - 6, campaignMousePoint.x + 14));
+			int y = Math.max(48, Math.min(screenHeight - height - 38, campaignMousePoint.y + 14));
+			g2.setColor(new Color(10, 18, 22, 238));
+			g2.fillRoundRect(x, y, width, height, 9, 9);
+			g2.setColor(colorForRealm(army.realmId));
+			g2.setStroke(new BasicStroke(2f));
+			g2.drawRoundRect(x, y, width, height, 9, 9);
+			g2.setStroke(new BasicStroke(1f));
+			g2.setFont(new Font("Serif", Font.BOLD, 14));
+			g2.setColor(new Color(240, 224, 175));
+			g2.drawString(campaignRealmName(snapshot, army.realmId) + " Army", x + 10, y + 20);
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+			g2.setColor(army.playerCommanded ? new Color(170, 230, 170)
+					: army.hostileToPlayer ? new Color(255, 150, 125) : Color.LIGHT_GRAY);
+			g2.drawString(army.playerCommanded ? "Under your command"
+					: army.hostileToPlayer ? "Hostile to your realm" : "Neutral to you", x + 10, y + 37);
+			g2.setColor(Color.WHITE);
+			g2.drawString("Commander " + army.commanderName, x + 10, y + 54);
+			g2.drawString("Troops " + army.strength + "  morale " + Math.round(army.morale)
+					+ "%  fatigue " + Math.round(army.fatigue) + "%", x + 10, y + 70);
+			g2.drawString("Order " + army.order + "  state " + army.state, x + 10, y + 86);
+			g2.drawString("At " + settlementName(snapshot, army.currentSettlementId)
+					+ " -> " + settlementName(snapshot, army.destinationSettlementId), x + 10, y + 102);
+			g2.drawString("Grain " + army.grain + (army.daysWithoutFood > 0
+					? "  (" + army.daysWithoutFood + "d unfed)" : ""), x + 10, y + 118);
+			g2.setColor(new Color(190, 200, 205));
+			g2.drawString(army.playerCommanded ? "Right-click for orders"
+					: "Left-click ride to it · right-click inspect", x + 10, y + 137);
+		}
+
+		/** Hover card for a merchant caravan token. */
+		private void drawCampaignCaravanHoverCard(Graphics2D g2, CampaignSnapshot snapshot) {
+			if (hoveredCampaignCaravanId == null || hoveredCampaignArmyId != null) return;
+			CampaignSnapshot.CaravanView caravan = snapshot.findCaravan(hoveredCampaignCaravanId);
+			if (caravan == null) return;
+			int width = 242;
+			int height = 128;
+			int x = Math.max(6, Math.min(screenWidth - width - 6, campaignMousePoint.x + 14));
+			int y = Math.max(48, Math.min(screenHeight - height - 38, campaignMousePoint.y + 14));
+			g2.setColor(new Color(18, 22, 20, 238));
+			g2.fillRoundRect(x, y, width, height, 9, 9);
+			g2.setColor(new Color(238, 184, 65));
+			g2.drawRoundRect(x, y, width, height, 9, 9);
+			g2.setFont(new Font("Serif", Font.BOLD, 14));
+			g2.setColor(new Color(245, 220, 150));
+			g2.drawString("Caravan of " + caravan.leaderName, x + 10, y + 20);
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+			g2.setColor(Color.WHITE);
+			g2.drawString("Cargo " + caravan.cargo + " x" + caravan.cargoQuantity
+					+ "  cash " + caravan.cash + "c", x + 10, y + 41);
+			g2.drawString("Guards " + caravan.guardCount + "  trips " + caravan.completedTrips,
+					x + 10, y + 57);
+			g2.drawString("State " + caravan.state, x + 10, y + 73);
+			g2.drawString(settlementName(snapshot, caravan.currentSettlementId) + " -> "
+					+ settlementName(snapshot, caravan.destinationSettlementId), x + 10, y + 89);
+			g2.setColor(new Color(190, 200, 205));
+			g2.drawString("Left-click follow · right-click inspect", x + 10, y + 113);
+		}
+
+		/** Hover card for the player's own party token. */
+		private void drawCampaignPlayerHoverCard(Graphics2D g2, CampaignSnapshot snapshot) {
+			if (snapshot.player == null || campaignPlayerHitbox == null
+					|| !campaignPlayerHitbox.contains(campaignMousePoint)
+					|| hoveredCampaignArmyId != null || hoveredCampaignCaravanId != null) return;
+			int width = 238;
+			int height = 126;
+			int x = Math.max(6, Math.min(screenWidth - width - 6, campaignMousePoint.x + 14));
+			int y = Math.max(48, Math.min(screenHeight - height - 38, campaignMousePoint.y + 14));
+			g2.setColor(new Color(12, 22, 26, 238));
+			g2.fillRoundRect(x, y, width, height, 9, 9);
+			g2.setColor(new Color(255, 215, 90));
+			g2.drawRoundRect(x, y, width, height, 9, 9);
+			g2.setFont(new Font("Serif", Font.BOLD, 14));
+			g2.setColor(new Color(245, 226, 160));
+			g2.drawString("Your Party", x + 10, y + 20);
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+			g2.setColor(Color.WHITE);
+			g2.drawString("Companions " + snapshot.player.partySize + "  coins "
+					+ snapshot.player.coins + "c", x + 10, y + 41);
+			g2.drawString("Cargo " + snapshot.player.cargoUsed + "/"
+					+ snapshot.player.cargoCapacity + "  contracts "
+					+ snapshot.player.activeContracts, x + 10, y + 57);
+			if (snapshot.player.traveling) {
+				g2.drawString("Riding to " + snapshot.player.travelDestinationName, x + 10, y + 76);
+				g2.drawString("Speed " + String.format("%.1f", snapshot.player.travelSpeedPerHour)
+						+ "/h  ETA " + campaignEtaText(snapshot.player.travelEtaMinutes), x + 10, y + 92);
+			} else {
+				g2.drawString("At " + settlementName(snapshot, snapshot.player.settlementId),
+						x + 10, y + 76);
+				g2.drawString("TAB enters the local settlement", x + 10, y + 92);
+			}
+			g2.setColor(new Color(190, 200, 205));
+			g2.drawString("Click token to centre · right-click party", x + 10, y + 112);
 		}
 
 		/**

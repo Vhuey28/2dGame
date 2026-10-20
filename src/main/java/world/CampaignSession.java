@@ -103,6 +103,7 @@ public final class CampaignSession {
     public void update(double realSeconds) {
         simulation.update(realSeconds);
         long currentMinute = clock.getWorldMinute();
+        advancePlayerTravel(currentMinute);
         processCaptivity(currentMinute);
         processHoldingIncome(currentMinute);
         contractSystem.processDeadlines(playerState, currentMinute);
@@ -116,7 +117,7 @@ public final class CampaignSession {
         Household household = world.households.get(playerState.householdId);
         if (settlement == null || household == null) return CommandResult.rejected("INVALID_LOCATION", "Settlement not found");
         if (playerState.currentSettlementId != settlementId) return CommandResult.rejected("NOT_PRESENT", "Travel to the settlement first");
-        CommandResult blocked = captivityBlock(clock.getWorldMinute());
+        CommandResult blocked = freeActionBlock(clock.getWorldMinute());
         if (blocked != null) return blocked;
         quantity = Math.min(quantity, playerState.remainingCapacity());
         quantity = Math.min(quantity, settlement.publicStockpile.getQuantity(good));
@@ -137,7 +138,7 @@ public final class CampaignSession {
         Household household = world.households.get(playerState.householdId);
         if (settlement == null || household == null) return CommandResult.rejected("INVALID_LOCATION", "Settlement not found");
         if (playerState.currentSettlementId != settlementId) return CommandResult.rejected("NOT_PRESENT", "Travel to the settlement first");
-        CommandResult blocked = captivityBlock(clock.getWorldMinute());
+        CommandResult blocked = freeActionBlock(clock.getWorldMinute());
         if (blocked != null) return blocked;
         quantity = Math.min(quantity, playerState.cargo.getQuantity(good));
         long price = Math.max(1L, settlement.market.getLastPrice(good));
@@ -152,17 +153,31 @@ public final class CampaignSession {
         return CommandResult.accepted();
     }
 
+    /**
+     * Legacy instant travel retained for tests and scripted settlement changes. The
+     * campaign map uses {@link #beginTravelTo(long)}, which moves the party token
+     * along roads while the simulation clock runs.
+     */
     public CommandResult travelPlayerTo(long settlementId) {
-        if (settlementId == playerState.currentSettlementId) return CommandResult.accepted();
+        if (settlementId == playerState.currentSettlementId && !playerState.isTraveling()) {
+            return CommandResult.accepted();
+        }
         CommandResult blocked = captivityBlock(clock.getWorldMinute());
         if (blocked != null) return blocked;
         Settlement destination = world.geography.getSettlement(settlementId);
         if (destination == null) return CommandResult.rejected("INVALID_LOCATION", "Settlement not found");
+        if (settlementId == playerState.currentSettlementId) {
+            // Instant travel back to the journey origin cancels the road journey.
+            arrivePlayerAtSettlement(settlementId);
+            refreshSnapshot();
+            return CommandResult.accepted();
+        }
         java.util.List<Road> route = world.geography.getRouteGraph()
                 .findShortestRoute(playerState.currentSettlementId, settlementId);
         if (route.isEmpty()) return CommandResult.rejected("NO_ROUTE", "No open road reaches that settlement");
         double distance = route.stream().mapToDouble(Road::getEffectiveCostFactor).sum();
         long travelMinutes = Math.max(60L, Math.round(distance / 10.0 * 60.0));
+        playerState.clearTravel();
         WorldParty party = world.parties.get(playerState.partyId);
         if (party != null) {
             party.state = WorldParty.PartyState.TRAVELING;
@@ -173,6 +188,243 @@ public final class CampaignSession {
         clock.setPaused(false);
         simulation.advanceMinutes(travelMinutes);
         clock.setPaused(paused);
+        arrivePlayerAtSettlement(settlementId);
+        refreshSnapshot();
+        return CommandResult.accepted();
+    }
+
+    /**
+     * Starts (or retargets) a Bannerlord-style road journey. The party remains in
+     * the world while time passes: armies and caravans keep moving, contracts keep
+     * ageing, and the player can reverse or choose a new destination at the next
+     * road decision point. If a commanded army is travelling with the party it is
+     * ordered to the same destination.
+     */
+    public CommandResult beginTravelTo(long settlementId) {
+        long minute = clock.getWorldMinute();
+        CommandResult blocked = captivityBlock(minute);
+        if (blocked != null) return blocked;
+        Settlement destination = world.geography.getSettlement(settlementId);
+        if (destination == null) return CommandResult.rejected("INVALID_LOCATION", "Settlement not found");
+
+        if (!playerState.isTraveling()) {
+            if (settlementId == playerState.currentSettlementId) return CommandResult.accepted();
+            java.util.List<Long> route = findRouteSettlementIds(
+                    playerState.currentSettlementId, settlementId);
+            if (route.size() < 2) {
+                return CommandResult.rejected("NO_ROUTE", "No open road reaches that settlement");
+            }
+            installTravelRoute(route, 1, 0.0, settlementId, minute, null);
+        } else {
+            Long previousDestination = playerState.travelDestinationSettlementId;
+            if (previousDestination != null && previousDestination.longValue() == settlementId) {
+                return CommandResult.accepted();
+            }
+            int index = playerState.travelRouteIndex;
+            long behind = playerState.travelRouteSettlementIds.get(index - 1);
+            long ahead = playerState.travelRouteSettlementIds.get(index);
+            double progress = playerState.travelSegmentProgress;
+            if (settlementId == ahead) {
+                java.util.List<Long> shortened = new ArrayList<>(
+                        playerState.travelRouteSettlementIds.subList(0, index + 1));
+                installTravelRoute(shortened, index, progress, settlementId, minute, previousDestination);
+            } else {
+                java.util.List<Long> fromBehind = settlementId == behind
+                        ? java.util.List.of(behind) : findRouteSettlementIds(behind, settlementId);
+                java.util.List<Long> fromAhead = findRouteSettlementIds(ahead, settlementId);
+                if (fromBehind.isEmpty() && fromAhead.size() < 2) {
+                    return CommandResult.rejected("NO_ROUTE", "No open road reaches that settlement");
+                }
+                double segmentLength = settlementDistance(behind, ahead);
+                double backCost = fromBehind.isEmpty() ? Double.POSITIVE_INFINITY
+                        : progress * segmentLength + routeDistance(fromBehind);
+                double forwardCost = fromAhead.size() < 2 ? Double.POSITIVE_INFINITY
+                        : (1.0 - progress) * segmentLength + routeDistance(fromAhead);
+                if (backCost <= forwardCost) {
+                    java.util.List<Long> route = new ArrayList<>();
+                    route.add(ahead);
+                    route.addAll(fromBehind);
+                    installTravelRoute(route, 1, 1.0 - progress, settlementId, minute, previousDestination);
+                } else {
+                    java.util.List<Long> route = new ArrayList<>();
+                    route.add(behind);
+                    route.addAll(fromAhead);
+                    installTravelRoute(route, 1, progress, settlementId, minute, previousDestination);
+                }
+            }
+        }
+        refreshSnapshot();
+        return new CommandResult(true, "TRAVEL_STARTED", "Riding to " + destination.name + ".");
+    }
+
+    /** Turns the party back toward the last settlement behind it on the current road. */
+    public CommandResult cancelTravel() {
+        if (!playerState.isTraveling()) return CommandResult.accepted();
+        long behind = playerState.travelRouteSettlementIds.get(playerState.travelRouteIndex - 1);
+        return beginTravelTo(behind);
+    }
+
+    /** Advances the player party along its stored road route by elapsed world time. */
+    private void advancePlayerTravel(long currentMinute) {
+        if (!playerState.isTraveling()) {
+            playerState.travelLastMinute = currentMinute;
+            return;
+        }
+        if (playerState.travelLastMinute == Long.MIN_VALUE) {
+            playerState.travelLastMinute = currentMinute;
+            updateTravelPosition();
+            return;
+        }
+        long elapsedMinutes = currentMinute - playerState.travelLastMinute;
+        playerState.travelLastMinute = currentMinute;
+        if (elapsedMinutes <= 0) {
+            updateTravelPosition();
+            return;
+        }
+        double remaining = Math.max(1.0, playerState.travelSpeedPerHour) * elapsedMinutes / 60.0;
+        while (remaining > 0.0 && playerState.isTraveling()) {
+            int index = playerState.travelRouteIndex;
+            long fromId = playerState.travelRouteSettlementIds.get(index - 1);
+            long toId = playerState.travelRouteSettlementIds.get(index);
+            Settlement from = world.geography.getSettlement(fromId);
+            Settlement to = world.geography.getSettlement(toId);
+            if (from == null || to == null || from.position == null || to.position == null) {
+                arrivePlayerAtSettlement(playerState.currentSettlementId);
+                break;
+            }
+            double segmentLength = Math.max(1.0, Math.hypot(
+                    to.position.x - from.position.x, to.position.y - from.position.y));
+            double distanceToEnd = (1.0 - playerState.travelSegmentProgress) * segmentLength;
+            if (remaining + 1.0e-9 < distanceToEnd) {
+                playerState.travelSegmentProgress += remaining / segmentLength;
+                remaining = 0.0;
+            } else {
+                remaining -= distanceToEnd;
+                if (index >= playerState.travelRouteSettlementIds.size() - 1) {
+                    arrivePlayerAtSettlement(toId);
+                    break;
+                }
+                playerState.travelRouteIndex++;
+                playerState.travelSegmentProgress = 0.0;
+            }
+        }
+        if (playerState.isTraveling()) updateTravelPosition();
+    }
+
+    private void installTravelRoute(java.util.List<Long> route, int index, double progress,
+            long destinationId, long minute, Long previousDestination) {
+        playerState.traveling = true;
+        playerState.travelDestinationSettlementId = destinationId;
+        playerState.travelRouteSettlementIds.clear();
+        playerState.travelRouteSettlementIds.addAll(route);
+        playerState.travelRouteIndex = Math.max(1, Math.min(index, route.size() - 1));
+        playerState.travelSegmentProgress = Math.max(0.0, Math.min(1.0, progress));
+        playerState.travelSpeedPerHour = currentPartySpeedPerHour(previousDestination);
+        playerState.travelLastMinute = minute;
+        WorldParty party = world.parties.get(playerState.partyId);
+        if (party != null) {
+            party.state = WorldParty.PartyState.TRAVELING;
+            party.currentSettlementId = null;
+            party.destinationSettlementId = destinationId;
+            if (party.position == null && !route.isEmpty()) {
+                Settlement start = world.geography.getSettlement(route.get(0));
+                if (start != null && start.position != null) {
+                    party.position = new WorldPosition(start.position.x, start.position.y);
+                }
+            }
+        }
+        updateTravelPosition();
+        orderAccompanyingArmy(destinationId, minute, previousDestination);
+    }
+
+    private void updateTravelPosition() {
+        if (!playerState.isTraveling()) return;
+        WorldParty party = world.parties.get(playerState.partyId);
+        if (party == null) return;
+        int index = playerState.travelRouteIndex;
+        Settlement from = world.geography.getSettlement(
+                playerState.travelRouteSettlementIds.get(index - 1));
+        Settlement to = world.geography.getSettlement(
+                playerState.travelRouteSettlementIds.get(index));
+        if (from == null || to == null || from.position == null || to.position == null) return;
+        double progress = Math.max(0.0, Math.min(1.0, playerState.travelSegmentProgress));
+        party.position = new WorldPosition(
+                from.position.x + (to.position.x - from.position.x) * progress,
+                from.position.y + (to.position.y - from.position.y) * progress);
+    }
+
+    private java.util.List<Long> findRouteSettlementIds(long fromId, long toId) {
+        if (fromId == toId) return java.util.List.of(fromId);
+        java.util.List<Road> roads = world.geography.getRouteGraph().findShortestRoute(fromId, toId);
+        if (roads.isEmpty()) return java.util.List.of();
+        java.util.List<Long> route = new ArrayList<>();
+        route.add(fromId);
+        long current = fromId;
+        for (Road road : roads) {
+            long next;
+            if (road.fromSettlementId == current) next = road.toSettlementId;
+            else if (road.toSettlementId == current) next = road.fromSettlementId;
+            else return java.util.List.of();
+            route.add(next);
+            current = next;
+        }
+        return current == toId ? route : java.util.List.of();
+    }
+
+    private double routeDistance(java.util.List<Long> route) {
+        double total = 0.0;
+        for (int i = 1; i < route.size(); i++) total += settlementDistance(route.get(i - 1), route.get(i));
+        return total;
+    }
+
+    private double settlementDistance(long firstId, long secondId) {
+        Settlement first = world.geography.getSettlement(firstId);
+        Settlement second = world.geography.getSettlement(secondId);
+        if (first == null || second == null || first.position == null || second.position == null) {
+            return Double.POSITIVE_INFINITY;
+        }
+        return Math.hypot(second.position.x - first.position.x,
+                second.position.y - first.position.y);
+    }
+
+    private double currentPartySpeedPerHour(Long previousDestination) {
+        WorldParty party = world.parties.get(playerState.partyId);
+        int partySize = party == null ? 1 : Math.max(1, party.memberPersonIds.size());
+        double loadRatio = playerState.cargoCapacity <= 0 ? 0.0
+                : Math.max(0.0, Math.min(1.0,
+                        playerState.cargo.totalQuantity() / (double) playerState.cargoCapacity));
+        double speed = 10.0 * (1.0 - 0.15 * loadRatio)
+                / (1.0 + Math.max(0, partySize - 5) * 0.02);
+        Army army = playerState.commandedArmyId == null
+                ? null : world.armies.get(playerState.commandedArmyId);
+        if (army != null && army.state != Army.ArmyState.DISBANDED
+                && (army.currentSettlementId == playerState.currentSettlementId
+                        || (previousDestination != null
+                                && previousDestination.equals(army.destinationSettlementId)))) {
+            speed = Math.min(speed, army.speedPerHour);
+        }
+        return Math.max(4.0, Math.min(12.0, speed));
+    }
+
+    private void orderAccompanyingArmy(long destinationId, long minute, Long previousDestination) {
+        if (playerState.commandedArmyId == null) return;
+        Army army = world.armies.get(playerState.commandedArmyId);
+        if (army == null || army.state == Army.ArmyState.DISBANDED
+                || army.state == Army.ArmyState.ENGAGED) return;
+        boolean travellingWithPlayer = army.currentSettlementId == playerState.currentSettlementId
+                || (previousDestination != null
+                        && previousDestination.equals(army.destinationSettlementId));
+        if (!travellingWithPlayer) return;
+        if (army.destinationSettlementId != null
+                && army.destinationSettlementId.longValue() == destinationId) return;
+        simulation.getMilitarySystem().issueMoveOrder(
+                army.id, destinationId, Army.ArmyOrder.MOVE, minute);
+    }
+
+    /** Shared final-arrival bookkeeping for instant and continuous travel. */
+    private void arrivePlayerAtSettlement(long settlementId) {
+        Settlement destination = world.geography.getSettlement(settlementId);
+        WorldParty party = world.parties.get(playerState.partyId);
         playerState.currentSettlementId = settlementId;
         Person player = world.people.get(playerState.personId);
         Household household = world.households.get(playerState.householdId);
@@ -191,18 +443,28 @@ public final class CampaignSession {
             party.state = WorldParty.PartyState.AT_SETTLEMENT;
             party.currentSettlementId = settlementId;
             party.destinationSettlementId = null;
-            party.position = new WorldPosition(destination.position.x, destination.position.y);
+            if (destination != null && destination.position != null) {
+                party.position = new WorldPosition(destination.position.x, destination.position.y);
+            }
         }
+        playerState.clearTravel();
         contractSystem.onPlayerArrived(playerState, clock.getWorldMinute());
-        refreshSnapshot();
-        return CommandResult.accepted();
+    }
+
+    /** Settlement actions are unavailable while the party is between settlements. */
+    private CommandResult travelBlock() {
+        if (!playerState.isTraveling()) return null;
+        Settlement destination = playerState.travelDestinationSettlementId == null ? null
+                : world.geography.getSettlement(playerState.travelDestinationSettlementId);
+        return CommandResult.rejected("TRAVELING", "You are on the road to "
+                + (destination == null ? "your destination" : destination.name) + ".");
     }
 
     public CommandResult recruitCompanion(long personId) {
         Person companion = world.people.get(personId);
         WorldParty party = world.parties.get(playerState.partyId);
         if (companion == null || party == null) return CommandResult.rejected("INVALID_PERSON", "Person not found");
-        CommandResult blocked = captivityBlock(clock.getWorldMinute());
+        CommandResult blocked = freeActionBlock(clock.getWorldMinute());
         if (blocked != null) return blocked;
         if (!companion.alive || companion.currentSettlementId == null
                 || companion.currentSettlementId != playerState.currentSettlementId) {
@@ -389,6 +651,18 @@ public final class CampaignSession {
         if (player == null || party == null) {
             return CommandResult.rejected("INVALID_STATE", "The adventurer cannot be resolved");
         }
+        if (playerState.isTraveling()) {
+            // A defeat ends the journey at the last settled refuge rather than
+            // leaving a wounded or captive party marching on its own.
+            playerState.clearTravel();
+            Settlement refuge = world.geography.getSettlement(playerState.currentSettlementId);
+            party.state = WorldParty.PartyState.AT_SETTLEMENT;
+            party.currentSettlementId = playerState.currentSettlementId;
+            party.destinationSettlementId = null;
+            if (refuge != null && refuge.position != null) {
+                party.position = new WorldPosition(refuge.position.x, refuge.position.y);
+            }
+        }
 
         StringBuilder message = new StringBuilder();
         long lostCoins = takeCoins(party, severity == DefeatSeverity.WOUNDED ? 0.15
@@ -476,10 +750,16 @@ public final class CampaignSession {
                 + playerState.ransomCoins + "c to go free");
     }
 
+    /** Captivity takes precedence; otherwise ordinary verbs are unavailable on the road. */
+    private CommandResult freeActionBlock(long minute) {
+        CommandResult blocked = captivityBlock(minute);
+        return blocked != null ? blocked : travelBlock();
+    }
+
     /** Rests at the settlement inn: costs coin, advances the clock, and heals wounds. */
     public CommandResult restAtInn(int hours) {
         long minute = clock.getWorldMinute();
-        CommandResult blocked = captivityBlock(minute);
+        CommandResult blocked = freeActionBlock(minute);
         if (blocked != null) return blocked;
         Person player = world.people.get(playerState.personId);
         Household household = world.households.get(playerState.householdId);
@@ -522,7 +802,7 @@ public final class CampaignSession {
      */
     public CommandResult seizeThrone(long realmId) {
         long minute = clock.getWorldMinute();
-        CommandResult blocked = captivityBlock(minute);
+        CommandResult blocked = freeActionBlock(minute);
         if (blocked != null) return blocked;
         Realm realm = world.realms.get(realmId);
         Person player = world.people.get(playerState.personId);
@@ -667,7 +947,7 @@ public final class CampaignSession {
      */
     public CommandResult raiseCompany(int count, world.military.Regiment.RegimentType type) {
         long minute = clock.getWorldMinute();
-        CommandResult blocked = captivityBlock(minute);
+        CommandResult blocked = freeActionBlock(minute);
         if (blocked != null) return blocked;
         WorldParty party = world.parties.get(playerState.partyId);
         if (party == null) return CommandResult.rejected("INVALID_STATE", "Your party is unavailable");
@@ -704,7 +984,7 @@ public final class CampaignSession {
     /** A ruler may take personal command of one of their own realm's armies. */
     public CommandResult takeCommandOfArmy(long armyId) {
         long minute = clock.getWorldMinute();
-        CommandResult blocked = captivityBlock(minute);
+        CommandResult blocked = freeActionBlock(minute);
         if (blocked != null) return blocked;
         Army army = world.armies.get(armyId);
         if (army == null || army.state == Army.ArmyState.DISBANDED) {
@@ -876,6 +1156,29 @@ public final class CampaignSession {
         return CommandResult.accepted();
     }
 
+    /** Resolves an engagement through the same automatic battle path used by AI armies. */
+    public CommandResult autoResolveEngagement(long targetArmyId) {
+        CommandResult cleared = canEngageArmy(targetArmyId);
+        if (!cleared.accepted) return cleared;
+        long mineId = playerState.commandedArmyId;
+        long minute = clock.getWorldMinute();
+        world.military.BattleReport report = simulation.getMilitarySystem()
+                .autoResolveEncounter(mineId, targetArmyId, minute);
+        if (report == null) {
+            return CommandResult.rejected("INVALID_ARMY", "That army is no longer able to fight");
+        }
+        boolean heldField = report.winnerArmyId == mineId;
+        int yourCasualties = report.firstArmyId == mineId
+                ? report.firstCasualties : report.secondCasualties;
+        int enemyCasualties = report.firstArmyId == mineId
+                ? report.secondCasualties : report.firstCasualties;
+        notePlayerBattleResult(heldField);
+        refreshSnapshot();
+        return new CommandResult(true, heldField ? "AUTO_RESOLVE_VICTORY" : "AUTO_RESOLVE_DEFEAT",
+                (heldField ? "Your troops hold the field. " : "Your troops are driven off. ")
+                        + "Losses: yours " + yourCasualties + ", theirs " + enemyCasualties + ".");
+    }
+
     /** Storms the walls of an active siege your army is part of. */
     public CommandResult assaultSiege(long siegeId) {
         long minute = clock.getWorldMinute();
@@ -939,7 +1242,7 @@ public final class CampaignSession {
     public CommandResult declareWarAsRuler(long defenderRealmId, War.WarGoal goal,
             Long targetProvinceId, Long targetTitleId) {
         long minute = clock.getWorldMinute();
-        CommandResult blocked = captivityBlock(minute);
+        CommandResult blocked = freeActionBlock(minute);
         if (blocked != null) return blocked;
         Realm realm = effectivePlayerRealm();
         if (realm == null || realm.rulerPersonId == null || realm.rulerPersonId != playerState.personId) {
@@ -1015,7 +1318,7 @@ public final class CampaignSession {
      */
     public CommandResult claimHolding(long settlementId) {
         long minute = clock.getWorldMinute();
-        CommandResult blocked = captivityBlock(minute);
+        CommandResult blocked = freeActionBlock(minute);
         if (blocked != null) return blocked;
         Settlement settlement = world.geography.getSettlement(settlementId);
         if (settlement == null) return CommandResult.rejected("INVALID_LOCATION", "Settlement not found");
@@ -1108,7 +1411,7 @@ public final class CampaignSession {
     }
 
     public CommandResult acceptContract(long contractId) {
-        CommandResult blocked = captivityBlock(clock.getWorldMinute());
+        CommandResult blocked = freeActionBlock(clock.getWorldMinute());
         if (blocked != null) return blocked;
         CommandResult result = contractSystem.accept(contractId, playerState, clock.getWorldMinute());
         refreshSnapshot();

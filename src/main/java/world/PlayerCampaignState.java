@@ -42,6 +42,41 @@ public final class PlayerCampaignState {
     public Long captorRealmId;
     public long ransomCoins;
 
+    /**
+     * Continuous campaign-map travel. The route is stored as settlement ids from the
+     * last settlement behind the party to the final destination. {@code travelRouteIndex}
+     * is the settlement currently being approached, and {@code travelSegmentProgress}
+     * is the fraction travelled from route[index - 1] to route[index]. The party's
+     * {@code currentSettlementId} deliberately remains the last completed destination
+     * until final arrival, matching the older instant-travel contract for the many
+     * systems that require the adventurer to be somewhere.
+     */
+    public boolean traveling;
+    public Long travelDestinationSettlementId;
+    public final List<Long> travelRouteSettlementIds = new ArrayList<>();
+    public int travelRouteIndex;
+    public double travelSegmentProgress;
+    public double travelSpeedPerHour = 10.0;
+    public long travelLastMinute = Long.MIN_VALUE;
+
+    /** True while a well-formed road journey is in progress. */
+    public boolean isTraveling() {
+        return traveling && travelDestinationSettlementId != null
+                && travelRouteSettlementIds.size() >= 2
+                && travelRouteIndex >= 1
+                && travelRouteIndex < travelRouteSettlementIds.size();
+    }
+
+    /** Clears all transient journey state without moving the party. */
+    public void clearTravel() {
+        traveling = false;
+        travelDestinationSettlementId = null;
+        travelRouteSettlementIds.clear();
+        travelRouteIndex = 0;
+        travelSegmentProgress = 0.0;
+        travelLastMinute = Long.MIN_VALUE;
+    }
+
     /** True while the adventurer is a prisoner of war at the given world minute. */
     public boolean isCaptiveAt(long minute) {
         return captiveUntilMinute != null && minute < captiveUntilMinute;
