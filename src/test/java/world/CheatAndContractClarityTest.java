@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
@@ -79,5 +81,76 @@ class CheatAndContractClarityTest {
         assertFalse(world.crimeIncidents.isEmpty());
         assertTrue(cheats.toggleWar(realms.get(0).id, realms.get(1).id).accepted);
         assertTrue(new WorldInvariantValidator().validate(world).isValid());
+    }
+
+    @Test
+    void expandedCheatsActOnExplicitlySelectedArmyRealmAndPlayer() {
+        CampaignSession session = new CampaignSession(1403L);
+        WorldState world = session.getWorld();
+        CheatService cheats = session.getCheats();
+        PlayerCampaignState player = session.getPlayerState();
+        Settlement here = world.geography.getSettlement(player.currentSettlementId);
+        ArrayList<Realm> realms = new ArrayList<>(world.realms.values());
+        realms.sort(Comparator.comparingLong(realm -> realm.id));
+        Realm selectedRealm = realms.stream()
+                .filter(realm -> here.controllerRealmId == null || realm.id != here.controllerRealmId.longValue())
+                .findFirst().orElseThrow();
+        Settlement elsewhere = world.geography.getSettlements().values().stream()
+                .filter(settlement -> settlement.id != here.id)
+                .sorted(Comparator.comparingLong(settlement -> settlement.id))
+                .findFirst().orElseThrow();
+
+        Set<Long> before = new HashSet<>(world.armies.keySet());
+        assertTrue(cheats.spawnArmyForRealm(here.id, selectedRealm.id, 5).accepted);
+        Army selectedArmy = newestArmy(world, before);
+        assertEquals(selectedRealm.id, selectedArmy.realmId,
+                "spawn must use the explicitly selected realm, not only the settlement owner");
+        int strength = session.getSimulation().getMilitarySystem().strength(selectedArmy);
+        assertTrue(cheats.addTroopsToArmy(selectedArmy.id, here.id, 3).accepted);
+        assertTrue(session.getSimulation().getMilitarySystem().strength(selectedArmy) > strength);
+
+        assertTrue(cheats.orderArmyToSettlement(selectedArmy.id, elsewhere.id).accepted);
+        assertEquals(Army.ArmyOrder.MOVE, selectedArmy.order);
+        assertEquals(elsewhere.id, selectedArmy.destinationSettlementId.longValue());
+        assertTrue(cheats.teleportArmyToPlayer(selectedArmy.id).accepted);
+        WorldParty party = world.parties.get(player.partyId);
+        assertEquals(6.0, Math.hypot(selectedArmy.position.x - party.position.x,
+                selectedArmy.position.y - party.position.y), 0.001);
+        int grain = selectedArmy.supplies.getQuantity(GoodType.GRAIN);
+        assertTrue(cheats.resupplyArmy(selectedArmy.id).accepted);
+        assertTrue(selectedArmy.supplies.getQuantity(GoodType.GRAIN) > grain);
+
+        assertTrue(cheats.givePlayerCommand(selectedArmy.id).accepted);
+        assertEquals(selectedArmy.id, player.commandedArmyId.longValue());
+        assertTrue(selectedArmy.playerCommanded);
+        assertEquals(player.personId, selectedArmy.commanderPersonId);
+
+        assertTrue(cheats.woundPlayer().accepted);
+        assertEquals(25.0, world.people.get(player.personId).health.healthLevel, 0.001);
+        assertTrue(session.playerCanFight().accepted);
+
+        assertTrue(cheats.teleportPlayerToSettlement(elsewhere.id).accepted);
+        assertEquals(elsewhere.id, player.currentSettlementId);
+        assertEquals(elsewhere.position.x, party.position.x, 0.001);
+        assertEquals(elsewhere.position.y, party.position.y, 0.001);
+        assertEquals(elsewhere.id, selectedArmy.currentSettlementId,
+                "an accompanying commanded army teleports with the party");
+        assertEquals(elsewhere.position.x, selectedArmy.position.x, 0.001);
+        assertEquals(elsewhere.position.y, selectedArmy.position.y, 0.001);
+
+        before = new HashSet<>(world.armies.keySet());
+        assertTrue(cheats.spawnHostileArmyNearPlayer(5).accepted);
+        Army hostile = newestArmy(world, before);
+        assertNotEquals(selectedRealm.id, hostile.realmId);
+        assertEquals(6.0, Math.hypot(hostile.position.x - party.position.x,
+                hostile.position.y - party.position.y), 0.001);
+        assertTrue(cheats.musterAllRealms().accepted);
+        assertTrue(new WorldInvariantValidator().validate(world).isValid());
+    }
+
+    private static Army newestArmy(WorldState world, Set<Long> beforeIds) {
+        return world.armies.values().stream()
+                .filter(army -> !beforeIds.contains(army.id))
+                .max(Comparator.comparingLong(army -> army.id)).orElseThrow();
     }
 }

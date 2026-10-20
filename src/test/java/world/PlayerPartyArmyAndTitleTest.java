@@ -81,6 +81,78 @@ class PlayerPartyArmyAndTitleTest {
     }
 
     @Test
+    void detachedArmyWithOwnRouteIsNotTeleportedIntoPlayerParty() {
+        CampaignSession session = new CampaignSession(20261024L);
+        WorldState world = session.getWorld();
+        PlayerCampaignState player = session.getPlayerState();
+        Settlement home = preparedHome(session);
+        Army company = raiseCompany(session);
+        Settlement armyDestination = reachableDestination(session, home.id);
+        Settlement playerDestination = reachableDestination(session, home.id, armyDestination.id);
+        MilitarySystem military = session.getSimulation().getMilitarySystem();
+        long minute = session.getSimulation().getClock().getWorldMinute();
+
+        // A detached command (for example a realm army or a siege joiner) can
+        // still have the player's origin as its last completed settlement and
+        // share the player's former destination. Those ids alone must not be
+        // mistaken for the army physically riding in the party.
+        CommandResult detached = military.issueMoveOrder(
+                company.id, armyDestination.id, Army.ArmyOrder.BESIEGE, minute);
+        assertTrue(detached.accepted, detached.message);
+        assertFalse(company.routeRoadIds.isEmpty());
+        WorldPosition detachedPosition = new WorldPosition(
+                home.position.x + 25.0, home.position.y + 25.0);
+        company.position = new WorldPosition(detachedPosition.x, detachedPosition.y);
+        int routeSize = company.routeRoadIds.size();
+
+        assertTrue(session.beginTravelTo(armyDestination.id).accepted);
+        assertPositionEquals(detachedPosition, company.position);
+        assertEquals(routeSize, company.routeRoadIds.size());
+        assertEquals(armyDestination.id, company.destinationSettlementId.longValue());
+
+        assertTrue(session.beginTravelTo(playerDestination.id).accepted);
+        assertEquals(playerDestination.id, player.travelDestinationSettlementId.longValue());
+        assertPositionEquals(detachedPosition, company.position);
+        assertEquals(routeSize, company.routeRoadIds.size());
+        assertEquals(armyDestination.id, company.destinationSettlementId.longValue());
+        assertEquals(Army.ArmyOrder.BESIEGE, company.order);
+    }
+
+    @Test
+    void survivingArmyRetreatsToRefugeWithPartyAfterRoadDefeat() {
+        CampaignSession session = new CampaignSession(20261025L);
+        WorldState world = session.getWorld();
+        PlayerCampaignState player = session.getPlayerState();
+        Settlement home = preparedHome(session);
+        Army company = raiseCompany(session);
+        company.supplies.add(GoodType.GRAIN, 100);
+        WorldParty party = world.parties.get(player.partyId);
+        Settlement destination = reachableDestination(session, home.id);
+
+        assertTrue(session.beginTravelTo(destination.id).accepted);
+        advanceWorldMinutes(session, WorldConfig.MINUTES_PER_HOUR);
+        assertTrue(player.isTraveling());
+        assertPositionEquals(party.position, company.position);
+
+        // Java's Random(42) first double is above the routed+captured
+        // thresholds at a zero defeat margin, producing the WOUNDED outcome.
+        session.getSimulation().getContext().getRandom("MILITARY").setSeed(42L);
+        CommandResult defeat = session.resolvePlayerDefeat(null, 0.0);
+        assertTrue(defeat.accepted, defeat.message);
+        assertEquals(CampaignSession.DefeatSeverity.WOUNDED,
+                session.getLastDefeatSeverity());
+        assertFalse(player.isTraveling());
+        assertEquals(home.id, player.currentSettlementId);
+        assertEquals(company.id, player.commandedArmyId.longValue());
+        assertPositionEquals(home.position, party.position);
+        assertPositionEquals(home.position, company.position);
+        assertEquals(home.id, company.currentSettlementId);
+        assertEquals(home.id, company.destinationSettlementId.longValue());
+        assertTrue(company.routeRoadIds.isEmpty());
+        assertEquals(Army.ArmyState.MUSTERED, company.state);
+    }
+
+    @Test
     void fullHealthPlayerCanAnswerEnemyContactAndItIsNotSilentlyAutoResolved() {
         CampaignSession session = new CampaignSession(20261021L);
         WorldState world = session.getWorld();
@@ -253,10 +325,16 @@ class PlayerPartyArmyAndTitleTest {
         return company;
     }
 
-    private static Settlement reachableDestination(CampaignSession session, long originId) {
+    private static Settlement reachableDestination(CampaignSession session, long originId,
+            long... excludedIds) {
         WorldState world = session.getWorld();
         for (Settlement candidate : sortedSettlements(world)) {
             if (candidate.id == originId) continue;
+            boolean excluded = false;
+            for (long excludedId : excludedIds) {
+                if (candidate.id == excludedId) excluded = true;
+            }
+            if (excluded) continue;
             if (!world.geography.getRouteGraph()
                     .findShortestRoute(originId, candidate.id).isEmpty()) {
                 return candidate;

@@ -6,6 +6,7 @@ import world.economy.GoodType;
 import world.geography.Road;
 import world.geography.Settlement;
 import world.geography.WorldPosition;
+import world.military.BattleContext;
 import world.military.Siege;
 import world.politics.Claim;
 import world.politics.Government;
@@ -455,17 +456,25 @@ public final class CampaignSession {
     private boolean isCommandedArmyWithPlayer(Army army, Long previousDestination) {
         if (army == null || army.state == Army.ArmyState.DISBANDED
                 || army.state == Army.ArmyState.ENGAGED) return false;
+        WorldParty party = world.parties.get(playerState.partyId);
+        boolean coLocated = party != null && party.position != null && army.position != null
+                && Math.hypot(party.position.x - army.position.x,
+                        party.position.y - army.position.y) <= 0.001;
+        if (coLocated) return true;
+
+        // An army marching on its own road route is detached even while its
+        // last completed settlement (currentSettlementId) or destination
+        // happens to match the player's. Treating those stale ids as proof of
+        // attachment would teleport a remote/siege-joining army into the party
+        // when the player retargets travel.
+        if (!army.routeRoadIds.isEmpty()) return false;
         if (army.currentSettlementId == playerState.currentSettlementId) return true;
         if (previousDestination != null
                 && previousDestination.equals(army.destinationSettlementId)) return true;
         Long playerDestination = playerState.isTraveling()
                 ? playerState.travelDestinationSettlementId : playerState.currentSettlementId;
-        if (army.routeRoadIds.isEmpty() && playerDestination != null
-                && playerDestination.equals(army.destinationSettlementId)) return true;
-        WorldParty party = world.parties.get(playerState.partyId);
-        return party != null && party.position != null && army.position != null
-                && Math.hypot(party.position.x - army.position.x,
-                        party.position.y - army.position.y) <= 0.001;
+        return playerDestination != null
+                && playerDestination.equals(army.destinationSettlementId);
     }
 
     /**
@@ -721,6 +730,53 @@ public final class CampaignSession {
         if (realm == null || player == null) {
             return CommandResult.rejected("INVALID_REALM", "Kingdom or player not found");
         }
+        long minute = clock.getWorldMinute();
+        Title crown = world.titles.get(realm.rulerTitleId);
+
+        // The crown is the player's one title. Vacating any prior title and
+        // installing the crown holder are both essential: PoliticsSystem
+        // treats the living crown holder as the realm's ruler every month,
+        // so changing Realm.rulerPersonId alone would silently revert.
+        for (Title held : new ArrayList<>(world.titles.values())) {
+            if (held.holderPersonId == null || held.holderPersonId.longValue() != player.id) continue;
+            if (crown != null && held.id == crown.id) continue;
+            held.vacateHolder(minute);
+            playerState.titleIds.remove(Long.valueOf(held.id));
+            for (Realm other : world.realms.values()) {
+                if (other.id != realm.id && other.rulerTitleId == held.id
+                        && other.rulerPersonId != null && other.rulerPersonId == player.id) {
+                    other.rulerPersonId = null;
+                }
+            }
+        }
+        if (crown != null) {
+            if (crown.holderPersonId == null || crown.holderPersonId.longValue() != player.id) {
+                crown.installHolder(player.id, minute, "APPOINTED_RULER");
+            }
+            playerState.titleIds.clear();
+            playerState.titleIds.add(crown.id);
+        } else {
+            playerState.titleIds.clear();
+        }
+        for (world.politics.Office office : world.offices.values()) {
+            boolean targetRulerOffice = office.realmId == realm.id
+                    && office.type == world.politics.Office.OfficeType.RULER;
+            if (!targetRulerOffice && office.holderPersonId != null
+                    && office.holderPersonId.longValue() == player.id) {
+                office.holderPersonId = null;
+            }
+        }
+        player.officeId = null;
+        for (world.politics.Office office : world.offices.values()) {
+            if (office.realmId != realm.id || office.type != world.politics.Office.OfficeType.RULER) continue;
+            Person previous = office.holderPersonId == null ? null : world.people.get(office.holderPersonId);
+            if (previous != null && previous.id != player.id && previous.officeId != null
+                    && previous.officeId.longValue() == office.id) previous.officeId = null;
+            office.holderPersonId = player.id;
+            office.appointedMinute = minute;
+            player.officeId = office.id;
+        }
+
         realm.rulerPersonId = player.id;
         player.type = Person.PersonType.NOBLE;
         playerState.affiliatedRealmId = realmId;
@@ -760,6 +816,16 @@ public final class CampaignSession {
      * capture for ransom, or a rout that destroys a commanded army and can kill companions.
      */
     public CommandResult resolvePlayerDefeat(Long captorRealmId, double defeatMargin) {
+        return resolvePlayerDefeat(captorRealmId, defeatMargin, true);
+    }
+
+    /**
+     * Personal defeat consequences. When the player fought solo while a
+     * commanded army was elsewhere, that uninvolved army is not routed or
+     * destroyed merely because the adventurer lost a separate fight.
+     */
+    public CommandResult resolvePlayerDefeat(Long captorRealmId, double defeatMargin,
+            boolean commandedArmyInvolved) {
         long minute = clock.getWorldMinute();
         double margin = Math.max(0.0, Math.min(1.0, defeatMargin));
         SeededRandom random = simulation.getContext().getRandom("MILITARY");
@@ -799,8 +865,8 @@ public final class CampaignSession {
         message.append(". ");
 
         woundPlayer(player, severity == DefeatSeverity.ROUTED ? 25.0 : 45.0);
-        boolean hadArmy = playerState.commandedArmyId != null;
-        damageCommandedArmy(minute, severity);
+        boolean hadArmy = commandedArmyInvolved && playerState.commandedArmyId != null;
+        if (commandedArmyInvolved) damageCommandedArmy(minute, severity);
 
         if (severity == DefeatSeverity.ROUTED) {
             int deaths = scatterCompanions(party, minute, 0.25 + margin * 0.35);
@@ -1022,7 +1088,19 @@ public final class CampaignSession {
         }
         army.morale = Math.max(0.0, army.morale - (severity == DefeatSeverity.CAPTURED ? 45.0 : 20.0));
         army.fatigue = Math.min(100.0, army.fatigue + (severity == DefeatSeverity.CAPTURED ? 40.0 : 25.0));
-        if (army.homeSettlementId == null || army.homeSettlementId == army.currentSettlementId) {
+        boolean home = army.homeSettlementId == null
+                || army.homeSettlementId.longValue() == army.currentSettlementId;
+        if (isCommandedArmyWithPlayer(army, null)) {
+            // resolvePlayerDefeat has already snapped a travelling party back
+            // to its refuge. The surviving troops who were riding in that party
+            // retreat to the same refuge instead of being left at the battle
+            // position or becoming a second token marching home on its own.
+            if (home) army.state = Army.ArmyState.MUSTERED;
+            army.order = Army.ArmyOrder.DEFEND;
+            syncCommandedArmyWithPlayerParty(army);
+            return;
+        }
+        if (home) {
             army.state = Army.ArmyState.MUSTERED;
             army.order = Army.ArmyOrder.DEFEND;
             return;
@@ -1495,53 +1573,161 @@ public final class CampaignSession {
         return null;
     }
 
-    /** Checks whether your army can attack a target army; GamePanel then builds the battle. */
+    /**
+     * Checks whether the adventurer can attack a target army, either with a
+     * commanded army in reach or personally with their travelling party.
+     * GamePanel then asks {@link #createPlayerBattleContext} to build the
+     * correct tactical projection. Commanding an army is therefore useful,
+     * but no longer a prerequisite for fighting.
+     */
     public CommandResult canEngageArmy(long targetArmyId) {
         CommandResult health = playerCanFight();
         if (!health.accepted) return health;
-        if (playerState.commandedArmyId == null) {
-            return CommandResult.rejected("NO_ARMY", "You command no army. Raise a company first.");
-        }
+
         alignPlayerFundedCompanyWithPlayerRealm();
-        Army mine = world.armies.get(playerState.commandedArmyId);
-        Army target = world.armies.get(targetArmyId);
+        Army mine = playerState.commandedArmyId == null
+                ? null : world.armies.get(playerState.commandedArmyId);
         if (mine == null || mine.state == Army.ArmyState.DISBANDED) {
-            playerState.commandedArmyId = null;
-            return CommandResult.rejected("INVALID_ARMY", "Your army no longer exists");
+            if (playerState.commandedArmyId != null) playerState.commandedArmyId = null;
+            mine = null;
+        } else {
+            repairAccompanyingArmyPosition(mine);
         }
-        repairAccompanyingArmyPosition(mine);
+
+        Army target = world.armies.get(targetArmyId);
         if (target == null || target.state == Army.ArmyState.DISBANDED) {
             return CommandResult.rejected("INVALID_ARMY", "That army is no longer active");
         }
-        if (target.id == mine.id) return CommandResult.rejected("INVALID_ARMY", "That is your own army");
-        if (mine.state == Army.ArmyState.ENGAGED || target.state == Army.ArmyState.ENGAGED) {
-            return CommandResult.rejected("ALREADY_ENGAGED", "One of those armies is already fighting");
+        if (mine != null && target.id == mine.id) {
+            return CommandResult.rejected("INVALID_ARMY", "That is your own army");
         }
-        if (target.realmId == mine.realmId) {
-            return CommandResult.rejected("NOT_HOSTILE", "That army serves the same realm as yours");
+        if (target.state == Army.ArmyState.ENGAGED) {
+            return CommandResult.rejected("ALREADY_ENGAGED", "That army is already fighting");
         }
-        if (simulation.getMilitarySystem().strength(mine) <= 0) {
-            return CommandResult.rejected("NO_TROOPS", "Your army has no troops left to fight with");
+        if (simulation.getMilitarySystem().battleReadyStrength(target) <= 0) {
+            return CommandResult.rejected("NO_TROOPS",
+                    "That army has no living, uncaptured soldiers able to take the field");
         }
-        if (simulation.getMilitarySystem().strength(target) <= 0) {
-            return CommandResult.rejected("NO_TROOPS", "That army has no troops left");
-        }
-        if (mine.position == null || target.position == null) {
+        if (target.position == null) {
             return CommandResult.rejected("OUT_OF_RANGE", "Positions are not resolved yet");
         }
-        double distance = Math.hypot(mine.position.x - target.position.x, mine.position.y - target.position.y);
-        if (distance > 12.0) {
-            return CommandResult.rejected("OUT_OF_RANGE", "That army is " + Math.round(distance)
-                    + " away; you can engage within 12. March closer first.");
+
+        if (commandedArmyInEngagementRange(mine, target)) {
+            return new CommandResult(true, "ENGAGE_WITH_ARMY", "");
         }
-        return CommandResult.accepted();
+
+        WorldParty party = world.parties.get(playerState.partyId);
+        if (party == null || party.position == null) {
+            return CommandResult.rejected("OUT_OF_RANGE", "Positions are not resolved yet");
+        }
+        long soloRealmId = soloBattleRealmId(mine, target);
+        if (soloRealmId == target.realmId) {
+            return CommandResult.rejected("NOT_HOSTILE", "That army serves the same realm as you");
+        }
+        double partyDistance = Math.hypot(party.position.x - target.position.x,
+                party.position.y - target.position.y);
+        if (partyDistance <= 12.0) {
+            return new CommandResult(true, "ENGAGE_SOLO", "");
+        }
+        if (mine != null && mine.state == Army.ArmyState.ENGAGED) {
+            return CommandResult.rejected("ALREADY_ENGAGED", "Your commanded army is already fighting");
+        }
+        double nearest = partyDistance;
+        if (mine != null && mine.position != null
+                && simulation.getMilitarySystem().battleReadyStrength(mine) > 0) {
+            nearest = Math.min(nearest, Math.hypot(mine.position.x - target.position.x,
+                    mine.position.y - target.position.y));
+        }
+        return CommandResult.rejected("OUT_OF_RANGE", "That army is " + Math.round(nearest)
+                + " away; your party or commanded army can engage within 12. March closer first.");
+    }
+
+    private boolean commandedArmyInEngagementRange(Army mine, Army target) {
+        return mine != null && target != null && mine.id != target.id
+                && mine.state != Army.ArmyState.ENGAGED
+                && mine.realmId != target.realmId
+                && mine.position != null && target.position != null
+                && simulation.getMilitarySystem().battleReadyStrength(mine) > 0
+                && Math.hypot(mine.position.x - target.position.x,
+                        mine.position.y - target.position.y) <= 12.0;
+    }
+
+    private Army commandedArmyForEngagement(Army target) {
+        if (target == null || playerState.commandedArmyId == null) return null;
+        alignPlayerFundedCompanyWithPlayerRealm();
+        Army mine = world.armies.get(playerState.commandedArmyId);
+        if (mine == null || mine.state == Army.ArmyState.DISBANDED) {
+            playerState.commandedArmyId = null;
+            return null;
+        }
+        repairAccompanyingArmyPosition(mine);
+        return commandedArmyInEngagementRange(mine, target) ? mine : null;
+    }
+
+    private long soloBattleRealmId(Army mine, Army target) {
+        Realm effective = effectivePlayerRealm();
+        long realmId = effective != null ? effective.id : mine != null ? mine.realmId : -1L;
+        if (realmId == target.realmId && effective == null && mine == null) realmId = -2L;
+        return realmId;
+    }
+
+    /**
+     * Builds the tactical battle for an engagement {@link #canEngageArmy}
+     * accepted. A usable commanded army projects normally. Otherwise a
+     * temporary, regiment-less party army carries the player (represented by
+     * the tactical player sprite) and companions through the existing
+     * reconciliation path, then disbands in BattleBridge.
+     */
+    public BattleContext createPlayerBattleContext(long targetArmyId,
+            java.util.List<Long> companionPersonIds, long strategicMinute) {
+        CommandResult cleared = canEngageArmy(targetArmyId);
+        if (!cleared.accepted) throw new IllegalStateException(cleared.message);
+        Army target = world.armies.get(targetArmyId);
+        if (target == null) throw new IllegalStateException("That army is no longer active");
+
+        Army commanded = commandedArmyForEngagement(target);
+        if (commanded != null) {
+            return simulation.getBattleBridge().createContext(commanded.id, target.id, true,
+                    companionPersonIds, strategicMinute);
+        }
+
+        WorldParty party = world.parties.get(playerState.partyId);
+        Person player = world.people.get(playerState.personId);
+        if (party == null || party.position == null || player == null || !player.alive) {
+            throw new IllegalStateException("Your party cannot take the field");
+        }
+        Army rawCommanded = playerState.commandedArmyId == null
+                ? null : world.armies.get(playerState.commandedArmyId);
+        Army solo = new Army(world.idGenerator.next(), soloBattleRealmId(rawCommanded, target),
+                playerState.personId, playerState.currentSettlementId,
+                new WorldPosition(party.position.x, party.position.y));
+        solo.destinationSettlementId = playerState.currentSettlementId;
+        solo.order = Army.ArmyOrder.PURSUE;
+        solo.targetArmyId = target.id;
+        solo.playerCommanded = true;
+        solo.temporaryBattleArmy = true;
+        solo.morale = Math.max(35.0, Math.min(85.0, 45.0 + player.health.healthLevel * 0.35));
+        solo.fatigue = 0.0;
+        world.armies.put(solo.id, solo);
+        try {
+            return simulation.getBattleBridge().createContext(solo.id, target.id, true,
+                    companionPersonIds, strategicMinute);
+        } catch (RuntimeException failure) {
+            solo.state = Army.ArmyState.DISBANDED;
+            throw failure;
+        }
     }
 
     /** Resolves an engagement through the same automatic battle path used by AI armies. */
     public CommandResult autoResolveEngagement(long targetArmyId) {
         CommandResult cleared = canEngageArmy(targetArmyId);
         if (!cleared.accepted) return cleared;
-        long mineId = playerState.commandedArmyId;
+        Army commanded = commandedArmyForEngagement(world.armies.get(targetArmyId));
+        if (commanded == null) {
+            return CommandResult.rejected("NO_TROOPS_TO_SEND",
+                    "You have no commanded troops in reach to send. Choose Attack to fight personally with your party.");
+        }
+        long mineId = commanded.id;
         long minute = clock.getWorldMinute();
         world.military.BattleReport report = simulation.getMilitarySystem()
                 .autoResolveEncounter(mineId, targetArmyId, minute);

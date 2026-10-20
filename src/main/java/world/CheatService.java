@@ -61,9 +61,16 @@ public final class CheatService {
     public CommandResult spawnArmy(long settlementId, int requested) {
         Settlement settlement = world.geography.getSettlement(settlementId);
         if (settlement == null || settlement.controllerRealmId == null) return rejected("Settlement needs an owner");
+        return spawnArmyForRealm(settlementId, settlement.controllerRealmId, requested);
+    }
+
+    /** Spawns residents of the selected settlement under an explicitly selected realm banner. */
+    public CommandResult spawnArmyForRealm(long settlementId, long realmId, int requested) {
+        Settlement settlement = world.geography.getSettlement(settlementId);
+        Realm realm = world.realms.get(realmId);
+        if (settlement == null || realm == null) return rejected("Settlement or realm unavailable");
         List<Person> recruits = availableResidents(settlementId, requested);
         if (recruits.isEmpty()) return rejected("No available residents");
-        long realmId = settlement.controllerRealmId;
         Regiment regiment = new Regiment(world.idGenerator.next(), realmId,
                 Regiment.RegimentType.LEVY_INFANTRY, settlementId);
         for (Person person : recruits) {
@@ -81,7 +88,8 @@ public final class CheatService {
         army.supplies.add(GoodType.GRAIN, recruits.size() * 20);
         world.armies.put(army.id, army);
         publish("CHEAT_ARMY_SPAWNED");
-        return accepted("Spawned army " + army.id + " with " + recruits.size() + " troops");
+        return accepted("Spawned " + realm.name + " army #" + army.id + " at " + settlement.name
+                + " with " + recruits.size() + " troops");
     }
 
     public CommandResult addTroops(long settlementId, int requested) {
@@ -106,6 +114,242 @@ public final class CheatService {
         world.regiments.put(regiment.id, regiment);
         army.regimentIds.add(regiment.id);
         return accepted("Added " + recruits.size() + " troops to army " + army.id);
+    }
+
+    /** Adds a new cheat regiment to the explicitly selected army. */
+    public CommandResult addTroopsToArmy(long armyId, long settlementId, int requested) {
+        Army army = world.armies.get(armyId);
+        Settlement settlement = world.geography.getSettlement(settlementId);
+        if (army == null || army.state == Army.ArmyState.DISBANDED || army.temporaryBattleArmy) {
+            return rejected("Select an active army");
+        }
+        if (settlement == null) return rejected("Select a settlement");
+        List<Person> recruits = availableResidents(settlementId, requested);
+        if (recruits.isEmpty()) return rejected("No available residents at " + settlement.name);
+        Regiment regiment = new Regiment(world.idGenerator.next(), army.realmId,
+                Regiment.RegimentType.LEVY_INFANTRY, settlementId);
+        for (Person person : recruits) {
+            person.preMilitaryType = person.type;
+            person.type = Person.PersonType.SOLDIER;
+            person.regimentId = regiment.id;
+            person.travelingPartyId = army.id;
+            person.currentSettlementId = army.currentSettlementId;
+            regiment.soldierPersonIds.add(person.id);
+        }
+        regiment.officerPersonId = recruits.get(0).id;
+        world.regiments.put(regiment.id, regiment);
+        army.regimentIds.add(regiment.id);
+        army.supplies.add(GoodType.GRAIN, recruits.size() * 10);
+        return accepted("Added " + recruits.size() + " troops from " + settlement.name
+                + " to selected army #" + army.id);
+    }
+
+    public CommandResult resupplyArmy(long armyId) {
+        Army army = world.armies.get(armyId);
+        if (army == null || army.state == Army.ArmyState.DISBANDED || army.temporaryBattleArmy) {
+            return rejected("Select an active army");
+        }
+        int strength = Math.max(1, simulation.getMilitarySystem().strength(army));
+        army.supplies.add(GoodType.GRAIN, strength * 20);
+        army.supplies.add(GoodType.VEGETABLES, strength * 8);
+        army.daysWithoutFood = 0;
+        army.morale = Math.min(100.0, army.morale + 20.0);
+        army.fatigue = Math.max(0.0, army.fatigue - 30.0);
+        return accepted("Resupplied army #" + army.id + " (" + strength + " troops)");
+    }
+
+    public CommandResult teleportArmyToPlayer(long armyId) {
+        Army army = world.armies.get(armyId);
+        if (world.player == null) return rejected("No campaign player");
+        WorldParty party = world.parties.get(world.player.partyId);
+        if (army == null || army.state == Army.ArmyState.DISBANDED || army.temporaryBattleArmy
+                || army.state == Army.ArmyState.ENGAGED || party == null || party.position == null) {
+            return rejected("Select an active, unengaged army");
+        }
+        army.currentSettlementId = world.player.currentSettlementId;
+        army.destinationSettlementId = world.player.currentSettlementId;
+        army.position = new WorldPosition(party.position.x + 6.0, party.position.y);
+        army.routeRoadIds.clear();
+        army.routeIndex = 0;
+        army.roadProgress = 0.0;
+        army.state = Army.ArmyState.MUSTERED;
+        for (Long regimentId : army.regimentIds) {
+            Regiment regiment = world.regiments.get(regimentId);
+            if (regiment == null) continue;
+            for (Long personId : regiment.soldierPersonIds) {
+                Person soldier = world.people.get(personId);
+                if (soldier == null || !soldier.alive) continue;
+                soldier.travelingPartyId = army.id;
+                soldier.currentSettlementId = army.currentSettlementId;
+            }
+        }
+        return accepted("Teleported army #" + army.id + " beside your party (within battle range)");
+    }
+
+    public CommandResult orderArmyToSettlement(long armyId, long settlementId) {
+        Army army = world.armies.get(armyId);
+        Settlement settlement = world.geography.getSettlement(settlementId);
+        if (army == null || army.state == Army.ArmyState.DISBANDED || army.temporaryBattleArmy
+                || army.state == Army.ArmyState.ENGAGED || settlement == null) {
+            return rejected("Select an active army and a settlement");
+        }
+        CommandResult ordered = simulation.getMilitarySystem().issueMoveOrder(
+                army.id, settlement.id, Army.ArmyOrder.MOVE, minute());
+        if (!ordered.accepted) return ordered;
+        return accepted("Ordered army #" + army.id + " to march to " + settlement.name);
+    }
+
+    public CommandResult givePlayerCommand(long armyId) {
+        if (world.player == null) return rejected("No campaign player");
+        Army army = world.armies.get(armyId);
+        Person player = world.people.get(world.player.personId);
+        if (army == null || army.state == Army.ArmyState.DISBANDED || army.temporaryBattleArmy
+                || army.state == Army.ArmyState.ENGAGED || player == null || !player.alive) {
+            return rejected("Select an active, unengaged army");
+        }
+        if (world.player.commandedArmyId != null && world.player.commandedArmyId.longValue() != army.id) {
+            Army previous = world.armies.get(world.player.commandedArmyId);
+            if (previous != null) {
+                previous.playerCommanded = false;
+                for (Long regimentId : previous.regimentIds) {
+                    Regiment regiment = world.regiments.get(regimentId);
+                    if (regiment != null && regiment.officerPersonId != null) {
+                        previous.commanderPersonId = regiment.officerPersonId;
+                        break;
+                    }
+                }
+            }
+        }
+        army.playerCommanded = true;
+        army.commanderPersonId = player.id;
+        world.player.commandedArmyId = army.id;
+        return accepted("You now command selected army #" + army.id);
+    }
+
+    /** Creates a hostile test army and places it within engagement range of the player party. */
+    public CommandResult spawnHostileArmyNearPlayer(int requested) {
+        if (world.player == null) return rejected("No campaign player");
+        Long playerRealmId = world.player.affiliatedRealmId;
+        for (Realm realm : world.realms.values()) {
+            if (realm.rulerPersonId != null && realm.rulerPersonId.longValue() == world.player.personId) {
+                playerRealmId = realm.id;
+                break;
+            }
+        }
+        if (playerRealmId == null && world.player.commandedArmyId != null) {
+            Army mine = world.armies.get(world.player.commandedArmyId);
+            if (mine != null) playerRealmId = mine.realmId;
+        }
+        if (playerRealmId == null) {
+            Settlement here = world.geography.getSettlement(world.player.currentSettlementId);
+            if (here != null) playerRealmId = here.controllerRealmId;
+        }
+
+        List<Realm> realms = new ArrayList<>(world.realms.values());
+        realms.sort(Comparator.comparingLong(realm -> realm.id));
+        List<Settlement> settlements = new ArrayList<>(world.geography.getSettlements().values());
+        settlements.sort(Comparator.comparingLong(settlement -> settlement.id));
+        for (Realm realm : realms) {
+            if (playerRealmId != null && realm.id == playerRealmId.longValue()) continue;
+            for (Settlement settlement : settlements) {
+                if (settlement.controllerRealmId == null
+                        || settlement.controllerRealmId.longValue() != realm.id) continue;
+                long newestBefore = world.armies.keySet().stream().mapToLong(Long::longValue).max().orElse(0L);
+                CommandResult spawned = spawnArmyForRealm(settlement.id, realm.id, requested);
+                if (!spawned.accepted) continue;
+                Army hostile = world.armies.values().stream()
+                        .filter(army -> army.id > newestBefore && army.realmId == realm.id)
+                        .max(Comparator.comparingLong(army -> army.id)).orElse(null);
+                if (hostile == null) return spawned;
+                hostile.order = Army.ArmyOrder.RAID;
+                CommandResult moved = teleportArmyToPlayer(hostile.id);
+                if (!moved.accepted) return moved;
+                hostile.order = Army.ArmyOrder.RAID;
+                return accepted("Spawned hostile " + realm.name + " army #" + hostile.id
+                        + " beside your party; press K or right-click it to attack");
+            }
+        }
+        return rejected("No hostile realm settlement has available residents");
+    }
+
+    public CommandResult musterAllRealms() {
+        int created = simulation.getMilitarySystem().musterRealmArmies(minute());
+        return accepted(created == 0
+                ? "Muster check complete: no realm could or needed to raise another army"
+                : "Mustered " + created + " new realm arm" + (created == 1 ? "y" : "ies"));
+    }
+
+    public CommandResult woundPlayer() {
+        if (world.player == null) return rejected("No campaign player");
+        Person person = world.people.get(world.player.personId);
+        if (person == null) return rejected("Player person unavailable");
+        person.alive = true;
+        person.health.healthLevel = 25.0;
+        person.health.injured = true;
+        person.health.wounded = true;
+        person.health.injurySeverity = 75.0;
+        return accepted("Player health set to 25% (still able to fight)");
+    }
+
+    public CommandResult teleportPlayerToSettlement(long settlementId) {
+        if (world.player == null) return rejected("No campaign player");
+        Settlement settlement = world.geography.getSettlement(settlementId);
+        WorldParty party = world.parties.get(world.player.partyId);
+        Person player = world.people.get(world.player.personId);
+        if (settlement == null || settlement.position == null || party == null || player == null) {
+            return rejected("Settlement or player party unavailable");
+        }
+        Army accompanyingArmy = null;
+        if (world.player.commandedArmyId != null) {
+            Army commanded = world.armies.get(world.player.commandedArmyId);
+            if (commanded != null && commanded.state != Army.ArmyState.DISBANDED
+                    && commanded.state != Army.ArmyState.ENGAGED
+                    && commanded.routeRoadIds.isEmpty()) {
+                boolean coLocated = party.position != null && commanded.position != null
+                        && Math.hypot(party.position.x - commanded.position.x,
+                                party.position.y - commanded.position.y) <= 0.001;
+                if (coLocated || commanded.currentSettlementId == world.player.currentSettlementId) {
+                    accompanyingArmy = commanded;
+                }
+            }
+        }
+        world.player.clearTravel();
+        world.player.currentSettlementId = settlement.id;
+        party.state = WorldParty.PartyState.AT_SETTLEMENT;
+        party.currentSettlementId = settlement.id;
+        party.destinationSettlementId = null;
+        party.position = new WorldPosition(settlement.position.x, settlement.position.y);
+        for (Long memberId : party.memberPersonIds) {
+            Person member = world.people.get(memberId);
+            if (member != null) member.currentSettlementId = settlement.id;
+        }
+        player.currentSettlementId = settlement.id;
+        if (accompanyingArmy != null) {
+            accompanyingArmy.currentSettlementId = settlement.id;
+            accompanyingArmy.destinationSettlementId = settlement.id;
+            accompanyingArmy.position = new WorldPosition(settlement.position.x, settlement.position.y);
+            accompanyingArmy.routeRoadIds.clear();
+            accompanyingArmy.routeIndex = 0;
+            accompanyingArmy.roadProgress = 0.0;
+            accompanyingArmy.targetArmyId = null;
+            accompanyingArmy.order = Army.ArmyOrder.DEFEND;
+            if (accompanyingArmy.state != Army.ArmyState.ROUTED) {
+                accompanyingArmy.state = Army.ArmyState.MUSTERED;
+            }
+            for (Long regimentId : accompanyingArmy.regimentIds) {
+                Regiment regiment = world.regiments.get(regimentId);
+                if (regiment == null) continue;
+                for (Long personId : regiment.soldierPersonIds) {
+                    Person soldier = world.people.get(personId);
+                    if (soldier == null || !soldier.alive) continue;
+                    soldier.travelingPartyId = accompanyingArmy.id;
+                    soldier.currentSettlementId = settlement.id;
+                }
+            }
+            return accepted("Teleported your party and accompanying army " + accompanyingArmy.id
+                    + " to " + settlement.name);
+        }
+        return accepted("Teleported your party to " + settlement.name);
     }
 
     public CommandResult spawnCaravan(long settlementId) {
@@ -219,6 +463,7 @@ public final class CheatService {
     private List<Person> availableResidents(long settlementId, int count) {
         return world.people.values().stream().filter(person -> person.alive && person.regimentId == null
                 && person.currentSettlementId != null && person.currentSettlementId == settlementId
+                && (world.player == null || person.id != world.player.personId)
                 && !person.isChild(minute())).sorted(Comparator.comparingLong(person -> person.id))
                 .limit(Math.max(1, count)).toList();
     }

@@ -40,6 +40,12 @@ public final class Army {
     public boolean playerCommanded;
     /** True when upkeep is paid from the adventurer's own purse instead of a realm treasury. */
     public boolean playerFunded;
+    /**
+     * True only for the short-lived projection of the adventurer's own party
+     * used when they fight without commanding a regimented army. It must be
+     * disbanded by battle reconciliation and never receive autonomous orders.
+     */
+    public boolean temporaryBattleArmy;
 
     public Army(long id, long realmId, long commanderPersonId,
             long settlementId, WorldPosition position) {

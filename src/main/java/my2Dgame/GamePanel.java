@@ -94,12 +94,19 @@ public class GamePanel extends JPanel implements Runnable{
 	private boolean cheatMenuOpen;
 	private int cheatRealmIndex;
 	private int cheatPersonIndex;
+	private int cheatArmyIndex;
+	private int cheatAmountIndex = 2;
+	private static final int[] CHEAT_AMOUNTS = {5, 10, 20, 40, 80};
 	private String cheatStatus = "F1 opens/closes developer cheats";
 	private enum CheatAction {
-		NEXT_REALM, NEXT_PERSON, ADD_FOOD, ADD_GOLD, ADD_CARGO, HEAL_PLAYER,
-		SPAWN_ARMY, ADD_TROOPS, SPAWN_CARAVAN, PLAYER_KING, SET_KING,
-		CHANGE_OWNER, APPOINT_LORD, TOGGLE_WAR, TRIGGER_CRIME,
-		COMPLETE_CONTRACTS, ADVANCE_DAY, ADVANCE_MONTH
+		PREV_SETTLEMENT, NEXT_SETTLEMENT, PREV_REALM, NEXT_REALM,
+		PREV_PERSON, NEXT_PERSON, PREV_ARMY, NEXT_ARMY, CYCLE_AMOUNT,
+		ADD_FOOD, ADD_GOLD, ADD_CARGO, HEAL_PLAYER, WOUND_PLAYER,
+		TELEPORT_PLAYER, SPAWN_ARMY, ADD_TROOPS, SPAWN_HOSTILE_NEAR_PLAYER,
+		MUSTER_REALMS, RESUPPLY_ARMY, TELEPORT_ARMY_TO_PLAYER,
+		ORDER_ARMY_TO_SETTLEMENT, GIVE_PLAYER_COMMAND, SPAWN_CARAVAN,
+		PLAYER_KING, SET_KING, CHANGE_OWNER, APPOINT_LORD, TOGGLE_WAR,
+		TRIGGER_CRIME, COMPLETE_CONTRACTS, ADVANCE_DAY, ADVANCE_MONTH
 	}
 	private final java.util.Map<CheatAction, Rectangle> cheatButtonHitboxes = new java.util.EnumMap<>(CheatAction.class);
 
@@ -333,6 +340,7 @@ public class GamePanel extends JPanel implements Runnable{
 				int code = e.getKeyCode();
 				if (code == KeyEvent.VK_F1 && gameStarted && gameMode == GameMode.CAMPAIGN) {
 					cheatMenuOpen = !cheatMenuOpen;
+					if (cheatMenuOpen) syncCheatArmySelectionToMapSelection();
 					cheatStatus = cheatMenuOpen ? "Cheat menu enabled" : "Cheat menu closed";
 					repaint();
 					return;
@@ -1291,7 +1299,9 @@ public class GamePanel extends JPanel implements Runnable{
 					contact = distance <= 12.0 && mine.realmId != army.realmId
 							&& (army.hostileToPlayer || followed);
 				} else {
-					contact = distance <= 12.0 && army.hostileToPlayer;
+					// A solo party deliberately riding to an army has made
+					// contact even when no formal war marks it hostile yet.
+					contact = distance <= 12.0 && (army.hostileToPlayer || followed);
 				}
 				if (contact && (followed || distance < bestDistance)) {
 					best = army;
@@ -1468,16 +1478,12 @@ public class GamePanel extends JPanel implements Runnable{
 			g2.drawString("TAB: world map | " + localInteractionMessage, 24, screenHeight - 27);
 		}
 
-		private void startCampaignTacticalBattle() {
+	private void startCampaignTacticalBattle() {
 			if (campaignSession == null || activeCampaignBattle != null) return;
 			if (campaignSnapshot == null || campaignSnapshot.player == null) return;
-			if (campaignSnapshot.player.commandedArmyId == null) {
-				showCampaignNotice("You command no army. Right-click a settlement you are standing in and raise a"
-					+ " company, or take command of a realm army once you rule one.");
-				return;
-			}
 			if (selectedCampaignActorId == null) {
-				showCampaignNotice("Right-click an enemy army on the map to select it, then press K to attack it.");
+				showCampaignNotice("Right-click an enemy army on the map to select it, then press K to attack it. "
+						+ "You may fight with your party even if you command no army.");
 				return;
 			}
 			world.command.CommandResult cleared = campaignSession.canEngageArmy(selectedCampaignActorId);
@@ -1485,18 +1491,18 @@ public class GamePanel extends JPanel implements Runnable{
 				showCampaignNotice(cleared.message);
 				return;
 			}
-			launchCampaignBattle(campaignSnapshot.player.commandedArmyId, selectedCampaignActorId);
+			launchCampaignBattle(selectedCampaignActorId);
 		}
 
 		/**
-		 * Projects two strategic armies into a tactical battle the player fights themselves.
-		 * Your own army is always the attacker, so troops are yours and enemies are theirs.
+		 * Projects a strategic engagement into a tactical battle. CampaignSession
+		 * chooses the commanded army when one is in reach, or a temporary
+		 * player-party projection when the adventurer fights alone/with companions.
 		 */
-		private void launchCampaignBattle(long attackerArmyId, long defenderArmyId) {
+		private void launchCampaignBattle(long defenderArmyId) {
 			if (campaignSession == null || activeCampaignBattle != null) return;
-			world.Army attacker = campaignSession.getWorld().armies.get(attackerArmyId);
 			world.Army defender = campaignSession.getWorld().armies.get(defenderArmyId);
-			if (attacker == null || defender == null) {
+			if (defender == null) {
 				showCampaignNotice("That army is gone - the world moved on.");
 				return;
 			}
@@ -1514,10 +1520,17 @@ public class GamePanel extends JPanel implements Runnable{
 				}
 			}
 			try {
-				activeCampaignBattle = campaignSession.getSimulation().getBattleBridge().createContext(
-					attacker.id, defender.id, true, companions, campaignSnapshot.worldMinute);
+				activeCampaignBattle = campaignSession.createPlayerBattleContext(
+					defender.id, companions, campaignSnapshot.worldMinute);
 			} catch (RuntimeException e) {
 				showCampaignNotice("You cannot attack that army: " + e.getMessage());
+				return;
+			}
+			if (activeCampaignBattle.defender.combatants.isEmpty()) {
+				// BattleBridge now prevents this; keep the UI referee from ever
+				// entering an empty field and finishing it on the first frame.
+				activeCampaignBattle = null;
+				showCampaignNotice("That army has no soldiers able to take the field.");
 				return;
 			}
 			setupMap("map1.txt");
@@ -2039,6 +2052,7 @@ public class GamePanel extends JPanel implements Runnable{
 			}
 			double defeatMargin = 0.15;
 			Long captorRealmId = null;
+			boolean commandedArmyInvolved = true;
 			if (activeCampaignBattle != null) {
 				int yourStanding = campaignBattleFriendlyStanding();
 				int enemyStanding = campaignBattleEnemyStanding();
@@ -2046,9 +2060,13 @@ public class GamePanel extends JPanel implements Runnable{
 				defeatMargin = total == 0 ? 1.0 : Math.max(0.0, Math.min(1.0,
 						1.0 - yourStanding / (double) total));
 				captorRealmId = activeCampaignBattle.defender.realmId;
+				Long commandedId = campaignSession.getPlayerState().commandedArmyId;
+				commandedArmyInvolved = commandedId != null
+						&& commandedId.longValue() == activeCampaignBattle.attacker.armyId;
 				finishCampaignBattle(BattleResult.WinningSide.DEFENDER);
 			}
-			world.command.CommandResult result = campaignSession.resolvePlayerDefeat(captorRealmId, defeatMargin);
+			world.command.CommandResult result = campaignSession.resolvePlayerDefeat(
+					captorRealmId, defeatMargin, commandedArmyInvolved);
 			enemies.clear();
 			troops.clear();
 			allySquad.members.clear();
@@ -3342,7 +3360,10 @@ System.nanoTime();
 		g2.drawLine(screenWidth / 2 - 8, 52, screenWidth / 2 + 8, 34);
 		g2.setStroke(new BasicStroke(1f));
 
-		int yourStrength = mine != null ? mine.strength
+		boolean armyInReach = mine != null && enemy != null && mine.strength > 0
+				&& mine.realmId != enemy.realmId && !"ENGAGED".equals(mine.state)
+				&& Math.hypot(mine.worldX - enemy.worldX, mine.worldY - enemy.worldY) <= 12.0;
+		int yourStrength = armyInReach ? mine.strength
 				: campaignSnapshot.player == null ? 0 : campaignSnapshot.player.partySize;
 		int enemyStrength = enemy == null ? 0 : enemy.strength;
 		g2.setFont(new Font("SansSerif", Font.BOLD, 17));
@@ -3354,7 +3375,7 @@ System.nanoTime();
 
 		// Heraldic blocks: yours on the left of the title, theirs on the right.
 		int leftShieldX = screenWidth / 2 - 176;
-		g2.setColor(mine == null ? new Color(245, 196, 65) : colorForRealm(mine.realmId));
+		g2.setColor(!armyInReach ? new Color(245, 196, 65) : colorForRealm(mine.realmId));
 		g2.fillRect(leftShieldX, 12, 34, 30);
 		g2.fillPolygon(new int[] {leftShieldX, leftShieldX + 34, leftShieldX + 17},
 				new int[] {42, 42, 54}, 3);
@@ -3362,7 +3383,7 @@ System.nanoTime();
 		g2.drawRect(leftShieldX, 12, 34, 30);
 		g2.setFont(new Font("SansSerif", Font.BOLD, 10));
 		g2.setColor(new Color(150, 230, 160));
-		String yourLabel = mine == null ? "Your Party" : "Your Army";
+		String yourLabel = armyInReach ? "Your Army" : "Your Party";
 		g2.drawString(yourLabel, leftShieldX - 48, 32);
 
 		int rightShieldX = screenWidth / 2 + 142;
@@ -3408,7 +3429,7 @@ System.nanoTime();
 			g2.drawString(enemy.order + " -> " + settlementName(campaignSnapshot,
 					enemy.destinationSettlementId), x + 10, textY); textY += 18;
 		}
-		if (mine != null) {
+		if (armyInReach) {
 			g2.setColor(new Color(255, 224, 145));
 			g2.drawString("Yours: " + mine.strength + " troops, morale "
 					+ Math.round(mine.morale) + "%", x + 10, textY);
@@ -3420,16 +3441,19 @@ System.nanoTime();
 			textY += 18;
 		} else {
 			g2.setColor(new Color(255, 190, 140));
-			for (String line : wrapCampaignText(g2,
-					"You command no army. Raise a company at a settlement to fight one.",
-					w - 20, 3)) {
+			String soloText = mine == null
+					? "You command no army. Attack! fights personally with your party and companions."
+					: "Your commanded army is not in reach. Attack! fights personally with your party.";
+			for (String line : wrapCampaignText(g2, soloText, w - 20, 3)) {
 				g2.drawString(line, x + 10, textY);
 				textY += 13;
 			}
-			textY += 5;
+			g2.drawString("Party " + yourStrength + " | Health "
+					+ campaignSnapshot.player.healthPercent + "%", x + 10, textY);
+			textY += 18;
 		}
-		addContextButton(g2, "ENCOUNTER_ATTACK", "Attack!", x + 12, y + 176, w - 24, 34);
-		addContextButton(g2, "ENCOUNTER_SEND", "Send in your troops.", x + 12, y + 216, w - 24, 34);
+		addContextButton(g2, "ENCOUNTER_ATTACK", armyInReach ? "Attack!" : "Attack personally!", x + 12, y + 176, w - 24, 34);
+		addContextButton(g2, "ENCOUNTER_SEND", armyInReach ? "Send in your troops." : "No troops in reach to send", x + 12, y + 216, w - 24, 34);
 		addContextButton(g2, "ENCOUNTER_LEAVE", "Leave...", x + 12, y + 256, w - 24, 34);
 		if (campaignContextMessage != null && !campaignContextMessage.isBlank()) {
 			g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
@@ -3496,12 +3520,16 @@ System.nanoTime();
 			drawCampaignBattleDecision(g2);
 			return;
 		}
-		int x = 145, y = 70, w = 478, h = 410;
+		boolean settlementMenu = campaignContextMenu == CampaignContextMenu.SETTLEMENT;
+		int x = 145, y = settlementMenu ? 52 : 70, w = 478, h = settlementMenu ? 472 : 410;
 		g2.setColor(new Color(0, 0, 0, 195)); g2.fillRect(0, 0, screenWidth, screenHeight);
 		g2.setColor(new Color(20, 28, 36)); g2.fillRoundRect(x, y, w, h, 16, 16);
 		g2.setColor(new Color(225, 190, 105)); g2.drawRoundRect(x, y, w, h, 16, 16);
 		campaignContextButtons.clear();
-		CampaignSnapshot.SettlementView settlement = campaignSnapshot.findSettlement(campaignSnapshot.player.settlementId);
+		CampaignSnapshot.SettlementView currentSettlement = campaignSnapshot.findSettlement(campaignSnapshot.player.settlementId);
+		CampaignSnapshot.SettlementView settlement = settlementMenu && selectedCampaignSettlementId != null
+				? campaignSnapshot.findSettlement(selectedCampaignSettlementId) : currentSettlement;
+		if (settlement == null) settlement = currentSettlement;
 		g2.setFont(new Font("Serif", Font.BOLD, 22)); g2.setColor(new Color(235, 205, 130));
 		String title = switch (campaignContextMenu) {
 			case MARKET -> "MARKET STALL";
@@ -3519,29 +3547,88 @@ System.nanoTime();
 			g2.drawString(settlement.name, x + 20, y + 50);
 		}
 		if (campaignContextMenu == CampaignContextMenu.SETTLEMENT && settlement != null) {
-			g2.drawString("Population " + settlement.population + " | Households " + settlement.households, x + 20, y + 75);
-			g2.drawString("Treasury " + settlement.treasury + "c | Food security " + Math.round(settlement.foodSecurity * 100) + "%", x + 20, y + 94);
-			g2.drawString("Security " + Math.round(settlement.security * 100) + "% | Unrest " + Math.round(settlement.unrest * 100) + "%", x + 20, y + 113);
-			addContextButton(g2, "OPEN_MARKET", "Open market: buy and sell", x + 28, y + 145, 200, 48);
-			addContextButton(g2, "OPEN_BOARD", "Open notice board", x + 250, y + 145, 200, 48);
-			addContextButton(g2, "ENTER_LOCAL", "Enter local settlement", x + 28, y + 210, 200, 48);
-			addContextButton(g2, "OPEN_INFO", "Open encyclopedia", x + 250, y + 210, 200, 48);
-			if (settlement.realmId != null && campaignSnapshot.player.affiliatedRealmId == null) {
-				addContextButton(g2, "JOIN_MERCENARY", "Join realm as mercenary", x + 28, y + 275, 200, 42);
-				addContextButton(g2, "JOIN_LORD", "Pledge allegiance as lord", x + 250, y + 275, 200, 42);
-			}
-			world.geography.Settlement garrisoned = campaignSession.getWorld().geography
-					.getSettlement(settlement.id);
-			int weaponsHere = garrisoned == null ? 0
-					: garrisoned.publicStockpile.getQuantity(GoodType.WEAPONS);
-			g2.setColor(new Color(190, 200, 210));
+			boolean playerHere = campaignSnapshot.player != null && !campaignSnapshot.player.traveling
+					&& campaignSnapshot.player.settlementId == settlement.id;
+			g2.drawString("Population " + settlement.population + " | Households " + settlement.households, x + 20, y + 72);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
-			g2.drawString("Raise your own company: 35c and one weapon per volunteer, from your purse."
-					+ "  Weapons here: " + weaponsHere, x + 28, y + 330);
+			g2.drawString("Owner: " + campaignRealmName(campaignSnapshot, settlement.realmId)
+					+ (settlement.occupyingRealmId == null ? ""
+							: " | Occupied by " + campaignRealmName(campaignSnapshot, settlement.occupyingRealmId)), x + 20, y + 90);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
-			addContextButton(g2, "RAISE_INFANTRY", "Raise 10 infantry", x + 28, y + 336, 140, 32);
-			addContextButton(g2, "RAISE_ARCHERS", "Raise 5 archers", x + 176, y + 336, 130, 32);
-			addContextButton(g2, "RAISE_SPEARS", "Raise 5 spears", x + 314, y + 336, 130, 32);
+			g2.drawString("Treasury " + settlement.treasury + "c | Food security " + Math.round(settlement.foodSecurity * 100) + "%", x + 20, y + 108);
+			g2.drawString("Security " + Math.round(settlement.security * 100) + "% | Unrest " + Math.round(settlement.unrest * 100) + "%"
+					+ (playerHere ? " | You are here" : " | Selected"), x + 20, y + 126);
+
+			CampaignSnapshot.SiegeView siegeHere = campaignSnapshot.findActiveSiegeAt(settlement.id);
+			CampaignSnapshot.ArmyView commanded = findCommandedArmy(campaignSnapshot);
+			String siegeStatus;
+			String siegeButtonId = "SETTLEMENT_SIEGE";
+			String siegeButtonLabel = "Start siege";
+			if (siegeHere != null) {
+				siegeStatus = "Siege active: " + siegeHere.besiegerCount + " armies | breach "
+						+ Math.round(siegeHere.breachProgress) + "% | resolve "
+						+ Math.round(siegeHere.defenderResolve) + "% | " + siegeHere.daysRunning + "d";
+				if (siegeHere.playerArmyAtSiege) {
+					siegeButtonId = "SETTLEMENT_ASSAULT_SIEGE";
+					siegeButtonLabel = "Storm the walls";
+				} else {
+					siegeButtonLabel = siegeHere.playerArmyJoined ? "Joining siege" : "Join siege";
+				}
+			} else if (commanded == null) {
+				siegeStatus = "Siege: none. Raise/command an army and be at war to start one.";
+			} else if (settlement.realmId != null && settlement.realmId.longValue() == commanded.realmId) {
+				siegeStatus = "Siege: none. Friendly settlement; choose an enemy war target.";
+			} else {
+				siegeStatus = "Siege: none. Start one with your commanded army during war.";
+			}
+
+			if (playerHere) {
+				addContextButton(g2, "OPEN_MARKET", "Open market: buy and sell", x + 28, y + 142, 200, 42);
+				addContextButton(g2, "OPEN_BOARD", "Open notice board", x + 250, y + 142, 200, 42);
+				addContextButton(g2, "ENTER_LOCAL", "Enter local settlement", x + 28, y + 192, 200, 42);
+				addContextButton(g2, "OPEN_INFO", "Open encyclopedia", x + 250, y + 192, 200, 42);
+				if (settlement.realmId != null && campaignSnapshot.player.affiliatedRealmId == null) {
+					addContextButton(g2, "JOIN_MERCENARY", "Join realm as mercenary", x + 28, y + 242, 200, 36);
+					addContextButton(g2, "JOIN_LORD", "Pledge allegiance as lord", x + 250, y + 242, 200, 36);
+				}
+				g2.setColor(new Color(255, 205, 150));
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+				g2.drawString(siegeStatus, x + 28, y + 296);
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+				g2.setColor(Color.WHITE);
+				addContextButton(g2, siegeButtonId, siegeButtonLabel, x + 28, y + 304, 200, 34);
+
+				world.geography.Settlement garrisoned = campaignSession.getWorld().geography
+						.getSettlement(settlement.id);
+				int weaponsHere = garrisoned == null ? 0
+						: garrisoned.publicStockpile.getQuantity(GoodType.WEAPONS);
+				g2.setColor(new Color(190, 200, 210));
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+				g2.drawString("Raise your own company: 35c and one weapon per volunteer."
+						+ "  Weapons here: " + weaponsHere, x + 28, y + 356);
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+				g2.setColor(Color.WHITE);
+				addContextButton(g2, "RAISE_INFANTRY", "Raise 10 infantry", x + 28, y + 364, 140, 32);
+				addContextButton(g2, "RAISE_ARCHERS", "Raise 5 archers", x + 176, y + 364, 130, 32);
+				addContextButton(g2, "RAISE_SPEARS", "Raise 5 spears", x + 314, y + 364, 130, 32);
+			} else {
+				g2.setColor(new Color(205, 215, 225));
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+				g2.drawString("You are not here. Market, contracts, joining, and recruiting need your presence.", x + 28, y + 148);
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+				g2.setColor(Color.WHITE);
+				addContextButton(g2, "SETTLEMENT_TRAVEL", "Travel here", x + 28, y + 162, 200, 42);
+				addContextButton(g2, "OPEN_INFO", "Open encyclopedia", x + 250, y + 162, 200, 42);
+				g2.setColor(new Color(255, 205, 150));
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+				g2.drawString(siegeStatus, x + 28, y + 228);
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+				g2.setColor(Color.WHITE);
+				addContextButton(g2, siegeButtonId, siegeButtonLabel, x + 28, y + 238, 200, 38);
+				g2.setColor(new Color(190, 200, 210));
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+				g2.drawString("Start/Join orders your commanded army here; it contributes on arrival.", x + 28, y + 292);
+			}
 		} else if (campaignContextMenu == CampaignContextMenu.MARKET && settlement != null) {
 			GoodType good = GoodType.values()[Math.floorMod(marketGoodIndex, GoodType.values().length)];
 			int stock = campaignSession.getWorld().geography.getSettlement(settlement.id).publicStockpile.getQuantity(good);
@@ -3688,8 +3775,8 @@ System.nanoTime();
 					g2.setColor(Color.LIGHT_GRAY);
 					g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
 					g2.drawString(youRule
-							? "Attacking needs your own army within 12 of this one."
-							: "Raise your own company at a settlement, or rule a realm to take command of its armies.",
+							? "Attack within 12: your army joins if in reach, otherwise your party fights alone."
+							: "You can attack personally within 12, or raise a company for a larger force.",
 							x + 20, y + 332);
 					g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 				}
@@ -3785,9 +3872,8 @@ System.nanoTime();
 		if ("ENCOUNTER_ATTACK".equals(clicked) || "ENCOUNTER_SEND".equals(clicked)) {
 			Long targetId = campaignEncounterArmyId != null
 					? campaignEncounterArmyId : selectedCampaignActorId;
-			if (targetId == null || campaignSnapshot.player == null
-					|| campaignSnapshot.player.commandedArmyId == null) {
-				campaignContextMessage = "You command no army. Raise a company at a settlement first.";
+			if (targetId == null || campaignSnapshot.player == null) {
+				campaignContextMessage = "That army is no longer here.";
 				return;
 			}
 			if ("ENCOUNTER_ATTACK".equals(clicked)) {
@@ -3796,12 +3882,11 @@ System.nanoTime();
 					campaignContextMessage = cleared.message;
 					return;
 				}
-				long attackerId = campaignSnapshot.player.commandedArmyId;
 				campaignContextMenu = CampaignContextMenu.NONE;
 				campaignEncounterArmyId = null;
 				campaignFollowArmyId = null;
 				campaignFollowAnchorSettlementId = null;
-				launchCampaignBattle(attackerId, targetId);
+				launchCampaignBattle(targetId);
 				if (activeCampaignBattle == null && currentLayer == GameLayer.WORLD_MAP) {
 					// Launch refused (for example, the army vanished): do not reopen forever.
 					campaignEncounterIgnoredArmyId = targetId;
@@ -3819,6 +3904,38 @@ System.nanoTime();
 				showCampaignNotice(result.message);
 			} else {
 				campaignContextMessage = result == null ? "The armies could not engage." : result.message;
+			}
+			return;
+		}
+		if ("SETTLEMENT_TRAVEL".equals(clicked) || "SETTLEMENT_SIEGE".equals(clicked)
+				|| "SETTLEMENT_ASSAULT_SIEGE".equals(clicked)) {
+			if (selectedCampaignSettlementId == null) {
+				campaignContextMessage = "No settlement is selected.";
+				return;
+			}
+			world.command.CommandResult settlementResult;
+			if ("SETTLEMENT_TRAVEL".equals(clicked)) {
+				campaignFollowArmyId = null;
+				campaignFollowCaravanId = null;
+				campaignFollowAnchorSettlementId = null;
+				settlementResult = campaignSession.beginTravelTo(selectedCampaignSettlementId);
+			} else if ("SETTLEMENT_ASSAULT_SIEGE".equals(clicked)) {
+				CampaignSnapshot.SiegeView siege = campaignSnapshot.findActiveSiegeAt(selectedCampaignSettlementId);
+				settlementResult = siege == null
+						? world.command.CommandResult.rejected("INVALID_SIEGE", "There is no active siege here")
+						: campaignSession.assaultSiege(siege.id);
+			} else {
+				settlementResult = campaignSession.startOrJoinSiege(selectedCampaignSettlementId);
+			}
+			campaignSnapshot = campaignSession.getSnapshot();
+			if (settlementResult != null && settlementResult.accepted
+					&& !"SETTLEMENT_ASSAULT_SIEGE".equals(clicked)) {
+				campaignContextMenu = CampaignContextMenu.NONE;
+				showCampaignNotice(settlementResult.message == null || settlementResult.message.isBlank()
+						? "Action completed" : settlementResult.message);
+			} else {
+				campaignContextMessage = settlementResult == null || settlementResult.message == null
+						|| settlementResult.message.isBlank() ? "Action completed" : settlementResult.message;
 			}
 			return;
 		}
@@ -3876,7 +3993,7 @@ System.nanoTime();
 			world.command.CommandResult cleared = campaignSession.canEngageArmy(selectedCampaignActorId);
 			if (cleared.accepted) {
 				campaignContextMenu = CampaignContextMenu.NONE;
-				launchCampaignBattle(campaignSnapshot.player.commandedArmyId, selectedCampaignActorId);
+				launchCampaignBattle(selectedCampaignActorId);
 				return;
 			}
 			result = cleared;
@@ -3921,60 +4038,130 @@ System.nanoTime();
 		g2.drawRoundRect(x, y, width, height, 16, 16);
 		g2.setFont(new Font("Serif", Font.BOLD, 24));
 		g2.drawString("CHEAT & TEST MENU", x + 18, y + 30);
-		g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+		g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
 		g2.setColor(Color.WHITE);
+		java.util.List<world.geography.Settlement> settlements = cheatSettlements();
+		java.util.List<world.Realm> realms = cheatRealms();
+		java.util.List<world.Person> people = cheatPeople();
+		java.util.List<world.Army> armies = cheatArmies();
 		world.geography.Settlement settlement = cheatSettlement();
 		world.Realm realm = cheatRealm();
 		world.Person person = cheatPerson();
-		g2.drawString("Settlement: " + (settlement == null ? "none (select one on map)" : settlement.name), x + 18, y + 50);
-		g2.drawString("Realm: " + (realm == null ? "none" : realm.name) + "   Person: "
-			+ (person == null ? "none" : person.givenName + " " + person.familyName), x + 18, y + 66);
+		world.Army army = cheatArmy();
+		int settlementIndex = -1;
+		for (int i = 0; i < settlements.size(); i++) {
+			if (settlement != null && settlements.get(i).id == settlement.id) settlementIndex = i;
+		}
+		int realmIndex = realms.isEmpty() ? -1 : Math.floorMod(cheatRealmIndex, realms.size());
+		int personIndex = people.isEmpty() ? -1 : Math.floorMod(cheatPersonIndex, people.size());
+		int armyIndex = armies.isEmpty() ? -1 : Math.floorMod(cheatArmyIndex, armies.size());
+		String settlementOwner = settlement == null || settlement.controllerRealmId == null ? "independent"
+				: campaignRealmName(campaignSnapshot, settlement.controllerRealmId);
+		g2.drawString("Settlement [" + (settlementIndex + 1) + "/" + settlements.size() + "]: "
+				+ (settlement == null ? "none" : "#" + settlement.id + " " + settlement.name + " (" + settlementOwner + ")"), x + 18, y + 48);
+		g2.drawString("Realm [" + (realmIndex + 1) + "/" + realms.size() + "]: "
+				+ (realm == null ? "none" : "#" + realm.id + " " + realm.name)
+				+ "   Person [" + (personIndex + 1) + "/" + people.size() + "]: "
+				+ (person == null ? "none at settlement" : "#" + person.id + " " + person.givenName + " " + person.familyName
+						+ ", " + person.type), x + 18, y + 63);
+		if (army == null) {
+			g2.drawString("Army [0/0]: none active", x + 18, y + 78);
+		} else {
+			int strength = campaignSession.getSimulation().getMilitarySystem().strength(army);
+			g2.drawString("Army [" + (armyIndex + 1) + "/" + armies.size() + "]: #" + army.id + " "
+					+ campaignRealmName(campaignSnapshot, army.realmId) + " | " + strength + " troops | "
+					+ army.state + "/" + army.order + " | at "
+					+ settlementName(campaignSnapshot, army.currentSettlementId), x + 18, y + 78);
+		}
+		g2.drawString("Amount [" + (Math.floorMod(cheatAmountIndex, CHEAT_AMOUNTS.length) + 1) + "/"
+				+ CHEAT_AMOUNTS.length + "]: " + cheatAmount() + " (spawn/add troops; food +" + (cheatAmount() * 25)
+				+ ") | Player health " + campaignSnapshot.player.healthPercent + "% | Commanded: "
+				+ (campaignSnapshot.player.commandedArmyId == null ? "none" : "#" + campaignSnapshot.player.commandedArmyId), x + 18, y + 93);
 		g2.setColor(new Color(170, 220, 170));
-		g2.drawString(cheatStatus, x + 18, y + 84);
+		g2.drawString(trimCheatText(cheatStatus, 108), x + 18, y + 108);
 
 		CheatAction[] actions = CheatAction.values();
 		cheatButtonHitboxes.clear();
-		int columns = 3, buttonW = 205, buttonH = 42, gapX = 10, gapY = 9;
-		int startY = y + 100;
+		int columns = 4, buttonW = 157, buttonH = 34, gapX = 8, gapY = 6;
+		int startY = y + 118;
 		for (int i = 0; i < actions.length; i++) {
 			int col = i % columns, row = i / columns;
 			Rectangle rect = new Rectangle(x + 18 + col * (buttonW + gapX), startY + row * (buttonH + gapY), buttonW, buttonH);
 			cheatButtonHitboxes.put(actions[i], rect);
-			g2.setColor(new Color(58, 72, 86));
+			g2.setColor(cheatButtonColor(actions[i]));
 			g2.fillRoundRect(rect.x, rect.y, rect.width, rect.height, 8, 8);
-			g2.setColor(new Color(125, 153, 174));
+			g2.setColor(actions[i].ordinal() < 9 ? new Color(230, 190, 95) : new Color(125, 153, 174));
 			g2.drawRoundRect(rect.x, rect.y, rect.width, rect.height, 8, 8);
 			g2.setColor(Color.WHITE);
-			g2.setFont(new Font("SansSerif", Font.BOLD, 11));
+			g2.setFont(new Font("SansSerif", Font.BOLD, 10));
 			String label = cheatLabel(actions[i]);
-			g2.drawString(label, rect.x + (rect.width - g2.getFontMetrics().stringWidth(label)) / 2, rect.y + 25);
+			g2.drawString(label, rect.x + (rect.width - g2.getFontMetrics().stringWidth(label)) / 2, rect.y + 21);
 		}
 		g2.setColor(Color.LIGHT_GRAY);
 		g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
-		g2.drawString("F1 closes this menu. Changes are immediate and intentionally bypass normal costs and laws.", x + 18, y + height - 12);
+		g2.drawString("Gold buttons change the selections above. F1 closes. Changes bypass normal costs and laws.", x + 18, y + height - 12);
 	}
 
 	private String cheatLabel(CheatAction action) {
+		int amount = cheatAmount();
 		return switch (action) {
-			case NEXT_REALM -> "Next target kingdom";
-			case NEXT_PERSON -> "Next target person";
-			case ADD_FOOD -> "+500 settlement food";
-			case ADD_GOLD -> "+10,000 player gold";
-			case ADD_CARGO -> "+25 every cargo good";
+			case PREV_SETTLEMENT -> "< Settlement";
+			case NEXT_SETTLEMENT -> "Settlement >";
+			case PREV_REALM -> "< Realm";
+			case NEXT_REALM -> "Realm >";
+			case PREV_PERSON -> "< Person";
+			case NEXT_PERSON -> "Person >";
+			case PREV_ARMY -> "< Army";
+			case NEXT_ARMY -> "Army >";
+			case CYCLE_AMOUNT -> "Amount: " + amount;
+			case ADD_FOOD -> "+" + (amount * 25) + " food";
+			case ADD_GOLD -> "+10,000 gold";
+			case ADD_CARGO -> "+25 all cargo";
 			case HEAL_PLAYER -> "Heal player";
-			case SPAWN_ARMY -> "Spawn 20-person army";
-			case ADD_TROOPS -> "Add 10 troops";
-			case SPAWN_CARAVAN -> "Spawn loaded caravan";
+			case WOUND_PLAYER -> "Wound player 25%";
+			case TELEPORT_PLAYER -> "Teleport player";
+			case SPAWN_ARMY -> "Spawn " + amount + " army";
+			case ADD_TROOPS -> "Add " + amount + " to army";
+			case SPAWN_HOSTILE_NEAR_PLAYER -> "Hostile army near me";
+			case MUSTER_REALMS -> "Muster realm armies";
+			case RESUPPLY_ARMY -> "Resupply army";
+			case TELEPORT_ARMY_TO_PLAYER -> "Teleport army to me";
+			case ORDER_ARMY_TO_SETTLEMENT -> "Order army -> town";
+			case GIVE_PLAYER_COMMAND -> "Command this army";
+			case SPAWN_CARAVAN -> "Spawn caravan";
 			case PLAYER_KING -> "Make player king";
-			case SET_KING -> "Make target person king";
-			case CHANGE_OWNER -> "Give settlement to realm";
-			case APPOINT_LORD -> "Appoint settlement lord";
-			case TOGGLE_WAR -> "Toggle war with next realm";
-			case TRIGGER_CRIME -> "Trigger local crime";
-			case COMPLETE_CONTRACTS -> "Complete active contracts";
-			case ADVANCE_DAY -> "Advance one day";
-			case ADVANCE_MONTH -> "Advance one month";
+			case SET_KING -> "Make person king";
+			case CHANGE_OWNER -> "Give town to realm";
+			case APPOINT_LORD -> "Appoint town lord";
+			case TOGGLE_WAR -> "Toggle war";
+			case TRIGGER_CRIME -> "Trigger crime";
+			case COMPLETE_CONTRACTS -> "Complete contracts";
+			case ADVANCE_DAY -> "Advance 1 day";
+			case ADVANCE_MONTH -> "Advance 30 days";
 		};
+	}
+
+	private Color cheatButtonColor(CheatAction action) {
+		return switch (action) {
+			case PREV_SETTLEMENT, NEXT_SETTLEMENT, PREV_REALM, NEXT_REALM,
+					PREV_PERSON, NEXT_PERSON, PREV_ARMY, NEXT_ARMY, CYCLE_AMOUNT -> new Color(92, 72, 28);
+			case ADD_FOOD, ADD_GOLD, ADD_CARGO, HEAL_PLAYER, WOUND_PLAYER,
+					TELEPORT_PLAYER -> new Color(42, 82, 58);
+			case SPAWN_ARMY, ADD_TROOPS, SPAWN_HOSTILE_NEAR_PLAYER, MUSTER_REALMS,
+					RESUPPLY_ARMY, TELEPORT_ARMY_TO_PLAYER, ORDER_ARMY_TO_SETTLEMENT,
+					GIVE_PLAYER_COMMAND -> new Color(94, 48, 48);
+			case PLAYER_KING, SET_KING, CHANGE_OWNER, APPOINT_LORD, TOGGLE_WAR -> new Color(62, 58, 96);
+			default -> new Color(58, 72, 86);
+		};
+	}
+
+	private int cheatAmount() {
+		return CHEAT_AMOUNTS[Math.floorMod(cheatAmountIndex, CHEAT_AMOUNTS.length)];
+	}
+
+	private String trimCheatText(String text, int maxLength) {
+		if (text == null) return "";
+		return text.length() <= maxLength ? text : text.substring(0, Math.max(0, maxLength - 3)) + "...";
 	}
 
 	private void handleCheatMenuClick(java.awt.Point point) {
@@ -3988,54 +4175,126 @@ System.nanoTime();
 
 	private void runCheat(CheatAction action) {
 		if (campaignSession == null) return;
+		java.util.List<world.geography.Settlement> settlements = cheatSettlements();
 		java.util.List<world.Realm> realms = cheatRealms();
 		java.util.List<world.Person> people = cheatPeople();
-		if (action == CheatAction.NEXT_REALM) {
-			cheatRealmIndex = realms.isEmpty() ? 0 : (cheatRealmIndex + 1) % realms.size();
-			cheatStatus = "Target realm changed";
+		java.util.List<world.Army> armies = cheatArmies();
+
+		if (action == CheatAction.PREV_SETTLEMENT || action == CheatAction.NEXT_SETTLEMENT) {
+			if (settlements.isEmpty()) { cheatStatus = "No settlements to select"; return; }
+			world.geography.Settlement current = cheatSettlement();
+			int index = -1;
+			for (int i = 0; i < settlements.size(); i++) {
+				if (current != null && settlements.get(i).id == current.id) index = i;
+			}
+			int delta = action == CheatAction.NEXT_SETTLEMENT ? 1 : -1;
+			index = index < 0 ? (delta > 0 ? 0 : settlements.size() - 1)
+					: Math.floorMod(index + delta, settlements.size());
+			world.geography.Settlement chosen = settlements.get(index);
+			selectedCampaignSettlementId = chosen.id;
+			cheatPersonIndex = 0;
+			cheatStatus = "Selected settlement [" + (index + 1) + "/" + settlements.size() + "] #"
+					+ chosen.id + " " + chosen.name;
 			return;
 		}
-		if (action == CheatAction.NEXT_PERSON) {
-			cheatPersonIndex = people.isEmpty() ? 0 : (cheatPersonIndex + 1) % people.size();
-			cheatStatus = "Target person changed";
+		if (action == CheatAction.PREV_REALM || action == CheatAction.NEXT_REALM) {
+			if (realms.isEmpty()) { cheatStatus = "No realms to select"; return; }
+			int delta = action == CheatAction.NEXT_REALM ? 1 : -1;
+			cheatRealmIndex = Math.floorMod(Math.floorMod(cheatRealmIndex, realms.size()) + delta, realms.size());
+			world.Realm chosen = realms.get(cheatRealmIndex);
+			cheatStatus = "Selected realm [" + (cheatRealmIndex + 1) + "/" + realms.size() + "] #"
+					+ chosen.id + " " + chosen.name;
 			return;
 		}
+		if (action == CheatAction.PREV_PERSON || action == CheatAction.NEXT_PERSON) {
+			if (people.isEmpty()) { cheatStatus = "No living people at the selected settlement"; return; }
+			int delta = action == CheatAction.NEXT_PERSON ? 1 : -1;
+			cheatPersonIndex = Math.floorMod(Math.floorMod(cheatPersonIndex, people.size()) + delta, people.size());
+			world.Person chosen = people.get(cheatPersonIndex);
+			cheatStatus = "Selected person [" + (cheatPersonIndex + 1) + "/" + people.size() + "] #"
+					+ chosen.id + " " + chosen.givenName + " " + chosen.familyName + ", " + chosen.type;
+			return;
+		}
+		if (action == CheatAction.PREV_ARMY || action == CheatAction.NEXT_ARMY) {
+			if (armies.isEmpty()) { cheatStatus = "No active armies to select"; return; }
+			int delta = action == CheatAction.NEXT_ARMY ? 1 : -1;
+			cheatArmyIndex = Math.floorMod(Math.floorMod(cheatArmyIndex, armies.size()) + delta, armies.size());
+			world.Army chosen = armies.get(cheatArmyIndex);
+			selectedCampaignActorId = chosen.id;
+			int strength = campaignSession.getSimulation().getMilitarySystem().strength(chosen);
+			cheatStatus = "Selected army [" + (cheatArmyIndex + 1) + "/" + armies.size() + "] #" + chosen.id
+					+ " " + campaignRealmName(campaignSnapshot, chosen.realmId) + ", " + strength
+					+ " troops, " + chosen.state + "/" + chosen.order;
+			return;
+		}
+		if (action == CheatAction.CYCLE_AMOUNT) {
+			cheatAmountIndex = Math.floorMod(cheatAmountIndex + 1, CHEAT_AMOUNTS.length);
+			cheatStatus = "Selected amount " + cheatAmount() + " (food +" + (cheatAmount() * 25) + ")";
+			return;
+		}
+
 		world.CheatService cheats = campaignSession.getCheats();
 		world.geography.Settlement settlement = cheatSettlement();
 		world.Realm realm = cheatRealm();
 		world.Person person = cheatPerson();
+		world.Army army = cheatArmy();
 		long settlementId = settlement == null ? -1 : settlement.id;
 		long realmId = realm == null ? -1 : realm.id;
+		long armyId = army == null ? -1 : army.id;
+		int amount = cheatAmount();
 		world.command.CommandResult result;
 		switch (action) {
-			case ADD_FOOD -> result = cheats.addFood(settlementId, 500);
+			case ADD_FOOD -> result = cheats.addFood(settlementId, amount * 25);
 			case ADD_GOLD -> result = cheats.addPlayerGold(10_000);
 			case ADD_CARGO -> result = cheats.addPlayerCargo(25);
 			case HEAL_PLAYER -> result = cheats.healPlayer();
-			case SPAWN_ARMY -> result = cheats.spawnArmy(settlementId, 20);
-			case ADD_TROOPS -> result = cheats.addTroops(settlementId, 10);
+			case WOUND_PLAYER -> result = cheats.woundPlayer();
+			case TELEPORT_PLAYER -> result = cheats.teleportPlayerToSettlement(settlementId);
+			case SPAWN_ARMY -> result = cheats.spawnArmyForRealm(settlementId, realmId, amount);
+			case ADD_TROOPS -> result = army == null ? cheats.addTroops(settlementId, amount)
+					: cheats.addTroopsToArmy(armyId, settlementId, amount);
+			case SPAWN_HOSTILE_NEAR_PLAYER -> result = cheats.spawnHostileArmyNearPlayer(amount);
+			case MUSTER_REALMS -> result = cheats.musterAllRealms();
+			case RESUPPLY_ARMY -> result = cheats.resupplyArmy(armyId);
+			case TELEPORT_ARMY_TO_PLAYER -> result = cheats.teleportArmyToPlayer(armyId);
+			case ORDER_ARMY_TO_SETTLEMENT -> result = cheats.orderArmyToSettlement(armyId, settlementId);
+			case GIVE_PLAYER_COMMAND -> result = cheats.givePlayerCommand(armyId);
 			case SPAWN_CARAVAN -> result = cheats.spawnCaravan(settlementId);
-			case PLAYER_KING -> result = cheats.makePlayerKing(realmId);
+			case PLAYER_KING -> result = campaignSession.appointPlayerAsKing(realmId);
 			case SET_KING -> result = person == null ? world.command.CommandResult.rejected("CHEAT", "No target person")
-				: cheats.setKing(realmId, person.id);
+					: cheats.setKing(realmId, person.id);
 			case CHANGE_OWNER -> result = cheats.changeSettlementOwner(settlementId, realmId);
 			case APPOINT_LORD -> result = person == null ? world.command.CommandResult.rejected("CHEAT", "No target person")
-				: cheats.appointLord(settlementId, person.id);
+					: cheats.appointLord(settlementId, person.id);
 			case TOGGLE_WAR -> {
 				world.Realm other = realms.stream().filter(value -> value.id != realmId).findFirst().orElse(null);
 				result = other == null ? world.command.CommandResult.rejected("CHEAT", "Need another realm")
-					: cheats.toggleWar(realmId, other.id);
+						: cheats.toggleWar(realmId, other.id);
 			}
 			case TRIGGER_CRIME -> result = cheats.triggerCrime(settlementId);
 			case COMPLETE_CONTRACTS -> result = cheats.completePlayerContracts();
-			case ADVANCE_DAY -> { campaignSession.advanceDaysForTesting(1); result = world.command.CommandResult.accepted(); }
-			case ADVANCE_MONTH -> { campaignSession.advanceDaysForTesting(30); result = world.command.CommandResult.accepted(); }
+			case ADVANCE_DAY -> { campaignSession.advanceDaysForTesting(1); result = new world.command.CommandResult(true, "CHEAT", "Advanced 1 day"); }
+			case ADVANCE_MONTH -> { campaignSession.advanceDaysForTesting(30); result = new world.command.CommandResult(true, "CHEAT", "Advanced 30 days"); }
 			default -> { return; }
 		}
 		campaignSession.refreshAfterCheat();
 		campaignSnapshot = campaignSession.getSnapshot();
-		cheatStatus = result.accepted ? (result.message.isEmpty() ? action.toString() + " applied" : result.message)
-			: "Rejected: " + result.message;
+		if (result.accepted && (action == CheatAction.SPAWN_ARMY
+				|| action == CheatAction.SPAWN_HOSTILE_NEAR_PLAYER || action == CheatAction.MUSTER_REALMS)) {
+			selectNewestCheatArmy();
+		}
+		String message = result.message == null ? "" : result.message;
+		cheatStatus = result.accepted ? (message.isEmpty() ? action.toString() + " applied" : message)
+				: "Rejected: " + message;
+	}
+
+	private java.util.List<world.geography.Settlement> cheatSettlements() {
+		if (campaignSession == null) return java.util.List.of();
+		java.util.List<world.geography.Settlement> values = new java.util.ArrayList<>(
+				campaignSession.getWorld().geography.getSettlements().values());
+		values.sort(java.util.Comparator.comparing((world.geography.Settlement value) -> value.name)
+				.thenComparingLong(value -> value.id));
+		return values;
 	}
 
 	private world.geography.Settlement cheatSettlement() {
@@ -4073,6 +4332,48 @@ System.nanoTime();
 	private world.Person cheatPerson() {
 		java.util.List<world.Person> values = cheatPeople();
 		return values.isEmpty() ? null : values.get(Math.floorMod(cheatPersonIndex, values.size()));
+	}
+
+	private java.util.List<world.Army> cheatArmies() {
+		if (campaignSession == null) return java.util.List.of();
+		java.util.List<world.Army> values = new java.util.ArrayList<>();
+		for (world.Army army : campaignSession.getWorld().armies.values()) {
+			if (army.state != world.Army.ArmyState.DISBANDED && !army.temporaryBattleArmy) values.add(army);
+		}
+		values.sort(java.util.Comparator.comparingLong(value -> value.id));
+		return values;
+	}
+
+	private world.Army cheatArmy() {
+		java.util.List<world.Army> values = cheatArmies();
+		return values.isEmpty() ? null : values.get(Math.floorMod(cheatArmyIndex, values.size()));
+	}
+
+	private void syncCheatArmySelectionToMapSelection() {
+		if (campaignSession == null) return;
+		java.util.List<world.Army> values = cheatArmies();
+		Long preferred = selectedCampaignActorId;
+		if (preferred == null && campaignSnapshot != null && campaignSnapshot.player != null) {
+			preferred = campaignSnapshot.player.commandedArmyId;
+		}
+		if (preferred == null) return;
+		for (int i = 0; i < values.size(); i++) {
+			if (values.get(i).id == preferred.longValue()) {
+				cheatArmyIndex = i;
+				return;
+			}
+		}
+	}
+
+	private void selectNewestCheatArmy() {
+		java.util.List<world.Army> values = cheatArmies();
+		if (values.isEmpty()) return;
+		int newest = 0;
+		for (int i = 1; i < values.size(); i++) {
+			if (values.get(i).id > values.get(newest).id) newest = i;
+		}
+		cheatArmyIndex = newest;
+		selectedCampaignActorId = values.get(newest).id;
 	}
 
 	private void drawDebugOverlay(Graphics2D g2) {
@@ -4359,8 +4660,8 @@ System.nanoTime();
 									+ " army under " + army.commanderName + ".");
 						}
 					} else if (!tryOpenCampaignEncounter(campaignSnapshot)) {
-						showCampaignNotice("That army is here. Right-click it to inspect it; "
-								+ "an encounter opens when your own army is in reach.");
+						showCampaignNotice("That army is here. Right-click it and choose Attack, or press K; "
+								+ "your party can fight even without a commanded army in reach.");
 					}
 					repaint();
 					return;
@@ -4406,12 +4707,15 @@ System.nanoTime();
 					boolean playerHere = campaignSnapshot != null && campaignSnapshot.player != null
 							&& !campaignSnapshot.player.traveling
 							&& campaignSnapshot.player.settlementId == entry.getKey().longValue();
-					if (playerHere) {
+					if (playerHere || rightClick) {
+						// Right-click opens the selected settlement (and still
+						// leaves it selected as an army-order destination after
+						// closing). Siege and travel actions live in that menu.
 						campaignContextMenu = CampaignContextMenu.SETTLEMENT;
-						campaignContextMessage = "You are currently at this settlement";
-					} else if (!rightClick && campaignSession != null) {
-						// Right-click remains "select only", preserving its use as an
-						// army-order destination; left-click rides there on the roads.
+						campaignContextMessage = playerHere
+								? "You are currently at this settlement"
+								: "Selected settlement: travel here, or start/join a siege if at war.";
+					} else if (campaignSession != null) {
 						campaignFollowArmyId = null;
 						campaignFollowCaravanId = null;
 						campaignFollowAnchorSettlementId = null;
@@ -4759,7 +5063,7 @@ System.nanoTime();
 				"  LEFT-click settlement  ride there on the roads",
 				"  LEFT-click army/caravan ride to intercept/follow",
 				"  RIGHT-click anything   inspect / select target",
-				"  click your own settlement       full menu",
+				"  RIGHT-click settlement menu: travel or start/join siege",
 				"  drag map   pan        mouse wheel  zoom",
 				"  Home       centre on your party",
 				"  X          turn back on the current road",
@@ -4768,7 +5072,7 @@ System.nanoTime();
 				"  B / V      buy 5 grain / 5 vegetables",
 				"  N / M      sell 5 grain / 5 vegetables",
 				"  C          accept the first contract offered",
-				"  K          attack the selected enemy army with yours",
+				"  K          attack selected army (party can fight solo)",
 				"  Health > 0 you may attack or siege even while wounded",
 				"  R          (in battle) withdraw / call off pursuit",
 				"  1/2/3      after a rout: pursue, mercy, demand surrender",
@@ -4812,11 +5116,11 @@ System.nanoTime();
 				"  Right-click your army (gold ring) for orders: move,",
 				"  defend, start/join a siege, raid, march home, storm.",
 				"  Besieging needs an active war against the settlement's",
-				"  realm. On the WAR tab, Join an allied siege; Storm it",
-				"  after your army arrives. Extra armies strengthen it.",
-				"  K attacks a selected enemy army with yours, as a battle",
-				"  you fight yourself. Kill or rout every standing enemy,",
-				"  or break them by losses and commander kills. If you fall,",
+				"  realm. Right-click any settlement for Start/Join siege;",
+				"  Storm after your army arrives. Extra armies strengthen it.",
+				"  K attacks a selected army. Your commanded army joins if",
+				"  in reach; otherwise you and companions fight personally.",
+				"  Kill/rout all standing, or break them. If you fall,",
 				"  your remaining troops can still hold the field.",
 				"  Sieges and victories earn war contribution, which is",
 				"  what lets you claim land. Pursuit pays salvage; mercy",

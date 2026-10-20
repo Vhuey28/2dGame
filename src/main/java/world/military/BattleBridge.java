@@ -52,9 +52,18 @@ public final class BattleBridge {
         }
         BattleContext.BattleSide attackerSide = projectSide(attacker);
         if (playerInvolved) attackerSide = addCompanions(attackerSide, attacker, companionPersonIds);
+        BattleContext.BattleSide defenderSide = projectSide(defender);
+        if (defenderSide.combatants.isEmpty()) {
+            throw new IllegalStateException("That army has no soldiers able to take the field");
+        }
+        if (attackerSide.combatants.isEmpty() && !playerInvolved) {
+            throw new IllegalStateException("The attacking army has no soldiers able to take the field");
+        }
+        // A player-led side may legitimately project no regimented troops:
+        // the adventurer's own tactical sprite is the remaining combatant.
         long battleId = world.idGenerator.next();
         BattleContext contextSnapshot = new BattleContext(battleId, strategicMinute,
-                attackerSide, projectSide(defender), terrainAt(attacker),
+                attackerSide, defenderSide, terrainAt(attacker),
                 weatherAt(strategicMinute), playerInvolved);
         world.battleContexts.put(battleId, contextSnapshot);
         attacker.state = Army.ArmyState.ENGAGED;
@@ -435,6 +444,19 @@ public final class BattleBridge {
         if (result.winner == BattleResult.WinningSide.DRAW) {
             attacker.state = hasLivingSoldiers(attacker) ? Army.ArmyState.ROUTED : Army.ArmyState.DISBANDED;
             defender.state = hasLivingSoldiers(defender) ? Army.ArmyState.ROUTED : Army.ArmyState.DISBANDED;
+        }
+        // A solo/party projection exists only for this one battle. Keep the
+        // historical record (reports still resolve its id/realm), but never
+        // leave a regiment-less token behind on the campaign map.
+        if (attacker != null && attacker.temporaryBattleArmy) {
+            attacker.state = Army.ArmyState.DISBANDED;
+            attacker.routeRoadIds.clear();
+            attacker.targetArmyId = null;
+        }
+        if (defender != null && defender.temporaryBattleArmy) {
+            defender.state = Army.ArmyState.DISBANDED;
+            defender.routeRoadIds.clear();
+            defender.targetArmyId = null;
         }
     }
 

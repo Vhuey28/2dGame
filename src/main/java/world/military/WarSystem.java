@@ -54,9 +54,12 @@ public final class WarSystem {
         }
         String validation = validateGoal(attacker, defender, goal, targetProvinceId, targetTitleId);
         if (validation != null) return CommandResult.rejected("INVALID_WAR_GOAL", validation);
+        // A ruler may declare war before any field army exists (or when the
+        // kingdom's only force is under the player's personal command).
+        // Monthly mustering and independent orders then create/move forces;
+        // lacking an army is a military problem, not a legal invalidity.
         Army attackingArmy = strongestArmy(attackerRealmId);
         Army defendingArmy = strongestArmy(defenderRealmId);
-        if (attackingArmy == null) return CommandResult.rejected("NO_FIELD_ARMY", "Attacker has no physical army");
 
         War war = new War(world.idGenerator.next(), attackerRealmId, defenderRealmId, goal, currentMinute);
         war.targetProvinceId = targetProvinceId;
@@ -68,7 +71,9 @@ public final class WarSystem {
 
         Settlement objective = objectiveSettlement(war, defenderRealmId);
         if (objective != null) {
-            military.issueMoveOrder(attackingArmy.id, objective.id, Army.ArmyOrder.BESIEGE, currentMinute);
+            if (attackingArmy != null) {
+                military.issueMoveOrder(attackingArmy.id, objective.id, Army.ArmyOrder.BESIEGE, currentMinute);
+            }
             if (defendingArmy != null) {
                 military.issueMoveOrder(defendingArmy.id, objective.id, Army.ArmyOrder.DEFEND, currentMinute);
             }

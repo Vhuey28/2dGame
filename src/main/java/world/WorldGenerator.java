@@ -565,6 +565,21 @@ public final class WorldGenerator {
             if (realm.capitalSettlementId == null) continue;
             world.command.CommandResult result = military.recruitRegiment(realm.id,
                     realm.capitalSettlementId, 12, Regiment.RegimentType.LEVY_INFANTRY, 0L);
+            if (!result.accepted) {
+                // Do not leave a realm army-less merely because its capital
+                // lacks eligible residents or weapons in this seed.
+                java.util.List<Settlement> fallbacks = new java.util.ArrayList<>(
+                        world.geography.getSettlements().values());
+                fallbacks.sort(java.util.Comparator.comparingLong(settlement -> settlement.id));
+                for (Settlement settlement : fallbacks) {
+                    if (settlement.id == realm.capitalSettlementId.longValue()
+                            || settlement.controllerRealmId == null
+                            || settlement.controllerRealmId.longValue() != realm.id) continue;
+                    result = military.recruitRegiment(realm.id, settlement.id, 12,
+                            Regiment.RegimentType.LEVY_INFANTRY, 0L);
+                    if (result.accepted) break;
+                }
+            }
             if (result.accepted) created++;
         }
         System.out.println("Created " + created + " person-level armies");

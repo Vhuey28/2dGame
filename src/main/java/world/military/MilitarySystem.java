@@ -9,6 +9,8 @@ import world.Household;
 import world.Person;
 import world.Realm;
 import world.SimulationContext;
+import world.War;
+import world.WorldConfig;
 import world.WorldState;
 import world.command.CommandResult;
 import world.economy.GoodType;
@@ -265,6 +267,7 @@ public final class MilitarySystem {
                 }
             }
         }
+        issueIndependentArmyOrders(currentMinute);
     }
 
     public void processMonth(long currentMinute) {
@@ -291,6 +294,307 @@ public final class MilitarySystem {
                 }
             }
         }
+        musterRealmArmies(currentMinute);
+    }
+
+    /**
+     * Bounded realm mustering: every realm tries to keep two independent
+     * field armies in peace and three in war, raising at most one new army
+     * per realm per call through the ordinary people/weapons/treasury rules.
+     * Player-commanded and player-funded forces never count toward the
+     * realm's autonomous force, so allies and enemies both replace losses.
+     */
+    public int musterRealmArmies(long currentMinute) {
+        int created = 0;
+        List<Realm> realms = new ArrayList<>(world.realms.values());
+        realms.sort(Comparator.comparingLong(realm -> realm.id));
+        for (Realm realm : realms) {
+            int target = realmAtWar(realm.id) ? 3 : 2;
+            int existing = 0;
+            for (Army army : world.armies.values()) {
+                if (army.realmId == realm.id && !army.playerCommanded && !army.playerFunded
+                        && !army.temporaryBattleArmy && army.state != Army.ArmyState.DISBANDED
+                        && strength(army) > 0) existing++;
+            }
+            if (existing >= target) continue;
+
+            Settlement best = null;
+            int bestRecruitable = 0;
+            List<Settlement> settlements = new ArrayList<>(world.geography.getSettlements().values());
+            settlements.sort(Comparator.comparingLong(settlement -> settlement.id));
+            for (Settlement settlement : settlements) {
+                if (settlement.controllerRealmId == null || settlement.controllerRealmId.longValue() != realm.id) continue;
+                if (settlement.occupyingRealmId != null
+                        && settlement.occupyingRealmId.longValue() != realm.id) continue;
+                int affordable = (int) Math.max(0L, Math.min(Integer.MAX_VALUE,
+                        realm.treasury.copperCoins / RECRUITMENT_COST));
+                int recruitable = Math.min(12, Math.min(
+                        eligibleResidents(settlement.id, currentMinute).size(),
+                        Math.min(settlement.publicStockpile.getQuantity(GoodType.WEAPONS), affordable)));
+                boolean capital = realm.capitalSettlementId != null
+                        && realm.capitalSettlementId.longValue() == settlement.id;
+                boolean bestCapital = best != null && realm.capitalSettlementId != null
+                        && realm.capitalSettlementId.longValue() == best.id;
+                if (recruitable > bestRecruitable
+                        || recruitable == bestRecruitable && capital && !bestCapital) {
+                    best = settlement;
+                    bestRecruitable = recruitable;
+                }
+            }
+            if (best == null || bestRecruitable < 6) continue;
+            CommandResult recruited = recruitRegiment(realm.id, best.id, 12,
+                    Regiment.RegimentType.LEVY_INFANTRY, currentMinute);
+            if (recruited.accepted) {
+                created++;
+                context.eventBus.publish(new WorldEvent(world.idGenerator.next(), currentMinute,
+                        "REALM_ARMY_MUSTERED", realm.name + " musters a new army at " + best.name));
+            }
+        }
+        return created;
+    }
+
+    /**
+     * Daily orders for armies nobody is personally commanding. Each idle
+     * army independently rallies, resupplies, pursues a nearby wartime foe,
+     * advances to a war objective, defends a threatened settlement, or
+     * patrols its realm in peace. Player-commanded, player-funded, and
+     * temporary solo projections are never touched.
+     */
+    public void issueIndependentArmyOrders(long currentMinute) {
+        List<Army> armies = new ArrayList<>(world.armies.values());
+        armies.sort(Comparator.comparingLong(army -> army.id));
+        for (Army army : armies) {
+            if (army.playerCommanded || army.playerFunded || army.temporaryBattleArmy
+                    || army.state == Army.ArmyState.DISBANDED || army.state == Army.ArmyState.ENGAGED
+                    || army.state == Army.ArmyState.TRAVELING || army.position == null
+                    || strength(army) <= 0) continue;
+
+            if (army.state == Army.ArmyState.ROUTED) {
+                Settlement current = world.geography.getSettlement(army.currentSettlementId);
+                boolean safe = current != null && current.controllerRealmId != null
+                        && current.controllerRealmId.longValue() == army.realmId
+                        && (army.homeSettlementId == null
+                                || army.homeSettlementId.longValue() == current.id);
+                if (safe) {
+                    army.state = Army.ArmyState.MUSTERED;
+                    army.order = Army.ArmyOrder.DEFEND;
+                    army.destinationSettlementId = current.id;
+                } else {
+                    Settlement home = friendlyResupplySettlement(army);
+                    if (home != null) {
+                        issueMoveOrder(army.id, home.id, Army.ArmyOrder.RETURN_HOME, currentMinute);
+                    }
+                }
+                continue;
+            }
+            if (army.state != Army.ArmyState.MUSTERED) continue;
+            if (army.order == Army.ArmyOrder.BESIEGE && activeSiegeWithArmy(army)) continue;
+
+            int armyStrength = strength(army);
+            int grainNeededPerDay = Math.max(1, (armyStrength + 1) / 2);
+            boolean needsSupply = army.daysWithoutFood > 0
+                    || army.supplies.getQuantity(GoodType.GRAIN) < grainNeededPerDay * 3
+                    || army.morale < 35.0 || army.fatigue > 75.0;
+            if (needsSupply) {
+                Settlement supply = friendlyResupplySettlement(army);
+                if (supply != null) {
+                    if (supply.id == army.currentSettlementId) {
+                        army.order = Army.ArmyOrder.RESUPPLY;
+                        army.destinationSettlementId = supply.id;
+                    } else {
+                        issueMoveOrder(army.id, supply.id, Army.ArmyOrder.RESUPPLY, currentMinute);
+                    }
+                    continue;
+                }
+            }
+
+            War war = firstActiveWarFor(army.realmId);
+            int role = independentArmyRole(army);
+            if (war != null) {
+                Settlement threatened = threatenedFriendlySettlement(army, war);
+                if (threatened != null && role > 0) {
+                    issueIndependentMove(army, threatened.id, Army.ArmyOrder.DEFEND, currentMinute);
+                    continue;
+                }
+                Army target = nearbyWartimeEnemy(army, war);
+                if (target != null && armyStrength >= Math.max(4, strength(target) * 4 / 5)) {
+                    Settlement targetSettlement = world.geography.getSettlement(target.currentSettlementId);
+                    if (targetSettlement != null) {
+                        army.targetArmyId = target.id;
+                        issueIndependentMove(army, targetSettlement.id, Army.ArmyOrder.PURSUE, currentMinute);
+                        army.targetArmyId = target.id;
+                        continue;
+                    }
+                }
+                Settlement objective = warObjectiveSettlement(army, war);
+                if (objective != null && role != 1) {
+                    issueIndependentMove(army, objective.id, Army.ArmyOrder.BESIEGE, currentMinute);
+                    continue;
+                }
+                Settlement post = threatened != null ? threatened : friendlyResupplySettlement(army);
+                if (post != null) {
+                    issueIndependentMove(army, post.id, Army.ArmyOrder.DEFEND, currentMinute);
+                }
+                continue;
+            }
+
+            if (role == 1) {
+                Settlement post = friendlyResupplySettlement(army);
+                if (post != null) issueIndependentMove(army, post.id, Army.ArmyOrder.DEFEND, currentMinute);
+            } else {
+                Settlement patrol = patrolSettlement(army, currentMinute, role);
+                if (patrol != null) issueIndependentMove(army, patrol.id, Army.ArmyOrder.PATROL, currentMinute);
+            }
+        }
+    }
+
+    private boolean realmAtWar(long realmId) {
+        for (War war : world.wars.values()) {
+            if (war.state == War.WarState.ACTIVE && war.includes(realmId)) return true;
+        }
+        return false;
+    }
+
+    private War firstActiveWarFor(long realmId) {
+        War first = null;
+        for (War war : world.wars.values()) {
+            if (war.state != War.WarState.ACTIVE || !war.includes(realmId)) continue;
+            if (first == null || war.id < first.id) first = war;
+        }
+        return first;
+    }
+
+    private int independentArmyRole(Army army) {
+        List<Army> peers = new ArrayList<>();
+        for (Army peer : world.armies.values()) {
+            if (peer.realmId == army.realmId && !peer.playerCommanded && !peer.playerFunded
+                    && !peer.temporaryBattleArmy && peer.state != Army.ArmyState.DISBANDED
+                    && strength(peer) > 0) peers.add(peer);
+        }
+        peers.sort(Comparator.comparingInt((Army peer) -> strength(peer)).reversed()
+                .thenComparingLong(peer -> peer.id));
+        for (int i = 0; i < peers.size(); i++) if (peers.get(i).id == army.id) return i;
+        return 0;
+    }
+
+    private void issueIndependentMove(Army army, long settlementId, Army.ArmyOrder order, long minute) {
+        if (army.currentSettlementId == settlementId && army.state == Army.ArmyState.MUSTERED) {
+            army.order = order;
+            army.destinationSettlementId = settlementId;
+            return;
+        }
+        issueMoveOrder(army.id, settlementId, order, minute);
+    }
+
+    private boolean activeSiegeWithArmy(Army army) {
+        for (Siege siege : world.sieges.values()) {
+            if (siege.state == Siege.SiegeState.ACTIVE && siege.settlementId == army.currentSettlementId
+                    && siege.isBesiegingArmy(army.id)) return true;
+        }
+        return false;
+    }
+
+    private Settlement friendlyResupplySettlement(Army army) {
+        Settlement best = null;
+        double bestDistance = Double.POSITIVE_INFINITY;
+        Realm realm = world.realms.get(army.realmId);
+        for (Settlement settlement : world.geography.getSettlements().values()) {
+            if (settlement.controllerRealmId == null || settlement.controllerRealmId.longValue() != army.realmId
+                    || settlement.position == null || army.position == null) continue;
+            double distance = Math.hypot(army.position.x - settlement.position.x,
+                    army.position.y - settlement.position.y);
+            if (army.homeSettlementId != null && army.homeSettlementId.longValue() == settlement.id) distance -= 25.0;
+            if (realm != null && realm.capitalSettlementId != null
+                    && realm.capitalSettlementId.longValue() == settlement.id) distance -= 10.0;
+            if (distance < bestDistance) {
+                best = settlement;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
+    private Settlement threatenedFriendlySettlement(Army army, War war) {
+        Settlement best = null;
+        double bestDistance = Double.POSITIVE_INFINITY;
+        for (Siege siege : world.sieges.values()) {
+            if (siege.state != Siege.SiegeState.ACTIVE || siege.warId != war.id) continue;
+            Settlement settlement = world.geography.getSettlement(siege.settlementId);
+            if (settlement == null || settlement.controllerRealmId == null || settlement.position == null) continue;
+            if (!sameWarSide(war, army.realmId, settlement.controllerRealmId.longValue())) continue;
+            double distance = Math.hypot(army.position.x - settlement.position.x,
+                    army.position.y - settlement.position.y);
+            if (distance < bestDistance) {
+                best = settlement;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
+    private Army nearbyWartimeEnemy(Army army, War war) {
+        Army best = null;
+        double bestDistance = 450.0;
+        for (Army other : world.armies.values()) {
+            if (other.id == army.id || other.playerCommanded || other.temporaryBattleArmy
+                    || other.state == Army.ArmyState.DISBANDED || other.state == Army.ArmyState.ENGAGED
+                    || other.position == null || strength(other) <= 0
+                    || !war.opposing(army.realmId, other.realmId)) continue;
+            double distance = Math.hypot(army.position.x - other.position.x,
+                    army.position.y - other.position.y);
+            if (distance < bestDistance) {
+                best = other;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
+    private Settlement warObjectiveSettlement(Army army, War war) {
+        Settlement best = null;
+        double bestDistance = Double.POSITIVE_INFINITY;
+        for (Settlement settlement : world.geography.getSettlements().values()) {
+            if (settlement.controllerRealmId == null || settlement.position == null) continue;
+            long controller = settlement.controllerRealmId.longValue();
+            if (!war.opposing(army.realmId, controller)) continue;
+            if (settlement.occupyingRealmId != null
+                    && !war.opposing(army.realmId, settlement.occupyingRealmId.longValue())) continue;
+            double distance = Math.hypot(army.position.x - settlement.position.x,
+                    army.position.y - settlement.position.y);
+            if (war.targetProvinceId != null && settlement.provinceId == war.targetProvinceId.longValue()) {
+                distance -= 100.0;
+            }
+            Realm controllerRealm = world.realms.get(controller);
+            if (controllerRealm != null && controllerRealm.capitalSettlementId != null
+                    && controllerRealm.capitalSettlementId.longValue() == settlement.id) distance -= 25.0;
+            if (distance < bestDistance) {
+                best = settlement;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
+    private Settlement patrolSettlement(Army army, long currentMinute, int role) {
+        List<Settlement> friendly = new ArrayList<>();
+        for (Settlement settlement : world.geography.getSettlements().values()) {
+            if (settlement.controllerRealmId != null
+                    && settlement.controllerRealmId.longValue() == army.realmId) friendly.add(settlement);
+        }
+        friendly.sort(Comparator.comparingLong(settlement -> settlement.id));
+        if (friendly.isEmpty()) return null;
+        long day = Math.max(0L, currentMinute / WorldConfig.MINUTES_PER_DAY);
+        int index = (int) Math.floorMod(day + army.id + role * 2L, friendly.size());
+        Settlement chosen = friendly.get(index);
+        if (chosen.id == army.currentSettlementId && friendly.size() > 1) {
+            chosen = friendly.get((index + 1) % friendly.size());
+        }
+        return chosen;
+    }
+
+    private boolean sameWarSide(War war, long firstRealmId, long secondRealmId) {
+        return war.attackerRealmIds.contains(firstRealmId) && war.attackerRealmIds.contains(secondRealmId)
+                || war.defenderRealmIds.contains(firstRealmId) && war.defenderRealmIds.contains(secondRealmId);
     }
 
     public BattleReport autoResolveEncounter(long firstArmyId, long secondArmyId, long currentMinute) {
@@ -298,8 +602,13 @@ public final class MilitarySystem {
         Army second = world.armies.get(secondArmyId);
         if (first == null || second == null || first.realmId == second.realmId
                 || first.state == Army.ArmyState.DISBANDED || second.state == Army.ArmyState.DISBANDED
-                || strength(first) <= 0 || strength(second) <= 0) return null;
-        BattleContext battle = battleBridge.createContext(firstArmyId, secondArmyId, false, currentMinute);
+                || battleReadyStrength(first) <= 0 || battleReadyStrength(second) <= 0) return null;
+        BattleContext battle;
+        try {
+            battle = battleBridge.createContext(firstArmyId, secondArmyId, false, currentMinute);
+        } catch (RuntimeException ignored) {
+            return null;
+        }
         BattleResult result = battleBridge.autoResolve(battle);
         CommandResult reconciled = battleBridge.reconcile(result);
         return reconciled.accepted ? world.battleReports.get(battle.battleId) : null;
@@ -339,6 +648,25 @@ public final class MilitarySystem {
     }
 
     public int strength(Army army) { return summarize(army).strength; }
+
+    /**
+     * Soldiers BattleBridge can actually project: living, uncaptured people
+     * in active regiments. This is deliberately stricter than {@link #strength}
+     * so the UI never opens a tactical battle against an empty token.
+     */
+    public int battleReadyStrength(Army army) {
+        if (army == null) return 0;
+        int ready = 0;
+        for (Long regimentId : army.regimentIds) {
+            Regiment regiment = world.regiments.get(regimentId);
+            if (regiment == null || !regiment.active) continue;
+            for (Long personId : regiment.soldierPersonIds) {
+                Person person = world.people.get(personId);
+                if (person != null && person.alive && person.capturedByRealmId == null) ready++;
+            }
+        }
+        return ready;
+    }
 
     /** The adventurer's purse, or null when there is no campaign player. */
     private MoneyAccount playerPurse() {
