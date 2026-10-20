@@ -33,6 +33,15 @@ public final class Title {
         holderHistory.add(new HolderRecord(personId, minute, reason));
     }
 
+    /** Ends the current holder's tenure without immediately naming a successor. */
+    public void vacateHolder(long minute) {
+        if (holderPersonId == null) return;
+        if (!holderHistory.isEmpty()) {
+            holderHistory.get(holderHistory.size() - 1).endMinute = minute;
+        }
+        holderPersonId = null;
+    }
+
     public enum Rank { BARONY, COUNTY, DUCHY, KINGDOM, EMPIRE }
 
     public static final class HolderRecord {

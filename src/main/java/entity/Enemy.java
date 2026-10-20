@@ -240,6 +240,20 @@ public class Enemy extends Entity {
         return isTargetableInBattle() && !routed;
     }
 
+    /**
+     * Enemies do not advertise a full, untouched health bar. It appears when
+     * they are hit (including a no-damage/stun hit that only sets the counter)
+     * and remains visible while they are below full health.
+     */
+    public boolean shouldShowHealthBar() {
+        return shouldShowHealthBar(showHealthCounter, health, maxHealth);
+    }
+
+    /** Pure form of {@link #shouldShowHealthBar()} so the rule can be unit-tested directly. */
+    public static boolean shouldShowHealthBar(int showHealthCounter, int health, int maxHealth) {
+        return showHealthCounter > 0 || health < maxHealth;
+    }
+
     /** Breaks formation: the enemy stops attacking and flees on later updates. */
     public void beginRout() {
         if (!isTargetableInBattle()) return;
@@ -1168,7 +1182,7 @@ public class Enemy extends Entity {
        for (Projectile p : projectiles) {
             p.draw(g2, cameraX, cameraY);
         }
-        if (type != Type.COMMANDER || showHealthCounter > 0 || health < maxHealth) {
+        if (shouldShowHealthBar()) {
             int barWidth = drawWidth;
             int barX = screenX;
             int barY = screenY - 8;

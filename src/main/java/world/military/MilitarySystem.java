@@ -219,10 +219,23 @@ public final class MilitarySystem {
 
     public void processHour(long currentMinute) {
         for (Army army : new ArrayList<>(world.armies.values())) {
-            if (army.state == Army.ArmyState.TRAVELING) moveOneHour(army, currentMinute);
+            if (army.state == Army.ArmyState.TRAVELING && !movesWithPlayerParty(army)) {
+                moveOneHour(army, currentMinute);
+            }
         }
         world.geography.getSpatialIndex().rebuildDynamic(world);
         detectEncounters(currentMinute);
+    }
+
+    /**
+     * A player-commanded army with no road route of its own is being carried
+     * by CampaignSession's player-party movement. Letting moveOneHour run for
+     * it would "arrive" it immediately because its route is intentionally empty.
+     */
+    private boolean movesWithPlayerParty(Army army) {
+        return army != null && army.playerCommanded && army.routeRoadIds.isEmpty()
+                && world.player != null && world.player.commandedArmyId != null
+                && world.player.commandedArmyId.longValue() == army.id;
     }
 
     public void processDay(long currentMinute) {
@@ -450,7 +463,12 @@ public final class MilitarySystem {
                 first.detectedArmyIds.add(second.id);
                 second.detectedArmyIds.add(first.id);
                 context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "ARMY_DETECTED"));
-                if (isAggressiveToward(first, second) || isAggressiveToward(second, first)) {
+                // An enemy may force contact with the player's army, but it
+                // must not silently auto-resolve the battle before the player
+                // gets the paused Attack / Send troops / Leave choice.
+                boolean playerInvolved = first.playerCommanded || second.playerCommanded;
+                if (!playerInvolved
+                        && (isAggressiveToward(first, second) || isAggressiveToward(second, first))) {
                     autoResolveEncounter(first.id, second.id, minute);
                 }
             }

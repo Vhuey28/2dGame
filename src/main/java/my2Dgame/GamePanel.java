@@ -1278,15 +1278,19 @@ public class GamePanel extends JPanel implements Runnable{
 						&& snapshot.worldMinute < campaignEncounterGraceUntilMinute) continue;
 				boolean followed = campaignFollowArmyId != null
 						&& campaignFollowArmyId.longValue() == army.id;
-				double distance;
+				double partyDistance = Math.hypot(snapshot.player.worldX - army.worldX,
+						snapshot.player.worldY - army.worldY);
+				double distance = partyDistance;
 				boolean contact;
 				if (mine != null) {
-					distance = Math.hypot(mine.worldX - army.worldX, mine.worldY - army.worldY);
+					double armyDistance = Math.hypot(mine.worldX - army.worldX,
+							mine.worldY - army.worldY);
+					// The commanded army travels in the player party, so an
+					// enemy reaching either token has reached the same force.
+					distance = Math.min(partyDistance, armyDistance);
 					contact = distance <= 12.0 && mine.realmId != army.realmId
 							&& (army.hostileToPlayer || followed);
 				} else {
-					distance = Math.hypot(snapshot.player.worldX - army.worldX,
-							snapshot.player.worldY - army.worldY);
 					contact = distance <= 12.0 && army.hostileToPlayer;
 				}
 				if (contact && (followed || distance < bestDistance)) {
@@ -4271,6 +4275,9 @@ System.nanoTime();
 					} else if (entry.getKey().startsWith("CLAIM_HOLDING:")) {
 						result = campaignSession.claimHolding(
 								Long.parseLong(entry.getKey().substring("CLAIM_HOLDING:".length())));
+					} else if (entry.getKey().startsWith("RELINQUISH_TITLE:")) {
+						result = campaignSession.relinquishTitle(
+								Long.parseLong(entry.getKey().substring("RELINQUISH_TITLE:".length())));
 					} else if (entry.getKey().startsWith("JOIN_SIEGE:")) {
 						result = campaignSession.joinSiege(
 								Long.parseLong(entry.getKey().substring("JOIN_SIEGE:".length())));
@@ -4299,7 +4306,15 @@ System.nanoTime();
 			}
 			if (campaignPlayerHitbox != null && campaignPlayerHitbox.contains(point)) {
 				if (rightClick) {
-					activeCampaignTab = CampaignTab.PARTY;
+					CampaignSnapshot.ArmyView mine = findCommandedArmy(campaignSnapshot);
+					if (isArmyWithPlayerParty(campaignSnapshot, mine)) {
+						selectedCampaignActorId = mine.id;
+						campaignContextMenu = CampaignContextMenu.ARMY;
+						campaignContextMessage = "Your army travels with your party. "
+								+ "Orders use the right-click-selected settlement.";
+					} else {
+						activeCampaignTab = CampaignTab.PARTY;
+					}
 				} else {
 					centerCampaignCameraOnPlayer();
 				}
@@ -4919,6 +4934,7 @@ System.nanoTime();
 						snapshot.player.worldX, snapshot.player.worldY), 1, Integer::sum);
 			}
 			for (CampaignSnapshot.ArmyView army : snapshot.armies) {
+				if (isArmyWithPlayerParty(snapshot, army)) continue;
 				tokenGroupCounts.merge(campaignTokenGroupKey(snapshot, army.worldX, army.worldY),
 						1, Integer::sum);
 			}
@@ -5045,6 +5061,9 @@ System.nanoTime();
 				return byCommand != 0 ? byCommand : Long.compare(first.id, second.id);
 			});
 			for (CampaignSnapshot.ArmyView army : armiesByPriority) {
+				// An accompanying army is represented by the player-party
+				// token itself, not by a second token trailing behind it.
+				if (isArmyWithPlayerParty(snapshot, army)) continue;
 				java.awt.Point point = campaignTokenPoint(snapshot, army.worldX, army.worldY,
 						tokenGroupCounts, nextTokenSlots);
 				int x = point.x;
@@ -5118,14 +5137,20 @@ System.nanoTime();
 					g2.fillOval(x - 4, y - 8, 8, 8);
 					g2.setColor(new Color(245, 238, 210));
 					g2.fillOval(x - 7, y + 1, 14, 9);
-					String partySize = Integer.toString(snapshot.player.partySize);
+					CampaignSnapshot.ArmyView accompanyingArmy = findCommandedArmy(snapshot);
+					boolean armyWithParty = isArmyWithPlayerParty(snapshot, accompanyingArmy);
+					int displayedPartySize = snapshot.player.partySize
+							+ (armyWithParty ? accompanyingArmy.strength : 0);
+					String partySize = Integer.toString(displayedPartySize);
 					g2.setFont(new Font("SansSerif", Font.BOLD, 9));
 					int badgeW = Math.max(16, g2.getFontMetrics().stringWidth(partySize) + 7);
 					g2.setColor(new Color(10, 14, 18, 230));
 					g2.fillRoundRect(x + radius - 4, y + radius - 7, badgeW, 14, 6, 6);
 					g2.setColor(Color.WHITE);
 					g2.drawString(partySize, x + radius, y + radius + 3);
-					String text = snapshot.player.traveling ? "Your Party  ·  riding" : "YOUR PARTY";
+					String text = armyWithParty
+							? (snapshot.player.traveling ? "Your Party + Army  ·  riding" : "YOUR PARTY + ARMY")
+							: (snapshot.player.traveling ? "Your Party  ·  riding" : "YOUR PARTY");
 					g2.setFont(new Font("SansSerif", Font.BOLD, 9));
 					int width = g2.getFontMetrics().stringWidth(text) + 14;
 					Rectangle label = placeCampaignLabel(x, y, width, 15,
@@ -5635,13 +5660,17 @@ System.nanoTime();
 			g2.fillRoundRect(x, y, width, height, 9, 9);
 			g2.setColor(new Color(255, 215, 90));
 			g2.drawRoundRect(x, y, width, height, 9, 9);
+			CampaignSnapshot.ArmyView accompanyingArmy = findCommandedArmy(snapshot);
+			boolean armyWithParty = isArmyWithPlayerParty(snapshot, accompanyingArmy);
 			g2.setFont(new Font("Serif", Font.BOLD, 14));
 			g2.setColor(new Color(245, 226, 160));
-			g2.drawString("Your Party", x + 10, y + 20);
+			g2.drawString(armyWithParty ? "Your Party & Army" : "Your Party", x + 10, y + 20);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
 			g2.setColor(Color.WHITE);
-			g2.drawString("Companions " + snapshot.player.partySize + "  coins "
-					+ snapshot.player.coins + "c", x + 10, y + 41);
+			g2.drawString((armyWithParty
+					? "Party " + snapshot.player.partySize + " + " + accompanyingArmy.strength + " troops"
+					: "Companions " + snapshot.player.partySize) + "  " + snapshot.player.coins + "c",
+					x + 10, y + 41);
 			g2.drawString("Cargo " + snapshot.player.cargoUsed + "/"
 					+ snapshot.player.cargoCapacity + "  contracts "
 					+ snapshot.player.activeContracts, x + 10, y + 57);
@@ -5655,7 +5684,9 @@ System.nanoTime();
 				g2.drawString("TAB enters the local settlement", x + 10, y + 92);
 			}
 			g2.setColor(new Color(190, 200, 205));
-			g2.drawString("Click token to centre · right-click party", x + 10, y + 112);
+			g2.drawString(armyWithParty
+					? "Click to centre · right-click army orders"
+					: "Click token to centre · right-click party", x + 10, y + 112);
 		}
 
 		/**
@@ -5973,6 +6004,12 @@ System.nanoTime();
 						g2.drawString((title.settlementName == null ? "" : title.settlementName + "  |  ")
 							+ "pays about " + title.rentPerDay + "c a day into your purse", 44, y);
 						y += 17;
+						if (!title.isCrown) {
+							Rectangle relinquish = new Rectangle(44, y - 12, 190, 20);
+							drawCampaignTabButton(g2, relinquish, "Relinquish this title");
+							kingdomManagementHitboxes.put("RELINQUISH_TITLE:" + title.id, relinquish);
+							y += 17;
+						}
 						if (++heldShown >= 3 || y > panelY + panelHeight - 60) break;
 					}
 					if (heldShown == 0) {
@@ -5991,20 +6028,26 @@ System.nanoTime();
 							+ Math.round(campaignSession.getPlayerState().conquestContribution)
 							+ "  (25 barony, 40 county)", 430, panelY + 56);
 						int claimY = panelY + 66;
-						int claimable = 0;
-						for (CampaignSnapshot.SettlementView occupied : snapshot.settlements) {
-							if (occupied.occupyingRealmId == null
-									|| occupied.occupyingRealmId.longValue() != claimRealmId.longValue()) continue;
-							Rectangle button = new Rectangle(430, claimY, 300, 22);
-							drawCampaignTabButton(g2, button, "Claim " + occupied.name + " as your holding");
-							kingdomManagementHitboxes.put("CLAIM_HOLDING:" + occupied.id, button);
-							claimY += 26;
-							if (++claimable >= 5 || claimY > panelY + panelHeight - 20) break;
-						}
-						if (claimable == 0) {
+						if (!held.isEmpty()) {
 							g2.setColor(Color.LIGHT_GRAY);
-							g2.drawString(campaignRealmName(snapshot, claimRealmId)
-								+ " occupies nothing. Take a settlement by siege first.", 430, claimY);
+							g2.drawString("One title at a time: relinquish your current", 430, claimY);
+							g2.drawString("title before claiming another holding.", 430, claimY + 16);
+						} else {
+							int claimable = 0;
+							for (CampaignSnapshot.SettlementView occupied : snapshot.settlements) {
+								if (occupied.occupyingRealmId == null
+										|| occupied.occupyingRealmId.longValue() != claimRealmId.longValue()) continue;
+								Rectangle button = new Rectangle(430, claimY, 300, 22);
+								drawCampaignTabButton(g2, button, "Claim " + occupied.name + " as your holding");
+								kingdomManagementHitboxes.put("CLAIM_HOLDING:" + occupied.id, button);
+								claimY += 26;
+								if (++claimable >= 5 || claimY > panelY + panelHeight - 20) break;
+							}
+							if (claimable == 0) {
+								g2.setColor(Color.LIGHT_GRAY);
+								g2.drawString(campaignRealmName(snapshot, claimRealmId)
+									+ " occupies nothing. Take a settlement by siege first.", 430, claimY);
+							}
 						}
 					}
 					g2.setColor(new Color(222, 204, 155));
@@ -6120,6 +6163,16 @@ System.nanoTime();
 				if (army.id == wanted) return army;
 			}
 			return null;
+		}
+
+		/** True when the commanded army is in the player party token rather than detached. */
+		private boolean isArmyWithPlayerParty(CampaignSnapshot snapshot,
+				CampaignSnapshot.ArmyView army) {
+			return snapshot != null && snapshot.player != null && army != null
+					&& snapshot.player.commandedArmyId != null
+					&& snapshot.player.commandedArmyId.longValue() == army.id
+					&& Math.hypot(snapshot.player.worldX - army.worldX,
+							snapshot.player.worldY - army.worldY) <= 0.001;
 		}
 
 		private String settlementName(CampaignSnapshot snapshot, Long settlementId) {

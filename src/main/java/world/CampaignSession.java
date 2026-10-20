@@ -201,6 +201,16 @@ public final class CampaignSession {
      * ordered to the same destination.
      */
     public CommandResult beginTravelTo(long settlementId) {
+        return beginTravelTo(settlementId, Army.ArmyOrder.MOVE);
+    }
+
+    /**
+     * Travel implementation shared by ordinary map clicks and army orders.
+     * When the commanded army is with the party, installing the route keeps
+     * that army in the same party token and records the order it will carry
+     * out on arrival (for example BESIEGE instead of a plain MOVE).
+     */
+    private CommandResult beginTravelTo(long settlementId, Army.ArmyOrder accompanyingOrder) {
         long minute = clock.getWorldMinute();
         CommandResult blocked = captivityBlock(minute);
         if (blocked != null) return blocked;
@@ -214,10 +224,14 @@ public final class CampaignSession {
             if (route.size() < 2) {
                 return CommandResult.rejected("NO_ROUTE", "No open road reaches that settlement");
             }
-            installTravelRoute(route, 1, 0.0, settlementId, minute, null);
+            installTravelRoute(route, 1, 0.0, settlementId, minute, null, accompanyingOrder);
         } else {
             Long previousDestination = playerState.travelDestinationSettlementId;
             if (previousDestination != null && previousDestination.longValue() == settlementId) {
+                if (accompanyingOrder != null && accompanyingOrder != Army.ArmyOrder.MOVE) {
+                    orderAccompanyingArmy(settlementId, minute, previousDestination, accompanyingOrder);
+                    refreshSnapshot();
+                }
                 return CommandResult.accepted();
             }
             int index = playerState.travelRouteIndex;
@@ -227,7 +241,8 @@ public final class CampaignSession {
             if (settlementId == ahead) {
                 java.util.List<Long> shortened = new ArrayList<>(
                         playerState.travelRouteSettlementIds.subList(0, index + 1));
-                installTravelRoute(shortened, index, progress, settlementId, minute, previousDestination);
+                installTravelRoute(shortened, index, progress, settlementId, minute,
+                        previousDestination, accompanyingOrder);
             } else {
                 java.util.List<Long> fromBehind = settlementId == behind
                         ? java.util.List.of(behind) : findRouteSettlementIds(behind, settlementId);
@@ -244,12 +259,14 @@ public final class CampaignSession {
                     java.util.List<Long> route = new ArrayList<>();
                     route.add(ahead);
                     route.addAll(fromBehind);
-                    installTravelRoute(route, 1, 1.0 - progress, settlementId, minute, previousDestination);
+                    installTravelRoute(route, 1, 1.0 - progress, settlementId, minute,
+                            previousDestination, accompanyingOrder);
                 } else {
                     java.util.List<Long> route = new ArrayList<>();
                     route.add(behind);
                     route.addAll(fromAhead);
-                    installTravelRoute(route, 1, progress, settlementId, minute, previousDestination);
+                    installTravelRoute(route, 1, progress, settlementId, minute,
+                            previousDestination, accompanyingOrder);
                 }
             }
         }
@@ -312,7 +329,8 @@ public final class CampaignSession {
     }
 
     private void installTravelRoute(java.util.List<Long> route, int index, double progress,
-            long destinationId, long minute, Long previousDestination) {
+            long destinationId, long minute, Long previousDestination,
+            Army.ArmyOrder accompanyingOrder) {
         playerState.traveling = true;
         playerState.travelDestinationSettlementId = destinationId;
         playerState.travelRouteSettlementIds.clear();
@@ -334,7 +352,7 @@ public final class CampaignSession {
             }
         }
         updateTravelPosition();
-        orderAccompanyingArmy(destinationId, minute, previousDestination);
+        orderAccompanyingArmy(destinationId, minute, previousDestination, accompanyingOrder);
     }
 
     private void updateTravelPosition() {
@@ -351,6 +369,10 @@ public final class CampaignSession {
         party.position = new WorldPosition(
                 from.position.x + (to.position.x - from.position.x) * progress,
                 from.position.y + (to.position.y - from.position.y) * progress);
+        Army army = commandedArmy();
+        if (isCommandedArmyWithPlayer(army, null)) {
+            syncCommandedArmyWithPlayerParty(army);
+        }
     }
 
     private java.util.List<Long> findRouteSettlementIds(long fromId, long toId) {
@@ -395,36 +417,127 @@ public final class CampaignSession {
                         playerState.cargo.totalQuantity() / (double) playerState.cargoCapacity));
         double speed = 10.0 * (1.0 - 0.15 * loadRatio)
                 / (1.0 + Math.max(0, partySize - 5) * 0.02);
-        Army army = playerState.commandedArmyId == null
-                ? null : world.armies.get(playerState.commandedArmyId);
-        if (army != null && army.state != Army.ArmyState.DISBANDED
-                && (army.currentSettlementId == playerState.currentSettlementId
-                        || (previousDestination != null
-                                && previousDestination.equals(army.destinationSettlementId)))) {
+        Army army = commandedArmy();
+        if (isCommandedArmyWithPlayer(army, previousDestination)) {
             speed = Math.min(speed, army.speedPerHour);
         }
         return Math.max(4.0, Math.min(12.0, speed));
     }
 
-    private void orderAccompanyingArmy(long destinationId, long minute, Long previousDestination) {
-        if (playerState.commandedArmyId == null) return;
+    private void orderAccompanyingArmy(long destinationId, long minute, Long previousDestination,
+            Army.ArmyOrder accompanyingOrder) {
+        Army army = commandedArmy();
+        if (!isCommandedArmyWithPlayer(army, previousDestination)) return;
+        army.order = accompanyingOrder == null ? Army.ArmyOrder.MOVE : accompanyingOrder;
+        army.destinationSettlementId = destinationId;
+        // The army does not receive a second, independently simulated road
+        // route any more: it is part of the player party token and is moved
+        // by syncCommandedArmyWithPlayerParty below.
+        syncCommandedArmyWithPlayerParty(army);
+    }
+
+    /** The army currently commanded by the adventurer, clearing a stale reference if needed. */
+    private Army commandedArmy() {
+        if (playerState.commandedArmyId == null) return null;
         Army army = world.armies.get(playerState.commandedArmyId);
+        if (army == null || army.state == Army.ArmyState.DISBANDED) {
+            if (army == null) playerState.commandedArmyId = null;
+            return army;
+        }
+        return army;
+    }
+
+    /**
+     * Whether the commanded army is travelling as part of the adventurer's
+     * party rather than as a detached/remote command. A remote army with its
+     * own road route only joins the party once it is actually co-located.
+     */
+    private boolean isCommandedArmyWithPlayer(Army army, Long previousDestination) {
+        if (army == null || army.state == Army.ArmyState.DISBANDED
+                || army.state == Army.ArmyState.ENGAGED) return false;
+        if (army.currentSettlementId == playerState.currentSettlementId) return true;
+        if (previousDestination != null
+                && previousDestination.equals(army.destinationSettlementId)) return true;
+        Long playerDestination = playerState.isTraveling()
+                ? playerState.travelDestinationSettlementId : playerState.currentSettlementId;
+        if (army.routeRoadIds.isEmpty() && playerDestination != null
+                && playerDestination.equals(army.destinationSettlementId)) return true;
+        WorldParty party = world.parties.get(playerState.partyId);
+        return party != null && party.position != null && army.position != null
+                && Math.hypot(party.position.x - army.position.x,
+                        party.position.y - army.position.y) <= 0.001;
+    }
+
+    /**
+     * Keeps an accompanying commanded army in the player party: same map
+     * position, same current/destination settlement, and no separate road
+     * route for MilitarySystem to advance at a different speed.
+     */
+    private void syncCommandedArmyWithPlayerParty(Army army) {
         if (army == null || army.state == Army.ArmyState.DISBANDED
                 || army.state == Army.ArmyState.ENGAGED) return;
-        boolean travellingWithPlayer = army.currentSettlementId == playerState.currentSettlementId
-                || (previousDestination != null
-                        && previousDestination.equals(army.destinationSettlementId));
-        if (!travellingWithPlayer) return;
-        if (army.destinationSettlementId != null
-                && army.destinationSettlementId.longValue() == destinationId) return;
-        simulation.getMilitarySystem().issueMoveOrder(
-                army.id, destinationId, Army.ArmyOrder.MOVE, minute);
+        WorldParty party = world.parties.get(playerState.partyId);
+        if (party != null && party.position != null) {
+            army.position = new WorldPosition(party.position.x, party.position.y);
+        }
+        army.routeRoadIds.clear();
+        army.routeIndex = 0;
+        army.roadProgress = 0.0;
+        army.currentSettlementId = playerState.currentSettlementId;
+        if (playerState.isTraveling()) {
+            army.destinationSettlementId = playerState.travelDestinationSettlementId;
+            if (army.state != Army.ArmyState.ROUTED) army.state = Army.ArmyState.TRAVELING;
+            syncCommandedArmySoldierLocations(army, null);
+        } else {
+            army.destinationSettlementId = playerState.currentSettlementId;
+            if (army.state != Army.ArmyState.ROUTED) army.state = Army.ArmyState.MUSTERED;
+            syncCommandedArmySoldierLocations(army, playerState.currentSettlementId);
+        }
+    }
+
+    private void syncCommandedArmySoldierLocations(Army army, Long settlementId) {
+        for (Long regimentId : army.regimentIds) {
+            world.military.Regiment regiment = world.regiments.get(regimentId);
+            if (regiment == null) continue;
+            for (Long personId : regiment.soldierPersonIds) {
+                Person soldier = world.people.get(personId);
+                if (soldier == null || !soldier.alive) continue;
+                soldier.travelingPartyId = army.id;
+                soldier.currentSettlementId = settlementId;
+            }
+        }
+    }
+
+    /** Snaps a lagging accompanying army back into the party before range/siege checks. */
+    private void repairAccompanyingArmyPosition(Army army) {
+        if (isCommandedArmyWithPlayer(army, null)) {
+            syncCommandedArmyWithPlayerParty(army);
+        }
+    }
+
+    /**
+     * A self-funded company follows the adventurer's allegiance. Without this,
+     * a company raised under one realm and then pledged to its enemy was still
+     * compared against the old realm in battle/siege checks.
+     */
+    private void alignPlayerFundedCompanyWithPlayerRealm() {
+        if (playerState == null) return;
+        Realm realm = effectivePlayerRealm();
+        Army army = commandedArmy();
+        if (realm == null || army == null || !army.playerFunded) return;
+        army.realmId = realm.id;
+        for (Long regimentId : army.regimentIds) {
+            world.military.Regiment regiment = world.regiments.get(regimentId);
+            if (regiment != null) regiment.realmId = realm.id;
+        }
     }
 
     /** Shared final-arrival bookkeeping for instant and continuous travel. */
     private void arrivePlayerAtSettlement(long settlementId) {
         Settlement destination = world.geography.getSettlement(settlementId);
         WorldParty party = world.parties.get(playerState.partyId);
+        Army accompanyingArmy = commandedArmy();
+        boolean armyWithPlayer = isCommandedArmyWithPlayer(accompanyingArmy, null);
         playerState.currentSettlementId = settlementId;
         Person player = world.people.get(playerState.personId);
         Household household = world.households.get(playerState.householdId);
@@ -448,6 +561,16 @@ public final class CampaignSession {
             }
         }
         playerState.clearTravel();
+        if (armyWithPlayer) {
+            syncCommandedArmyWithPlayerParty(accompanyingArmy);
+            if (accompanyingArmy.order == Army.ArmyOrder.RETURN_HOME
+                    && accompanyingArmy.homeSettlementId != null
+                    && accompanyingArmy.homeSettlementId.longValue() == settlementId) {
+                simulation.getMilitarySystem().demobilize(
+                        accompanyingArmy.id, clock.getWorldMinute());
+                playerState.commandedArmyId = null;
+            }
+        }
         contractSystem.onPlayerArrived(playerState, clock.getWorldMinute());
     }
 
@@ -586,6 +709,7 @@ public final class CampaignSession {
         if (player != null && role == PlayerCampaignState.KingdomRole.LORD) {
             player.type = Person.PersonType.NOBLE;
         }
+        alignPlayerFundedCompanyWithPlayerRealm();
         refreshSnapshot();
         return CommandResult.accepted();
     }
@@ -601,6 +725,7 @@ public final class CampaignSession {
         player.type = Person.PersonType.NOBLE;
         playerState.affiliatedRealmId = realmId;
         playerState.kingdomRole = PlayerCampaignState.KingdomRole.KING;
+        alignPlayerFundedCompanyWithPlayerRealm();
         refreshSnapshot();
         return CommandResult.accepted();
     }
@@ -975,6 +1100,8 @@ public final class CampaignSession {
             previous.state = Army.ArmyState.DISBANDED;
         }
         playerState.commandedArmyId = army.id;
+        alignPlayerFundedCompanyWithPlayerRealm();
+        syncCommandedArmyWithPlayerParty(army);
         refreshSnapshot();
         return new CommandResult(true, raised.reasonCode, raised.message
                 + " Your company: " + simulation.getMilitarySystem().strength(army) + " troops, "
@@ -1014,6 +1141,7 @@ public final class CampaignSession {
         // A realm army stays on the realm's payroll; only a private company costs you.
         army.playerFunded = false;
         playerState.commandedArmyId = army.id;
+        repairAccompanyingArmyPosition(army);
         publish("PLAYER_TOOK_COMMAND", minute);
         refreshSnapshot();
         return new CommandResult(true, "COMMAND_TAKEN", "You take command of " + realm.name
@@ -1105,9 +1233,29 @@ public final class CampaignSession {
         }
         Settlement destination = world.geography.getSettlement(destinationSettlementId);
         if (destination == null) return CommandResult.rejected("INVALID_LOCATION", "Settlement not found");
+        alignPlayerFundedCompanyWithPlayerRealm();
+        repairAccompanyingArmyPosition(army);
         if (order == Army.ArmyOrder.RAID && destination.controllerRealmId != null
                 && destination.controllerRealmId == army.realmId) {
             return CommandResult.rejected("FRIENDLY_RAID", "You cannot raid your own realm's settlement");
+        }
+        if (isCommandedArmyWithPlayer(army, null)) {
+            if (!playerState.isTraveling()
+                    && destinationSettlementId == playerState.currentSettlementId) {
+                army.order = order;
+                army.destinationSettlementId = destinationSettlementId;
+                syncCommandedArmyWithPlayerParty(army);
+                if (order == Army.ArmyOrder.RETURN_HOME && army.homeSettlementId != null
+                        && army.homeSettlementId.longValue() == destinationSettlementId) {
+                    simulation.getMilitarySystem().demobilize(army.id, minute);
+                    playerState.commandedArmyId = null;
+                }
+            } else {
+                CommandResult travel = beginTravelTo(destinationSettlementId, order);
+                if (!travel.accepted) return travel;
+            }
+            refreshSnapshot();
+            return new CommandResult(true, "ORDER_ISSUED", describeOrder(order, destination));
         }
         CommandResult issued = simulation.getMilitarySystem()
                 .issueMoveOrder(army.id, destinationSettlementId, order, minute);
@@ -1157,6 +1305,8 @@ public final class CampaignSession {
         if (simulation.getMilitarySystem().strength(army) <= 0) {
             return CommandResult.rejected("NO_TROOPS", "Your army has no troops left to besiege with");
         }
+        alignPlayerFundedCompanyWithPlayerRealm();
+        repairAccompanyingArmyPosition(army);
         Settlement target = world.geography.getSettlement(settlementId);
         if (target == null) return CommandResult.rejected("INVALID_LOCATION", "Settlement not found");
         if (target.controllerRealmId == null) {
@@ -1212,11 +1362,27 @@ public final class CampaignSession {
             }
         }
 
-        CommandResult issued = simulation.getMilitarySystem().issueMoveOrder(
-                army.id, settlementId, Army.ArmyOrder.BESIEGE, minute);
-        if (!issued.accepted) return issued;
+        boolean withPlayer = isCommandedArmyWithPlayer(army, null);
         boolean inPosition = army.currentSettlementId == settlementId
-                && army.state != Army.ArmyState.TRAVELING;
+                && army.state != Army.ArmyState.TRAVELING
+                && (!withPlayer || !playerState.isTraveling());
+        CommandResult issued;
+        if (withPlayer && inPosition) {
+            army.order = Army.ArmyOrder.BESIEGE;
+            army.destinationSettlementId = settlementId;
+            syncCommandedArmyWithPlayerParty(army);
+            issued = CommandResult.accepted();
+        } else if (withPlayer) {
+            // The adventurer rides with the besieging army instead of sending
+            // it away as a second token that can lag behind on another route.
+            issued = beginTravelTo(settlementId, Army.ArmyOrder.BESIEGE);
+        } else {
+            issued = simulation.getMilitarySystem().issueMoveOrder(
+                    army.id, settlementId, Army.ArmyOrder.BESIEGE, minute);
+            inPosition = army.currentSettlementId == settlementId
+                    && army.state != Army.ArmyState.TRAVELING;
+        }
+        if (!issued.accepted) return issued;
 
         if (existing != null) {
             world.military.Siege joined = simulation.getWarSystem()
@@ -1245,8 +1411,11 @@ public final class CampaignSession {
                             + "or storm the walls from the army/WAR menus.");
         }
         refreshSnapshot();
-        return new CommandResult(true, "SIEGE_ORDERED",
-                "Your army marches to lay siege to " + target.name + ". The siege begins when it arrives.");
+        return new CommandResult(true, "SIEGE_ORDERED", withPlayer
+                ? "You march with your army to lay siege to " + target.name
+                        + ". The siege begins when you arrive."
+                : "Your army marches to lay siege to " + target.name
+                        + ". The siege begins when it arrives.");
     }
 
     private String describeOrder(Army.ArmyOrder order, Settlement destination) {
@@ -1300,7 +1469,14 @@ public final class CampaignSession {
             return "That settlement answers to no realm, so there is nothing to besiege";
         }
         if (target.controllerRealmId.longValue() == army.realmId) {
-            return "That settlement belongs to your own realm";
+            if (target.occupyingRealmId != null
+                    && target.occupyingRealmId.longValue() != army.realmId) {
+                return target.name + " is legally controlled by " + realmNameOf(army.realmId)
+                        + " but occupied by " + realmNameOf(target.occupyingRealmId)
+                        + ". It is not an enemy-controlled siege target.";
+            }
+            return target.name + " is controlled by your army's realm ("
+                    + realmNameOf(army.realmId) + "), so it cannot be besieged.";
         }
         if (army.realmId < 0L) {
             return "A stateless company cannot besiege. Pledge to a realm that is at war, or found your own.";
@@ -1326,12 +1502,14 @@ public final class CampaignSession {
         if (playerState.commandedArmyId == null) {
             return CommandResult.rejected("NO_ARMY", "You command no army. Raise a company first.");
         }
+        alignPlayerFundedCompanyWithPlayerRealm();
         Army mine = world.armies.get(playerState.commandedArmyId);
         Army target = world.armies.get(targetArmyId);
         if (mine == null || mine.state == Army.ArmyState.DISBANDED) {
             playerState.commandedArmyId = null;
             return CommandResult.rejected("INVALID_ARMY", "Your army no longer exists");
         }
+        repairAccompanyingArmyPosition(mine);
         if (target == null || target.state == Army.ArmyState.DISBANDED) {
             return CommandResult.rejected("INVALID_ARMY", "That army is no longer active");
         }
@@ -1341,6 +1519,9 @@ public final class CampaignSession {
         }
         if (target.realmId == mine.realmId) {
             return CommandResult.rejected("NOT_HOSTILE", "That army serves the same realm as yours");
+        }
+        if (simulation.getMilitarySystem().strength(mine) <= 0) {
+            return CommandResult.rejected("NO_TROOPS", "Your army has no troops left to fight with");
         }
         if (simulation.getMilitarySystem().strength(target) <= 0) {
             return CommandResult.rejected("NO_TROOPS", "That army has no troops left");
@@ -1394,6 +1575,8 @@ public final class CampaignSession {
             if (playerState.commandedArmyId != null) playerState.commandedArmyId = null;
             return CommandResult.rejected("NO_ARMY", "Raise or take command of an army before storming a siege");
         }
+        alignPlayerFundedCompanyWithPlayerRealm();
+        repairAccompanyingArmyPosition(mine);
         War war = world.wars.get(siege.warId);
         Settlement target = world.geography.getSettlement(siege.settlementId);
         if (war == null || war.state != War.WarState.ACTIVE || target == null
@@ -1645,6 +1828,44 @@ public final class CampaignSession {
                         : "You are knocked senseless; your soldiers pull you back as both sides disengage.");
     }
 
+    /** The one title currently held by the adventurer, if any (lowest id wins for old saves). */
+    private Title playerHeldTitle() {
+        Title held = null;
+        for (Title title : world.titles.values()) {
+            if (title.holderPersonId == null
+                    || title.holderPersonId.longValue() != playerState.personId) continue;
+            if (held == null || title.id < held.id) held = title;
+        }
+        return held;
+    }
+
+    /**
+     * Gives up a landed title so another one can be claimed later. Crowns are
+     * not surrendered through the fief screen; succession has to settle those.
+     */
+    public CommandResult relinquishTitle(long titleId) {
+        long minute = clock.getWorldMinute();
+        CommandResult blocked = freeActionBlock(minute);
+        if (blocked != null) return blocked;
+        Title title = world.titles.get(titleId);
+        if (title == null || title.holderPersonId == null
+                || title.holderPersonId.longValue() != playerState.personId) {
+            return CommandResult.rejected("NOT_HELD", "You do not hold that title.");
+        }
+        for (Realm realm : world.realms.values()) {
+            if (realm.rulerTitleId == titleId) {
+                return CommandResult.rejected("CROWN_TITLE",
+                        "A crown cannot be relinquished from the FIEFS tab.");
+            }
+        }
+        title.vacateHolder(minute);
+        playerState.titleIds.remove(Long.valueOf(titleId));
+        publish("TITLE_RELINQUISHED", minute);
+        refreshSnapshot();
+        return new CommandResult(true, "TITLE_RELINQUISHED",
+                "You relinquish " + title.name + ". You may now claim a different title.");
+    }
+
     /**
      * Claims a settlement your realm occupies as your personal holding. Occupation is not
      * ownership: this is the step that turns it into a title, and it costs you - the realm
@@ -1665,6 +1886,12 @@ public final class CampaignSession {
         if (settlement.occupyingRealmId == null || settlement.occupyingRealmId != realm.id) {
             return CommandResult.rejected("NOT_OCCUPIED", settlement.name + " is not occupied by " + realm.name
                     + ". Win the siege for it first - and claim it before peace gives it back.");
+        }
+        Title alreadyHeld = playerHeldTitle();
+        if (alreadyHeld != null) {
+            return CommandResult.rejected("ALREADY_HOLDS_TITLE",
+                    "You already hold " + alreadyHeld.name
+                            + ". You may hold only one title at a time; relinquish it first.");
         }
         boolean county = settlement.type == Settlement.SettlementType.CITY
                 || settlement.type == Settlement.SettlementType.FORT
@@ -1875,6 +2102,9 @@ public final class CampaignSession {
     }
 
     private void refreshSnapshot() {
+        // Repair the personal company's allegiance before the UI snapshot is
+        // taken, including for campaigns saved before this rule existed.
+        alignPlayerFundedCompanyWithPlayerRealm();
         snapshot = CampaignSnapshot.capture(simulation);
         lastSnapshotMinute = clock.getWorldMinute();
     }
