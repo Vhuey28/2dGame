@@ -1052,9 +1052,49 @@ public final class CampaignSession {
                 "Command returns to the army's own officers.");
     }
 
+    /**
+     * Whether the adventurer personally has health left to fight. Being
+     * wounded, injured, or sick does not block battle: the only health cutoff
+     * is zero (or death). Captivity is reported separately because a prisoner
+     * cannot reach the field even while technically alive.
+     */
+    public CommandResult playerCanFight() {
+        long minute = clock.getWorldMinute();
+        Person player = world.people.get(playerState.personId);
+        if (player == null || !player.alive || player.health == null
+                || !(player.health.healthLevel > 0.0)) {
+            return CommandResult.rejected("PLAYER_INCAPACITATED",
+                    "You have no health left to fight. Recover before leading another attack or siege.");
+        }
+        CommandResult captive = captivityBlock(minute);
+        return captive == null ? CommandResult.accepted() : captive;
+    }
+
+    /** Health-only check: captivity can still prevent reaching the field. */
+    public boolean playerHasHealthToFight() {
+        Person player = world.people.get(playerState.personId);
+        return player != null && player.alive && player.health != null
+                && player.health.healthLevel > 0.0;
+    }
+
+    /** Current strategic health as a whole percentage, for battle/siege UI. */
+    public int playerHealthPercent() {
+        Person player = world.people.get(playerState.personId);
+        if (player == null || !player.alive || player.health == null
+                || !(player.health.healthLevel > 0.0)) return 0;
+        // Any positive fractional health is still enough to fight, so never
+        // round a living, fight-capable player down to a misleading 0%.
+        return Math.max(1, Math.min(100, (int) Math.round(player.health.healthLevel)));
+    }
+
     /** Orders the army you command to a settlement. BESIEGE and RAID are validated first. */
     public CommandResult issueArmyOrder(long destinationSettlementId, Army.ArmyOrder order) {
+        if (order == Army.ArmyOrder.BESIEGE) return startOrJoinSiege(destinationSettlementId);
         long minute = clock.getWorldMinute();
+        if (order == Army.ArmyOrder.RAID) {
+            CommandResult health = playerCanFight();
+            if (!health.accepted) return health;
+        }
         if (playerState.commandedArmyId == null) {
             return CommandResult.rejected("NO_ARMY", "You command no army. Raise a company first.");
         }
@@ -1065,10 +1105,6 @@ public final class CampaignSession {
         }
         Settlement destination = world.geography.getSettlement(destinationSettlementId);
         if (destination == null) return CommandResult.rejected("INVALID_LOCATION", "Settlement not found");
-        if (order == Army.ArmyOrder.BESIEGE) {
-            String obstacle = siegeObstacle(army, destination);
-            if (obstacle != null) return CommandResult.rejected("NO_SIEGE", obstacle);
-        }
         if (order == Army.ArmyOrder.RAID && destination.controllerRealmId != null
                 && destination.controllerRealmId == army.realmId) {
             return CommandResult.rejected("FRIENDLY_RAID", "You cannot raid your own realm's settlement");
@@ -1078,6 +1114,139 @@ public final class CampaignSession {
         if (!issued.accepted) return issued;
         refreshSnapshot();
         return new CommandResult(true, "ORDER_ISSUED", describeOrder(order, destination));
+    }
+
+    /**
+     * Starts a siege with the army you command, or joins the active siege at
+     * that settlement when your army's realm is on the besieging side of an
+     * active war. If the army is elsewhere it receives a BESIEGE order and is
+     * registered as joining immediately; it contributes once it arrives.
+     */
+    public CommandResult startOrJoinSiege(long settlementId) {
+        return startOrJoinSiege(settlementId, null);
+    }
+
+    /** Joins one specific active siege, as selected from the WAR tab. */
+    public CommandResult joinSiege(long siegeId) {
+        world.military.Siege siege = world.sieges.get(siegeId);
+        if (siege == null || siege.state != world.military.Siege.SiegeState.ACTIVE) {
+            return CommandResult.rejected("INVALID_SIEGE", "That siege is no longer active");
+        }
+        return startOrJoinSiege(siege.settlementId, siege);
+    }
+
+    private CommandResult startOrJoinSiege(long settlementId, world.military.Siege preferredSiege) {
+        long minute = clock.getWorldMinute();
+        CommandResult health = playerCanFight();
+        if (!health.accepted) return health;
+        if (playerState.commandedArmyId == null) {
+            return CommandResult.rejected("NO_ARMY",
+                    "You command no army. Raise a company first, then start or join the siege with it.");
+        }
+        Army army = world.armies.get(playerState.commandedArmyId);
+        if (army == null || army.state == Army.ArmyState.DISBANDED) {
+            playerState.commandedArmyId = null;
+            return CommandResult.rejected("INVALID_ARMY", "Your army no longer exists");
+        }
+        if (army.state == Army.ArmyState.ENGAGED) {
+            return CommandResult.rejected("ALREADY_ENGAGED", "Your army is already fighting a battle");
+        }
+        if (army.state == Army.ArmyState.ROUTED) {
+            return CommandResult.rejected("ARMY_ROUTED", "Your routed army must regroup before it can besiege");
+        }
+        if (simulation.getMilitarySystem().strength(army) <= 0) {
+            return CommandResult.rejected("NO_TROOPS", "Your army has no troops left to besiege with");
+        }
+        Settlement target = world.geography.getSettlement(settlementId);
+        if (target == null) return CommandResult.rejected("INVALID_LOCATION", "Settlement not found");
+        if (target.controllerRealmId == null) {
+            return CommandResult.rejected("NO_SIEGE",
+                    "That settlement answers to no realm, so there is nothing to besiege");
+        }
+
+        War war = preferredSiege == null ? findActiveWarAgainst(army, target)
+                : world.wars.get(preferredSiege.warId);
+        world.military.Siege existing = preferredSiege;
+        if (existing == null && war != null) {
+            existing = simulation.getWarSystem().findActiveSiege(war.id, settlementId);
+        }
+        if (existing == null) existing = activeSiegeAt(settlementId);
+        if (existing != null && existing.settlementId != settlementId) existing = null;
+        if (existing != null && war == null) war = world.wars.get(existing.warId);
+        if (existing != null) {
+            War existingWar = world.wars.get(existing.warId);
+            if (existingWar != null && existingWar.state == War.WarState.ACTIVE
+                    && existingWar.opposing(army.realmId, target.controllerRealmId.longValue())) {
+                // Join the siege that is actually on the ground, even if another
+                // overlapping war has a lower id.
+                war = existingWar;
+            } else if (preferredSiege == null && war != null && existingWar != null
+                    && war.id != existingWar.id) {
+                // A stale/unrelated siege in another war should not swallow this
+                // army; it can still start its own legally validated siege below.
+                existing = null;
+            }
+        }
+
+        boolean alreadyParticipant = existing != null && existing.isBesiegingArmy(army.id);
+        if (existing != null) {
+            if (war == null || war.state != War.WarState.ACTIVE) {
+                return CommandResult.rejected("INVALID_SIEGE", "That siege's war is no longer active");
+            }
+            if (!war.opposing(army.realmId, target.controllerRealmId.longValue())) {
+                if (war.includes(army.realmId)) {
+                    return CommandResult.rejected("WRONG_SIDE",
+                            "Your side holds " + target.name + ". You cannot join the siege against it; "
+                                    + "attack a besieging army to relieve it instead.");
+                }
+                return CommandResult.rejected("NOT_AT_WAR",
+                        "Your army's realm is not a belligerent in the war over " + target.name + ".");
+            }
+        } else {
+            String obstacle = siegeObstacle(army, target);
+            if (obstacle != null) return CommandResult.rejected("NO_SIEGE", obstacle);
+            if (war == null) war = findActiveWarAgainst(army, target);
+            if (war == null) {
+                return CommandResult.rejected("NOT_AT_WAR",
+                        "Your army's realm is not at war with " + realmNameOf(target.controllerRealmId) + ".");
+            }
+        }
+
+        CommandResult issued = simulation.getMilitarySystem().issueMoveOrder(
+                army.id, settlementId, Army.ArmyOrder.BESIEGE, minute);
+        if (!issued.accepted) return issued;
+        boolean inPosition = army.currentSettlementId == settlementId
+                && army.state != Army.ArmyState.TRAVELING;
+
+        if (existing != null) {
+            world.military.Siege joined = simulation.getWarSystem()
+                    .beginOrJoinSiege(army, target, war, minute);
+            refreshSnapshot();
+            int participants = joined == null ? 0 : joined.besiegingArmyIds().size();
+            if (alreadyParticipant) {
+                return new CommandResult(true, inPosition ? "ALREADY_IN_SIEGE" : "ALREADY_JOINING_SIEGE",
+                        inPosition
+                                ? "Your army is already in the siege lines at " + target.name + "."
+                                : "Your army is already marching to join the siege of " + target.name + ".");
+            }
+            return new CommandResult(true, inPosition ? "JOINED_SIEGE" : "JOINING_SIEGE",
+                    inPosition
+                            ? "Your army joins the siege of " + target.name + " (" + participants
+                                    + " besieging armies). Its strength now counts toward the breach."
+                            : "Your army marches to join the siege of " + target.name
+                                    + ". It will count toward the breach when it arrives.");
+        }
+        if (inPosition) {
+            simulation.getWarSystem().beginOrJoinSiege(army, target, war, minute);
+            publish("PLAYER_SIEGE_STARTED", minute);
+            refreshSnapshot();
+            return new CommandResult(true, "SIEGE_STARTED",
+                    "Your army lays siege to " + target.name + ". Hold the lines while the breach grows, "
+                            + "or storm the walls from the army/WAR menus.");
+        }
+        refreshSnapshot();
+        return new CommandResult(true, "SIEGE_ORDERED",
+                "Your army marches to lay siege to " + target.name + ". The siege begins when it arrives.");
     }
 
     private String describeOrder(Army.ArmyOrder order, Settlement destination) {
@@ -1101,28 +1270,59 @@ public final class CampaignSession {
         }
     }
 
-    /** Why this army cannot besiege that settlement, or null when it can. */
+    /** The active war in which this army's realm opposes the target's controller, if any. */
+    private War findActiveWarAgainst(Army army, Settlement target) {
+        if (army == null || target == null || target.controllerRealmId == null || army.realmId < 0L) {
+            return null;
+        }
+        War best = null;
+        for (War war : world.wars.values()) {
+            if (war.state != War.WarState.ACTIVE
+                    || !war.opposing(army.realmId, target.controllerRealmId.longValue())) continue;
+            if (best == null || war.id < best.id) best = war;
+        }
+        return best;
+    }
+
+    private world.military.Siege activeSiegeAt(long settlementId) {
+        world.military.Siege best = null;
+        for (world.military.Siege siege : world.sieges.values()) {
+            if (siege.settlementId != settlementId
+                    || siege.state != world.military.Siege.SiegeState.ACTIVE) continue;
+            if (best == null || siege.id < best.id) best = siege;
+        }
+        return best;
+    }
+
+    /** Why this army cannot start a siege at that settlement, or null when it can. */
     private String siegeObstacle(Army army, Settlement target) {
         if (target.controllerRealmId == null) {
             return "That settlement answers to no realm, so there is nothing to besiege";
         }
-        if (target.controllerRealmId == army.realmId) {
+        if (target.controllerRealmId.longValue() == army.realmId) {
             return "That settlement belongs to your own realm";
         }
         if (army.realmId < 0L) {
             return "A stateless company cannot besiege. Pledge to a realm that is at war, or found your own.";
         }
-        for (War war : world.wars.values()) {
-            if (war.state != War.WarState.ACTIVE) continue;
-            if (war.attackerRealmIds.contains(army.realmId)
-                    && war.defenderRealmIds.contains(target.controllerRealmId)) return null;
+        War war = findActiveWarAgainst(army, target);
+        if (war == null) {
+            return "Your realm is not at war with " + realmNameOf(target.controllerRealmId)
+                    + ". A ruler can declare war from the WAR tab.";
         }
-        return "Your realm is not at war with " + realmNameOf(target.controllerRealmId)
-                + ". A ruler can declare war from the REALM tab.";
+        if (target.occupyingRealmId != null
+                && !war.opposing(army.realmId, target.occupyingRealmId.longValue())) {
+            return target.name + " is already occupied by "
+                    + realmNameOf(target.occupyingRealmId)
+                    + ". Claim it or settle the war instead of besieging it again.";
+        }
+        return null;
     }
 
     /** Checks whether your army can attack a target army; GamePanel then builds the battle. */
     public CommandResult canEngageArmy(long targetArmyId) {
+        CommandResult health = playerCanFight();
+        if (!health.accepted) return health;
         if (playerState.commandedArmyId == null) {
             return CommandResult.rejected("NO_ARMY", "You command no army. Raise a company first.");
         }
@@ -1179,26 +1379,62 @@ public final class CampaignSession {
                         + "Losses: yours " + yourCasualties + ", theirs " + enemyCasualties + ".");
     }
 
-    /** Storms the walls of an active siege your army is part of. */
+    /** Storms the walls of an active siege your commanded army has joined and reached. */
     public CommandResult assaultSiege(long siegeId) {
         long minute = clock.getWorldMinute();
+        CommandResult health = playerCanFight();
+        if (!health.accepted) return health;
         world.military.Siege siege = world.sieges.get(siegeId);
         if (siege == null || siege.state != Siege.SiegeState.ACTIVE) {
             return CommandResult.rejected("INVALID_SIEGE", "There is no active siege to assault");
         }
         Army mine = playerState.commandedArmyId == null
                 ? null : world.armies.get(playerState.commandedArmyId);
-        boolean playerLed = mine != null && siege.besiegingArmyId == mine.id;
-        boolean relieving = mine != null && mine.state != Army.ArmyState.DISBANDED
-                && mine.currentSettlementId == siege.settlementId;
-        if (!playerLed && !relieving) {
-            return CommandResult.rejected("NOT_YOUR_SIEGE",
-                    "Only the besieging army can storm these walls. March your army there first,"
-                            + " or engage the besiegers in the field to relieve the siege.");
+        if (mine == null || mine.state == Army.ArmyState.DISBANDED) {
+            if (playerState.commandedArmyId != null) playerState.commandedArmyId = null;
+            return CommandResult.rejected("NO_ARMY", "Raise or take command of an army before storming a siege");
         }
-        CommandResult result = simulation.getWarSystem().assaultSiege(siegeId, playerLed, minute);
-        if (playerLed && result.accepted && "SIEGE_ASSAULT_CAPTURED".equals(result.reasonCode)) {
-            // You took the place yourself, so you may keep it.
+        War war = world.wars.get(siege.warId);
+        Settlement target = world.geography.getSettlement(siege.settlementId);
+        if (war == null || war.state != War.WarState.ACTIVE || target == null
+                || target.controllerRealmId == null) {
+            return CommandResult.rejected("INVALID_SIEGE", "That siege has collapsed");
+        }
+        if (!war.opposing(mine.realmId, target.controllerRealmId.longValue())) {
+            if (war.includes(mine.realmId)) {
+                return CommandResult.rejected("WRONG_SIDE",
+                        "Your side holds " + target.name + ". Storming would help the besiegers; "
+                                + "attack a besieging army to relieve the settlement instead.");
+            }
+            return CommandResult.rejected("NOT_AT_WAR",
+                    "Your army's realm is not a belligerent in the war over " + target.name + ".");
+        }
+
+        boolean registered = siege.isBesiegingArmy(mine.id);
+        boolean physicallyReady = mine.currentSettlementId == siege.settlementId
+                && mine.state != Army.ArmyState.TRAVELING
+                && mine.state != Army.ArmyState.ENGAGED
+                && mine.order == Army.ArmyOrder.BESIEGE;
+        if (!registered && physicallyReady) {
+            // An allied army that marched in with BESIEGE orders joins formally
+            // when its commander calls the assault.
+            simulation.getWarSystem().beginOrJoinSiege(mine, target, war, minute);
+            registered = true;
+        }
+        boolean participating = false;
+        for (Army besieger : simulation.getWarSystem().activeBesiegingArmies(siege, minute)) {
+            if (besieger.id == mine.id) { participating = true; break; }
+        }
+        if (!participating) {
+            return CommandResult.rejected(registered ? "NOT_AT_SIEGE" : "NOT_BESIEGING",
+                    registered
+                            ? "Your army has joined the siege but is not in the siege lines at "
+                                    + target.name + " yet."
+                            : "Join the siege at " + target.name + " and arrive there before storming its walls.");
+        }
+        CommandResult result = simulation.getWarSystem().assaultSiege(siegeId, true, minute);
+        if (result.accepted && "SIEGE_ASSAULT_CAPTURED".equals(result.reasonCode)) {
+            // You personally took part in the storm, whether as lead or support.
             playerState.conquestContribution += 35.0;
         }
         refreshSnapshot();
@@ -1537,7 +1773,7 @@ public final class CampaignSession {
         localScene = new world.local.LocalSceneSimulation(world, playerState.currentSettlementId,
                 localWidth, localHeight);
         Person person = world.people.get(playerState.personId);
-        return new LocalPlayerState(person == null ? 100 : (int) Math.round(person.health.healthLevel),
+        return new LocalPlayerState(person == null ? 100 : playerHealthPercent(),
                 playerState.currentSettlementId);
     }
 

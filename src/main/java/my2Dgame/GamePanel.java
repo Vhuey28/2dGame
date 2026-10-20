@@ -1496,6 +1496,11 @@ public class GamePanel extends JPanel implements Runnable{
 				showCampaignNotice("That army is gone - the world moved on.");
 				return;
 			}
+			world.command.CommandResult health = campaignSession.playerCanFight();
+			if (!health.accepted) {
+				showCampaignNotice(health.message);
+				return;
+			}
 			// Companions fight beside you, and their wounds and deaths are reconciled.
 			java.util.List<Long> companions = new java.util.ArrayList<>();
 			if (campaignSnapshot.player != null) {
@@ -1552,6 +1557,11 @@ public class GamePanel extends JPanel implements Runnable{
 				index++;
 			}
 			teleportPlayerForMap("map1.txt");
+			// The campaign health gate above proved the adventurer is alive, so
+			// clear any stale local death animation before restoring that health.
+			player.resetDeathState();
+			// Any health above zero is enough to fight, including while wounded.
+			syncCampaignPlayerHealthFromPerson();
 			// Bring the recruited companions onto the battlefield next to the player.
 			syncCampaignHeroesFromParty();
 			int heroIndex = 0;
@@ -3399,8 +3409,10 @@ System.nanoTime();
 			g2.drawString("Yours: " + mine.strength + " troops, morale "
 					+ Math.round(mine.morale) + "%", x + 10, textY);
 			textY += 15;
-			g2.drawString("Grain " + mine.grain + (mine.daysWithoutFood > 0
-					? "  (" + mine.daysWithoutFood + "d unfed)" : ""), x + 10, textY);
+			g2.drawString("Health " + campaignSnapshot.player.healthPercent + "%"
+					+ (campaignSnapshot.player.wounded ? " (wounded)" : "")
+					+ " | Grain " + mine.grain + (mine.daysWithoutFood > 0
+					? " (" + mine.daysWithoutFood + "d unfed)" : ""), x + 10, textY);
 			textY += 18;
 		} else {
 			g2.setColor(new Color(255, 190, 140));
@@ -3605,6 +3617,14 @@ System.nanoTime();
 								+ " of " + army.routeRoadIds.size())
 						+ "   |   at " + settlementName(campaignSnapshot, army.currentSettlementId), x + 20, y + 179);
 				if (isYourArmy) {
+					if (campaignSnapshot.player != null) {
+						g2.setColor(campaignSnapshot.player.canFight()
+								? new Color(170, 230, 175) : new Color(255, 150, 130));
+						g2.drawString("Your health " + campaignSnapshot.player.healthPercent + "%"
+								+ (campaignSnapshot.player.wounded ? " (wounded)" : "")
+								+ " - any health above 0% can fight", x + 20, y + 197);
+						g2.setColor(Color.WHITE);
+					}
 					addContextButton(g2, "SUPPLY_ARMY", "Feed 5 grain", x + 173, y + 210, 132, 44);
 					addContextButton(g2, "VIEW_ARMY_PEOPLE", "View soldiers", x + 326, y + 210, 132, 44);
 					CampaignSnapshot.SettlementView orderTarget = selectedCampaignSettlementId == null
@@ -3617,14 +3637,35 @@ System.nanoTime();
 					g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 					addContextButton(g2, "ORDER_MOVE", "Move", x + 20, y + 274, 104, 32);
 					addContextButton(g2, "ORDER_DEFEND", "Defend", x + 132, y + 274, 104, 32);
-					addContextButton(g2, "ORDER_BESIEGE", "Besiege", x + 244, y + 274, 104, 32);
+					CampaignSnapshot.SiegeView targetSiege = orderTarget == null ? null
+							: campaignSnapshot.findActiveSiegeAt(orderTarget.id);
+					boolean occupiedByYourRealm = orderTarget != null
+							&& orderTarget.occupyingRealmId != null
+							&& orderTarget.occupyingRealmId.longValue() == army.realmId;
+					boolean targetSiegeJoinable = targetSiege != null
+							&& (targetSiege.playerArmyCanJoin || targetSiege.playerArmyJoined);
+					boolean targetHeldByYourRealm = orderTarget != null
+							&& orderTarget.realmId != null
+							&& orderTarget.realmId.longValue() == army.realmId;
+					String siegeOrderLabel = occupiedByYourRealm ? "Occupied"
+							: targetSiege != null && targetHeldByYourRealm ? "Besieged"
+							: !targetSiegeJoinable ? "Start siege"
+							: targetSiege.playerArmyAtSiege ? "In siege"
+							: targetSiege.playerArmyJoined ? "Joining siege" : "Join siege";
+					addContextButton(g2, "ORDER_BESIEGE", siegeOrderLabel, x + 244, y + 274, 104, 32);
 					addContextButton(g2, "ORDER_RAID", "Raid", x + 356, y + 274, 100, 32);
 					addContextButton(g2, "ORDER_HOME", "March home", x + 20, y + 314, 122, 32);
 					int buttonX = 150;
 					CampaignSnapshot.SiegeView siegeHere = campaignSnapshot.findActiveSiegeAt(
 							army.currentSettlementId);
-					if (siegeHere != null) {
+					if (siegeHere != null && siegeHere.playerArmyAtSiege) {
 						addContextButton(g2, "ASSAULT_SIEGE", "Storm the walls", x + buttonX, y + 314, 142, 32);
+						buttonX += 150;
+					} else if (siegeHere != null
+							&& (siegeHere.playerArmyCanJoin || siegeHere.playerArmyJoined)) {
+						addContextButton(g2, "JOIN_SIEGE_HERE",
+								siegeHere.playerArmyJoined ? "Siege joined" : "Join siege here",
+								x + buttonX, y + 314, 142, 32);
 						buttonX += 150;
 					}
 					addContextButton(g2, "RELEASE_COMMAND",
@@ -3796,6 +3837,14 @@ System.nanoTime();
 		}
 		if ("RELEASE_COMMAND".equals(clicked)) {
 			result = campaignSession.relinquishCommand();
+		}
+		if ("JOIN_SIEGE_HERE".equals(clicked) && selectedCampaignActorId != null) {
+			world.Army yourArmy = campaignSession.getWorld().armies.get(selectedCampaignActorId);
+			CampaignSnapshot.SiegeView siege = yourArmy == null ? null
+					: campaignSnapshot.findActiveSiegeAt(yourArmy.currentSettlementId);
+			result = siege == null
+					? world.command.CommandResult.rejected("INVALID_SIEGE", "There is no active siege here")
+					: campaignSession.joinSiege(siege.id);
 		}
 		if ("ASSAULT_SIEGE".equals(clicked) && selectedCampaignActorId != null) {
 			world.Army yourArmy = campaignSession.getWorld().armies.get(selectedCampaignActorId);
@@ -4222,6 +4271,9 @@ System.nanoTime();
 					} else if (entry.getKey().startsWith("CLAIM_HOLDING:")) {
 						result = campaignSession.claimHolding(
 								Long.parseLong(entry.getKey().substring("CLAIM_HOLDING:".length())));
+					} else if (entry.getKey().startsWith("JOIN_SIEGE:")) {
+						result = campaignSession.joinSiege(
+								Long.parseLong(entry.getKey().substring("JOIN_SIEGE:".length())));
 					} else if (entry.getKey().startsWith("STORM_SIEGE:")) {
 						result = campaignSession.assaultSiege(
 								Long.parseLong(entry.getKey().substring("STORM_SIEGE:".length())));
@@ -4431,6 +4483,9 @@ System.nanoTime();
 			switch (type) {
 				case "WAR_DECLARED": return "A war is declared";
 				case "SIEGE_STARTED": return "A siege begins";
+				case "SIEGE_JOINED": return "Another army joins a siege";
+				case "SIEGE_COMMAND_CHANGED": return "A supporting army takes over a siege";
+				case "PLAYER_SIEGE_STARTED": return "Your army lays siege";
 				case "SETTLEMENT_OCCUPIED": return "A settlement is occupied";
 				case "SIEGE_CIVILIAN_DIED": return "A civilian starves in a besieged settlement";
 				case "PEACE_ENFORCED": return "Peace is enforced";
@@ -4478,6 +4533,9 @@ System.nanoTime();
 			switch (type) {
 				case "WAR_DECLARED":
 				case "SIEGE_STARTED":
+				case "SIEGE_JOINED":
+				case "SIEGE_COMMAND_CHANGED":
+				case "PLAYER_SIEGE_STARTED":
 				case "SETTLEMENT_OCCUPIED":
 				case "BATTLE_RECONCILED":
 				case "BATTLE_CONTEXT_CREATED":
@@ -4511,6 +4569,8 @@ System.nanoTime();
 			switch (type) {
 				case "WAR_DECLARED":
 				case "SIEGE_STARTED":
+				case "SIEGE_JOINED":
+				case "PLAYER_SIEGE_STARTED":
 				case "SETTLEMENT_OCCUPIED":
 				case "PEACE_ENFORCED":
 				case "TREATY_SIGNED":
@@ -4694,6 +4754,7 @@ System.nanoTime();
 				"  N / M      sell 5 grain / 5 vegetables",
 				"  C          accept the first contract offered",
 				"  K          attack the selected enemy army with yours",
+				"  Health > 0 you may attack or siege even while wounded",
 				"  R          (in battle) withdraw / call off pursuit",
 				"  1/2/3      after a rout: pursue, mercy, demand surrender",
 				"  1 / 2 / 3  speed: 1x, 1 hour/s, 1 day/s",
@@ -4734,9 +4795,10 @@ System.nanoTime();
 				"  Right-click a settlement you stand in and raise a",
 				"  company: 35c and one weapon per volunteer, your purse.",
 				"  Right-click your army (gold ring) for orders: move,",
-				"  defend, besiege, raid, march home, storm the walls.",
-				"  Besieging needs a war - as ruler, declare one on the WAR",
-				"  tab. A ruler may also take command of a realm army.",
+				"  defend, start/join a siege, raid, march home, storm.",
+				"  Besieging needs an active war against the settlement's",
+				"  realm. On the WAR tab, Join an allied siege; Storm it",
+				"  after your army arrives. Extra armies strengthen it.",
 				"  K attacks a selected enemy army with yours, as a battle",
 				"  you fight yourself. Kill or rout every standing enemy,",
 				"  or break them by losses and commander kills. If you fall,",
@@ -5825,8 +5887,9 @@ System.nanoTime();
 						if (!siege.isActive()) continue;
 						g2.setColor(siege.involvesPlayerRealm ? new Color(255, 170, 90) : Color.WHITE);
 						g2.drawString(siege.besiegerRealmName + " besieges " + siege.settlementName
-							+ " (held by " + siege.defenderRealmName + ")  -  " + siege.besiegerStrength
-							+ " troops, day " + siege.daysRunning, 32, y);
+								+ " (held by " + siege.defenderRealmName + ")  -  " + siege.besiegerStrength
+								+ " in lines / " + siege.besiegerCount + " committed, day "
+								+ siege.daysRunning, 32, y);
 						y += 14;
 						g2.setColor(Color.LIGHT_GRAY);
 						g2.drawString("Breach " + Math.round(siege.breachProgress)
@@ -5863,12 +5926,33 @@ System.nanoTime();
 						}
 					}
 					if (!snapshot.sieges.isEmpty()) {
+						g2.setColor(new Color(222, 204, 155));
+						g2.setFont(new Font("SansSerif", Font.BOLD, 12));
+						g2.drawString("JOIN / STORM", 590, panelY + 40);
+						g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.drawString(snapshot.player == null ? ""
+								: "HP " + snapshot.player.healthPercent + "% (fight > 0%)", 590, panelY + 54);
+						g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 						int sy = panelY + 64;
 						for (CampaignSnapshot.SiegeView siege : snapshot.sieges) {
 							if (!siege.isActive()) continue;
+							// Only offer Join for a siege whose war actually puts
+							// your commanded army on the besieging side. Backend
+							// checks still explain health, route, and army state.
+							if (!siege.playerArmyAtSiege && !siege.playerArmyJoined
+									&& !siege.playerArmyCanJoin) continue;
 							Rectangle button = new Rectangle(590, sy, 140, 20);
-							drawCampaignTabButton(g2, button, "Storm " + siege.settlementName);
-							kingdomManagementHitboxes.put("STORM_SIEGE:" + siege.id, button);
+							if (siege.playerArmyAtSiege) {
+								drawCampaignTabButton(g2, button, "Storm " + siege.settlementName);
+								kingdomManagementHitboxes.put("STORM_SIEGE:" + siege.id, button);
+							} else if (siege.playerArmyJoined) {
+								drawCampaignTabButton(g2, button, "Joining " + siege.settlementName);
+								kingdomManagementHitboxes.put("JOIN_SIEGE:" + siege.id, button);
+							} else {
+								drawCampaignTabButton(g2, button, "Join " + siege.settlementName);
+								kingdomManagementHitboxes.put("JOIN_SIEGE:" + siege.id, button);
+							}
 							sy += 24;
 							if (sy > panelY + panelHeight - 20) break;
 						}

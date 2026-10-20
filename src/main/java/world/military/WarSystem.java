@@ -2,7 +2,9 @@ package world.military;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import world.Army;
 import world.Household;
@@ -149,10 +151,177 @@ public final class WarSystem {
     }
 
     /**
+     * Creates a siege for an army already in position, or registers that army
+     * as a supporting participant in the active siege at the same settlement.
+     * CampaignSession validates the player's health, command, and war before
+     * calling this; the daily simulation uses the same path for AI armies.
+     */
+    public Siege beginOrJoinSiege(Army army, Settlement settlement, War war, long minute) {
+        if (army == null || settlement == null || war == null) return null;
+        Siege existing = findActiveSiege(war.id, settlement.id);
+        if (existing != null) {
+            if (existing.addSupportingArmy(army.id)) {
+                context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "SIEGE_JOINED",
+                        realmName(army.realmId) + " joins the siege of " + settlement.name));
+            }
+            return existing;
+        }
+        Siege siege = new Siege(world.idGenerator.next(), war.id, army.id, settlement.id, minute);
+        world.sieges.put(siege.id, siege);
+        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "SIEGE_STARTED",
+                realmName(army.realmId) + " lays siege to " + settlement.name));
+        return siege;
+    }
+
+    public Siege findActiveSiege(long warId, long settlementId) {
+        for (Siege siege : world.sieges.values()) {
+            if (siege.warId == warId && siege.settlementId == settlementId
+                    && siege.state == Siege.SiegeState.ACTIVE) return siege;
+        }
+        return null;
+    }
+
+    /**
+     * Registered armies that are physically in the siege lines right now.
+     * Armies still marching to join remain registered as supporters but do not
+     * contribute strength or casualties until they arrive with BESIEGE orders.
+     */
+    public List<Army> activeBesiegingArmies(Siege siege, long minute) {
+        War war = siege == null ? null : world.wars.get(siege.warId);
+        Settlement settlement = siege == null ? null : world.geography.getSettlement(siege.settlementId);
+        if (siege == null || war == null || settlement == null) return new ArrayList<>();
+        return refreshBesiegingArmies(siege, war, settlement, minute);
+    }
+
+    private List<Army> refreshBesiegingArmies(Siege siege, War war, Settlement settlement, long minute) {
+        List<Army> active = new ArrayList<>();
+        for (Long armyId : new ArrayList<>(siege.besiegingArmyIds())) {
+            Army army = armyId == null ? null : world.armies.get(armyId);
+            boolean primary = armyId != null && armyId.longValue() == siege.besiegingArmyId;
+            if (army == null || army.state == Army.ArmyState.DISBANDED
+                    || army.order != Army.ArmyOrder.BESIEGE || military.strength(army) <= 0
+                    || !isBesiegerSide(war, army, settlement)) {
+                if (!primary && armyId != null) siege.supportingArmyIds.remove(armyId);
+                continue;
+            }
+            if (isArmyInSiegePosition(army, settlement.id)) active.add(army);
+        }
+        active.sort(Comparator.comparingLong(army -> army.id));
+
+        Army primary = world.armies.get(siege.besiegingArmyId);
+        boolean primaryActive = primary != null && active.contains(primary);
+        if (!primaryActive && !active.isEmpty()) {
+            Army replacement = strongestArmy(active);
+            siege.besiegingArmyId = replacement.id;
+            siege.supportingArmyIds.remove(replacement.id);
+            context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute,
+                    "SIEGE_COMMAND_CHANGED", realmName(replacement.realmId)
+                            + " takes over the siege of " + settlement.name));
+        }
+        return active;
+    }
+
+    private boolean isArmyInSiegePosition(Army army, long settlementId) {
+        return army != null && army.state != Army.ArmyState.DISBANDED
+                && army.state != Army.ArmyState.TRAVELING
+                && army.state != Army.ArmyState.ENGAGED
+                && army.order == Army.ArmyOrder.BESIEGE
+                && army.currentSettlementId == settlementId
+                && military.strength(army) > 0;
+    }
+
+    private boolean hasBesiegerMarchingToJoin(Siege siege, War war, Settlement settlement) {
+        for (Long armyId : siege.besiegingArmyIds()) {
+            Army army = armyId == null ? null : world.armies.get(armyId);
+            if (army == null || army.state == Army.ArmyState.DISBANDED
+                    || army.order != Army.ArmyOrder.BESIEGE || military.strength(army) <= 0
+                    || !isBesiegerSide(war, army, settlement)) continue;
+            if (army.destinationSettlementId != null
+                    && army.destinationSettlementId.longValue() == settlement.id) return true;
+        }
+        return false;
+    }
+
+    private boolean isBesiegerSide(War war, Army army, Settlement settlement) {
+        return army != null && settlement != null && settlement.controllerRealmId != null
+                && war != null && war.opposing(army.realmId, settlement.controllerRealmId.longValue())
+                // Once the besieging side physically occupies the settlement,
+                // it must claim it or settle peace - not start the same siege
+                // again and farm another capture. An occupier this army also
+                // opposes in the war remains a legitimate siege target.
+                && (settlement.occupyingRealmId == null
+                        || war.opposing(army.realmId, settlement.occupyingRealmId.longValue()));
+    }
+
+    private boolean sameWarSide(War war, long firstRealmId, long secondRealmId) {
+        return war.attackerRealmIds.contains(firstRealmId)
+                && war.attackerRealmIds.contains(secondRealmId)
+                || war.defenderRealmIds.contains(firstRealmId)
+                && war.defenderRealmIds.contains(secondRealmId);
+    }
+
+    private Army strongestArmy(List<Army> armies) {
+        Army strongest = null;
+        int strongestStrength = -1;
+        for (Army army : armies) {
+            int strength = military.strength(army);
+            if (strength > strongestStrength || strength == strongestStrength
+                    && strongest != null && army.id < strongest.id) {
+                strongest = army;
+                strongestStrength = strength;
+            }
+        }
+        return strongest;
+    }
+
+    private int totalStrength(List<Army> armies) {
+        int total = 0;
+        for (Army army : armies) total += Math.max(0, military.strength(army));
+        return total;
+    }
+
+    /** Splits a joint assault's losses across participating armies in proportion to strength. */
+    private void applyDistributedCasualties(List<Army> armies, int totalLosses, long minute) {
+        if (armies.isEmpty() || totalLosses <= 0) return;
+        if (armies.size() == 1) {
+            military.applyFieldCasualties(armies.get(0).id, totalLosses, minute);
+            return;
+        }
+        int totalStrength = totalStrength(armies);
+        if (totalStrength <= 0) return;
+        int[] allocations = new int[armies.size()];
+        double[] remainders = new double[armies.size()];
+        int allocated = 0;
+        for (int i = 0; i < armies.size(); i++) {
+            double exact = totalLosses * (double) military.strength(armies.get(i)) / totalStrength;
+            allocations[i] = (int) Math.floor(exact);
+            remainders[i] = exact - allocations[i];
+            allocated += allocations[i];
+        }
+        List<Integer> byRemainder = new ArrayList<>();
+        for (int i = 0; i < armies.size(); i++) byRemainder.add(i);
+        byRemainder.sort((a, b) -> {
+            int byFraction = Double.compare(remainders[b], remainders[a]);
+            return byFraction != 0 ? byFraction : Long.compare(armies.get(a).id, armies.get(b).id);
+        });
+        int cursor = 0;
+        while (allocated < totalLosses) {
+            allocations[byRemainder.get(cursor % byRemainder.size())]++;
+            allocated++;
+            cursor++;
+        }
+        for (int i = 0; i < armies.size(); i++) {
+            if (allocations[i] > 0) {
+                military.applyFieldCasualties(armies.get(i).id, allocations[i], minute);
+            }
+        }
+    }
+
+    /**
      * Storms a besieged settlement instead of waiting for breach or resolve to run out.
-     * Costs the attacker heavily, damages the settlement, kills civilians, jumps breach
-     * progress, and captures the settlement when the breach completes. A player-led assault
-     * is better directed than a routine storm: more breach, fewer losses.
+     * Every army physically in the siege lines contributes strength and shares
+     * the losses. A player-led assault is better directed than a routine storm:
+     * more breach, fewer losses.
      */
     public CommandResult assaultSiege(long siegeId, boolean playerLed, long currentMinute) {
         Siege siege = world.sieges.get(siegeId);
@@ -160,21 +329,30 @@ public final class WarSystem {
             return CommandResult.rejected("INVALID_SIEGE", "There is no active siege to assault");
         }
         War war = world.wars.get(siege.warId);
-        Army besieger = world.armies.get(siege.besiegingArmyId);
         Settlement settlement = world.geography.getSettlement(siege.settlementId);
-        if (war == null || besieger == null || settlement == null) {
+        if (war == null || settlement == null) {
             return CommandResult.rejected("INVALID_SIEGE", "That siege has collapsed");
         }
-        int strength = military.strength(besieger);
-        if (strength <= 0) {
-            return CommandResult.rejected("NO_TROOPS", "The besieging army has no troops left to storm the walls");
+        List<Army> besiegers = refreshBesiegingArmies(siege, war, settlement, currentMinute);
+        if (besiegers.isEmpty()) {
+            return CommandResult.rejected("SIEGE_NOT_READY",
+                    hasBesiegerMarchingToJoin(siege, war, settlement)
+                            ? "No besieging army has reached the siege lines yet"
+                            : "No besieging army remains in position to storm the walls");
         }
+        int strength = totalStrength(besiegers);
+        if (strength <= 0) {
+            return CommandResult.rejected("NO_TROOPS", "The besieging armies have no troops left to storm the walls");
+        }
+        Army lead = strongestArmy(besiegers);
         double fortification = Math.max(5.0, settlement.security * 0.45);
         double push = (playerLed ? 30.0 : 20.0) + strength / fortification;
         siege.breachProgress += push;
-        siege.defenderResolve = Math.max(0.0, siege.defenderResolve - (playerLed ? 22.0 : 15.0));
+        double resolveLoss = (playerLed ? 22.0 : 15.0)
+                + Math.min(6.0, Math.max(0, besiegers.size() - 1) * 2.0);
+        siege.defenderResolve = Math.max(0.0, siege.defenderResolve - resolveLoss);
         int attackerLosses = Math.max(1, (int) Math.round(strength * (playerLed ? 0.10 : 0.14)));
-        military.applyFieldCasualties(besieger.id, attackerLosses, currentMinute);
+        applyDistributedCasualties(besiegers, attackerLosses, currentMinute);
         settlement.security = Math.max(0.0, settlement.security - 0.05);
         settlement.unrest = Math.min(1.0, settlement.unrest + 0.06);
         int civilianDeaths = 0;
@@ -183,58 +361,87 @@ public final class WarSystem {
         }
         siege.civilianDeaths += civilianDeaths;
         context.eventBus.publish(new WorldEvent(world.idGenerator.next(), currentMinute, "SIEGE_ASSAULT",
-                (playerLed ? "You storm " : realmName(besieger.realmId) + " storms ") + settlement.name
+                (playerLed ? "You storm " : realmName(lead.realmId) + " storms ") + settlement.name
+                        + " with " + besiegers.size() + " besieging arm" + (besiegers.size() == 1 ? "y" : "ies")
                         + " - " + attackerLosses + " attackers and " + civilianDeaths + " civilians die"));
         if (siege.breachProgress >= 100.0 || siege.defenderResolve <= 0.0) {
-            captureSettlement(war, siege, besieger, settlement, currentMinute);
+            captureSettlement(war, siege, besiegers, settlement, currentMinute);
             return new CommandResult(true, "SIEGE_ASSAULT_CAPTURED",
-                    settlement.name + " is stormed and falls. Your losses: " + attackerLosses
+                    settlement.name + " is stormed and falls. Besieger losses: " + attackerLosses
                             + ". Occupation is not ownership - claim it before peace returns it.");
         }
         return new CommandResult(true, "SIEGE_ASSAULT",
                 "The assault on " + settlement.name + " pushes the breach to "
-                        + Math.round(siege.breachProgress) + "%. Your losses: " + attackerLosses);
+                        + Math.round(siege.breachProgress) + "%. Besieger losses: " + attackerLosses);
     }
 
     private void startEligibleSieges(War war, long minute) {
-        for (Army army : world.armies.values()) {
-            if (army.state == Army.ArmyState.DISBANDED || army.order != Army.ArmyOrder.BESIEGE
-                    || !war.attackerRealmIds.contains(army.realmId)) continue;
+        List<Army> armies = new ArrayList<>(world.armies.values());
+        armies.sort(Comparator.comparingLong(army -> army.id));
+        for (Army army : armies) {
+            if (!isArmyInSiegePosition(army, army.currentSettlementId)) continue;
             Settlement settlement = world.geography.getSettlement(army.currentSettlementId);
-            if (settlement == null || settlement.controllerRealmId == null
-                    || !war.defenderRealmIds.contains(settlement.controllerRealmId)) continue;
-            boolean exists = world.sieges.values().stream().anyMatch(siege -> siege.warId == war.id
-                    && siege.settlementId == settlement.id && siege.state == Siege.SiegeState.ACTIVE);
-            if (!exists) {
-                Siege siege = new Siege(world.idGenerator.next(), war.id, army.id, settlement.id, minute);
-                world.sieges.put(siege.id, siege);
-                context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "SIEGE_STARTED",
-                        realmName(army.realmId) + " lays siege to " + settlement.name));
-            }
+            if (settlement == null || !isBesiegerSide(war, army, settlement)) continue;
+            beginOrJoinSiege(army, settlement, war, minute);
         }
     }
 
     private void processSiege(War war, Siege siege, long minute) {
-        Army besieger = world.armies.get(siege.besiegingArmyId);
         Settlement settlement = world.geography.getSettlement(siege.settlementId);
-        if (besieger == null || settlement == null || besieger.state == Army.ArmyState.DISBANDED
-                || besieger.currentSettlementId != settlement.id) {
+        if (settlement == null || settlement.controllerRealmId == null) {
             siege.state = Siege.SiegeState.ABANDONED;
             siege.endMinute = minute;
             return;
         }
-        Army relief = world.armies.values().stream().filter(army -> army.id != besieger.id
-                && war.defenderRealmIds.contains(army.realmId)
-                && army.currentSettlementId == settlement.id
-                && army.state != Army.ArmyState.DISBANDED).findFirst().orElse(null);
-        if (relief != null) {
-            BattleReport battle = military.autoResolveEncounter(besieger.id, relief.id, minute);
-            if (battle != null && battle.winnerArmyId == relief.id) {
+        List<Army> besiegers = refreshBesiegingArmies(siege, war, settlement, minute);
+        if (besiegers.isEmpty()) {
+            // A registered army marching to take over the lines keeps the siege
+            // legally alive, but it makes no progress until somebody arrives.
+            if (hasBesiegerMarchingToJoin(siege, war, settlement)) return;
+            siege.state = Siege.SiegeState.ABANDONED;
+            siege.endMinute = minute;
+            return;
+        }
+
+        Army lead = strongestArmy(besiegers);
+        Army relief = null;
+        int reliefStrength = -1;
+        for (Army army : world.armies.values()) {
+            if (siege.isBesiegingArmy(army.id)
+                    || !sameWarSide(war, army.realmId, settlement.controllerRealmId.longValue())
+                    || army.currentSettlementId != settlement.id
+                    || army.state == Army.ArmyState.DISBANDED
+                    || army.state == Army.ArmyState.TRAVELING) continue;
+            int strength = military.strength(army);
+            if (strength > reliefStrength || strength == reliefStrength
+                    && relief != null && army.id < relief.id) {
+                relief = army;
+                reliefStrength = strength;
+            }
+        }
+        if (lead != null && relief != null && reliefStrength > 0) {
+            BattleReport battle = military.autoResolveEncounter(lead.id, relief.id, minute);
+            boolean reliefWon = battle != null && battle.winnerArmyId == relief.id;
+            besiegers = refreshBesiegingArmies(siege, war, settlement, minute);
+            if (reliefWon && besiegers.isEmpty()) {
                 siege.state = Siege.SiegeState.RELIEVED;
                 siege.endMinute = minute;
-                war.defenderScore += 12.0;
+                if (war.attackerRealmIds.contains(settlement.controllerRealmId.longValue())) {
+                    war.attackerScore = Math.min(100.0, war.attackerScore + 12.0);
+                } else {
+                    war.defenderScore = Math.min(100.0, war.defenderScore + 12.0);
+                }
                 return;
             }
+            if (besiegers.isEmpty()) {
+                if (hasBesiegerMarchingToJoin(siege, war, settlement)) return;
+                siege.state = Siege.SiegeState.ABANDONED;
+                siege.endMinute = minute;
+                return;
+            }
+            // If the relief force beat the lead army but another registered
+            // besieger is still in position, refreshBesiegingArmies has handed
+            // command to that supporter and the siege lines hold for today.
         }
 
         int civilians = settlementPopulation(settlement.id);
@@ -257,26 +464,56 @@ public final class WarSystem {
                 if (days % 3L == 0L && killCivilian(settlement.id, minute)) siege.civilianDeaths++;
             }
         }
-        int strength = military.strength(besieger);
+        int strength = totalStrength(besiegers);
         double fortification = Math.max(5.0, settlement.security * 0.45);
-        siege.breachProgress += Math.max(0.5, strength / fortification) + (100.0 - siege.defenderResolve) * 0.015;
-        if (siege.breachProgress >= 100.0 || siege.defenderResolve <= 0.0) captureSettlement(war, siege, besieger, settlement, minute);
+        siege.breachProgress += Math.max(0.5, strength / fortification)
+                + (100.0 - siege.defenderResolve) * 0.015;
+        if (siege.breachProgress >= 100.0 || siege.defenderResolve <= 0.0) {
+            captureSettlement(war, siege, besiegers, settlement, minute);
+        }
     }
 
-    private void captureSettlement(War war, Siege siege, Army army, Settlement settlement, long minute) {
-        settlement.occupyingRealmId = army.realmId;
+    private void captureSettlement(War war, Siege siege, List<Army> besiegers,
+            Settlement settlement, long minute) {
+        Army occupier = strongestArmy(besiegers);
+        if (occupier == null) {
+            siege.state = Siege.SiegeState.ABANDONED;
+            siege.endMinute = minute;
+            return;
+        }
+        settlement.occupyingRealmId = occupier.realmId;
         Province province = world.geography.getProvince(settlement.provinceId);
         if (province != null && province.settlementIds.stream().allMatch(id -> {
             Settlement member = world.geography.getSettlement(id);
-            return member != null && (member.controllerRealmId == army.realmId
-                    || member.occupyingRealmId != null && member.occupyingRealmId == army.realmId);
-        })) province.occupyingRealmId = army.realmId;
+            return member != null && (member.controllerRealmId == occupier.realmId
+                    || member.occupyingRealmId != null && member.occupyingRealmId == occupier.realmId);
+        })) province.occupyingRealmId = occupier.realmId;
         siege.state = Siege.SiegeState.CAPTURED;
         siege.endMinute = minute;
-        war.attackerScore = Math.min(100.0, war.attackerScore + 35.0);
-        war.contributionByRealm.merge(army.realmId, 35.0, Double::sum);
+
+        if (war.attackerRealmIds.contains(occupier.realmId)) {
+            war.attackerScore = Math.min(100.0, war.attackerScore + 35.0);
+        } else if (war.defenderRealmIds.contains(occupier.realmId)) {
+            war.defenderScore = Math.min(100.0, war.defenderScore + 35.0);
+        }
+        Map<Long, Integer> strengthByRealm = new HashMap<>();
+        int total = 0;
+        for (Army besieger : besiegers) {
+            int strength = Math.max(0, military.strength(besieger));
+            strengthByRealm.merge(besieger.realmId, strength, Integer::sum);
+            total += strength;
+        }
+        if (total <= 0) {
+            war.contributionByRealm.merge(occupier.realmId, 35.0, Double::sum);
+        } else {
+            for (Map.Entry<Long, Integer> entry : strengthByRealm.entrySet()) {
+                if (entry.getValue() <= 0) continue;
+                war.contributionByRealm.merge(entry.getKey(),
+                        35.0 * entry.getValue() / total, Double::sum);
+            }
+        }
         context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "SETTLEMENT_OCCUPIED",
-                settlement.name + " falls to " + realmName(army.realmId)));
+                settlement.name + " falls to " + realmName(occupier.realmId)));
     }
 
     private void processBattleReports(War war) {

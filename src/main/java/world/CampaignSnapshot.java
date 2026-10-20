@@ -342,6 +342,14 @@ public final class CampaignSnapshot {
                     ? world.player.travelDestinationSettlementId : null;
             Settlement travelDestination = travelDestinationId == null
                     ? null : world.geography.getSettlement(travelDestinationId);
+            Person playerPerson = world.people.get(world.player.personId);
+            boolean playerHasHealthToFight = playerPerson != null && playerPerson.alive
+                    && playerPerson.health != null && playerPerson.health.healthLevel > 0.0;
+            int playerHealthPercent = !playerHasHealthToFight ? 0
+                    : Math.max(1, Math.min(100,
+                            (int) Math.round(playerPerson.health.healthLevel)));
+            boolean playerWounded = playerPerson != null && playerPerson.health != null
+                    && playerPerson.health.wounded;
             playerView = new PlayerView(world.player.currentSettlementId, coins,
                     world.player.cargo.getQuantity(GoodType.GRAIN),
                     world.player.cargo.getQuantity(GoodType.VEGETABLES),
@@ -356,7 +364,8 @@ public final class CampaignSnapshot {
                             : world.player.realmReputation.getOrDefault(affiliatedRealmId, 0),
                     playerWorldX, playerWorldY, world.player.isTraveling(), travelDestinationId,
                     travelDestination == null ? null : travelDestination.name,
-                    world.player.travelSpeedPerHour, playerTravelEtaMinutes(world));
+                    world.player.travelSpeedPerHour, playerTravelEtaMinutes(world),
+                    playerHealthPercent, playerHasHealthToFight, playerWounded);
         }
 
         List<EventView> eventViews = new ArrayList<>();
@@ -399,15 +408,53 @@ public final class CampaignSnapshot {
             Settlement besieged = world.geography.getSettlement(siege.settlementId);
             Army besieger = world.armies.get(siege.besiegingArmyId);
             War siegeWar = world.wars.get(siege.warId);
+            List<Long> besiegingArmyIds = siege.besiegingArmyIds();
+            int activeBesiegerStrength = 0;
+            for (Long besiegingArmyId : besiegingArmyIds) {
+                Army participant = besiegingArmyId == null ? null : world.armies.get(besiegingArmyId);
+                // Match WarSystem: a registered army contributes only once it
+                // is physically in the siege lines under BESIEGE orders. An
+                // army still marching to join is committed, but not counted yet.
+                boolean inSiegeLines = participant != null
+                        && participant.currentSettlementId == siege.settlementId
+                        && participant.state != Army.ArmyState.TRAVELING
+                        && participant.state != Army.ArmyState.DISBANDED
+                        && participant.state != Army.ArmyState.ENGAGED
+                        && participant.order == Army.ArmyOrder.BESIEGE;
+                if (inSiegeLines) {
+                    activeBesiegerStrength += countRegimentSoldiers(world, participant);
+                }
+            }
+            Long commandedArmyId = world.player == null ? null : world.player.commandedArmyId;
+            Army playerArmy = commandedArmyId == null ? null : world.armies.get(commandedArmyId);
+            boolean playerArmyJoined = commandedArmyId != null && siege.isBesiegingArmy(commandedArmyId);
+            boolean playerArmyAtSiege = playerArmyJoined && playerArmy != null
+                    && playerArmy.currentSettlementId == siege.settlementId
+                    && playerArmy.state != Army.ArmyState.TRAVELING
+                    && playerArmy.state != Army.ArmyState.DISBANDED
+                    && playerArmy.state != Army.ArmyState.ENGAGED
+                    && playerArmy.order == Army.ArmyOrder.BESIEGE;
+            boolean playerArmyCanJoin = playerArmy != null
+                    && playerArmy.state != Army.ArmyState.DISBANDED
+                    && playerArmy.state != Army.ArmyState.ENGAGED
+                    && playerArmy.state != Army.ArmyState.ROUTED
+                    && countRegimentSoldiers(world, playerArmy) > 0
+                    && siegeWar != null && siegeWar.state == War.WarState.ACTIVE
+                    && besieged != null && besieged.controllerRealmId != null
+                    && siegeWar.opposing(playerArmy.realmId, besieged.controllerRealmId.longValue())
+                    && (besieged.occupyingRealmId == null
+                            || siegeWar.opposing(playerArmy.realmId,
+                                    besieged.occupyingRealmId.longValue()));
             siegeViews.add(new SiegeView(siege.id, siege.warId, siege.settlementId,
                     besieged == null ? "Unknown settlement" : besieged.name,
                     realmName(world, besieged == null ? null : besieged.controllerRealmId),
                     siege.besiegingArmyId, realmName(world, besieger == null ? null : besieger.realmId),
-                    besieger == null ? 0 : countRegimentSoldiers(world, besieger),
+                    activeBesiegerStrength,
                     siege.state.toString(), siege.breachProgress, siege.defenderResolve,
                     siege.foodConsumed, siege.civilianDeaths, daysSince(siege.startMinute, minute),
                     siegeWar == null ? null : siegeWar.goal.toString(),
-                    involvesPlayerRealmSiege(world, siege)));
+                    involvesPlayerRealmSiege(world, siege), besiegingArmyIds,
+                    playerArmyJoined, playerArmyAtSiege, playerArmyCanJoin));
         }
         siegeViews.sort((a, b) -> {
             boolean firstActive = "ACTIVE".equals(a.state);
@@ -496,10 +543,16 @@ public final class CampaignSnapshot {
 
     private static boolean involvesPlayerRealmSiege(WorldState world, Siege siege) {
         if (world.player == null) return false;
-        Army besieger = world.armies.get(siege.besiegingArmyId);
+        if (world.player.commandedArmyId != null
+                && siege.isBesiegingArmy(world.player.commandedArmyId)) return true;
         Settlement besieged = world.geography.getSettlement(siege.settlementId);
         Long playerRealmId = world.player.affiliatedRealmId;
-        if (playerRealmId != null && besieger != null && besieger.realmId == playerRealmId) return true;
+        if (playerRealmId != null) {
+            for (Long besiegingArmyId : siege.besiegingArmyIds()) {
+                Army besieger = besiegingArmyId == null ? null : world.armies.get(besiegingArmyId);
+                if (besieger != null && besieger.realmId == playerRealmId.longValue()) return true;
+            }
+        }
         return besieged != null && besieged.controllerRealmId != null
                 && besieged.controllerRealmId == playerRealmId;
     }
@@ -739,9 +792,17 @@ public final class CampaignSnapshot {
         public final String travelDestinationName;
         public final double travelSpeedPerHour;
         public final long travelEtaMinutes;
+        /** Strategic health; wounded players may fight at any value above zero. */
+        public final int healthPercent;
+        public final boolean hasHealthToFight;
+        public final boolean wounded;
 
         public boolean isCaptive() {
             return captiveDaysRemaining > 0;
+        }
+
+        public boolean canFight() {
+            return hasHealthToFight && !isCaptive();
         }
 
         PlayerView(long settlementId, long coins, int grain, int vegetables,
@@ -751,7 +812,8 @@ public final class CampaignSnapshot {
                 int captiveDaysRemaining, long ransomCoins, String captorRealmName,
                 Long commandedArmyId, int realmReputation,
                 double worldX, double worldY, boolean traveling, Long travelDestinationSettlementId,
-                String travelDestinationName, double travelSpeedPerHour, long travelEtaMinutes) {
+                String travelDestinationName, double travelSpeedPerHour, long travelEtaMinutes,
+                int healthPercent, boolean hasHealthToFight, boolean wounded) {
             this.settlementId = settlementId;
             this.coins = coins;
             this.grain = grain;
@@ -778,6 +840,9 @@ public final class CampaignSnapshot {
             this.travelDestinationName = travelDestinationName;
             this.travelSpeedPerHour = travelSpeedPerHour;
             this.travelEtaMinutes = travelEtaMinutes;
+            this.healthPercent = healthPercent;
+            this.hasHealthToFight = hasHealthToFight;
+            this.wounded = wounded;
         }
     }
 
@@ -1031,11 +1096,20 @@ public final class CampaignSnapshot {
         public final long daysRunning;
         public final String warGoal;
         public final boolean involvesPlayerRealm;
+        public final List<Long> besiegingArmyIds;
+        /** Armies committed to the siege, including any still marching to join. */
+        public final int besiegerCount;
+        public final boolean playerArmyJoined;
+        public final boolean playerArmyAtSiege;
+        /** The commanded army is on this siege's besieging side in an active war. */
+        public final boolean playerArmyCanJoin;
 
         SiegeView(long id, long warId, long settlementId, String settlementName, String defenderRealmName,
                 long besiegingArmyId, String besiegerRealmName, int besiegerStrength, String state,
                 double breachProgress, double defenderResolve, int foodConsumed, int civilianDeaths,
-                long daysRunning, String warGoal, boolean involvesPlayerRealm) {
+                long daysRunning, String warGoal, boolean involvesPlayerRealm,
+                List<Long> besiegingArmyIds, boolean playerArmyJoined, boolean playerArmyAtSiege,
+                boolean playerArmyCanJoin) {
             this.id = id;
             this.warId = warId;
             this.settlementId = settlementId;
@@ -1052,6 +1126,11 @@ public final class CampaignSnapshot {
             this.daysRunning = daysRunning;
             this.warGoal = warGoal;
             this.involvesPlayerRealm = involvesPlayerRealm;
+            this.besiegingArmyIds = Collections.unmodifiableList(new ArrayList<>(besiegingArmyIds));
+            this.besiegerCount = this.besiegingArmyIds.size();
+            this.playerArmyJoined = playerArmyJoined;
+            this.playerArmyAtSiege = playerArmyAtSiege;
+            this.playerArmyCanJoin = playerArmyCanJoin;
         }
 
         public boolean isActive() {

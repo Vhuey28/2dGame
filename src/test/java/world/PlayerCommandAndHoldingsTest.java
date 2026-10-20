@@ -214,6 +214,11 @@ class PlayerCommandAndHoldingsTest {
 
         War war = new War(world.idGenerator.next(), attacker.id, defender.id, War.WarGoal.PUNITIVE, minute);
         world.wars.put(war.id, war);
+        besieger.currentSettlementId = target.id;
+        besieger.destinationSettlementId = target.id;
+        besieger.order = Army.ArmyOrder.BESIEGE;
+        besieger.state = Army.ArmyState.MUSTERED;
+        besieger.position = new world.geography.WorldPosition(target.position.x, target.position.y);
         Siege siege = new Siege(world.idGenerator.next(), war.id, besieger.id, target.id, minute);
         world.sieges.put(siege.id, siege);
 
