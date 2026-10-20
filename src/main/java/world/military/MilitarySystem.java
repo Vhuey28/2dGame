@@ -12,6 +12,7 @@ import world.SimulationContext;
 import world.WorldState;
 import world.command.CommandResult;
 import world.economy.GoodType;
+import world.economy.MoneyAccount;
 import world.economy.Workplace;
 import world.event.WorldEvent;
 import world.geography.Road;
@@ -22,6 +23,8 @@ import world.politics.Government;
 /** Recruitment, strategic movement, supply, encounters, losses, and demobilization. */
 public final class MilitarySystem {
     private static final long RECRUITMENT_COST = 20L;
+    /** A private company costs more per head than a realm levy: no conscription, no treasury. */
+    public static final long COMPANY_RECRUITMENT_COST = 35L;
     private final SimulationContext context;
     private final WorldState world;
     private final BattleBridge battleBridge;
@@ -87,6 +90,104 @@ public final class MilitarySystem {
         assignToArmy(army);
         context.eventBus.publish(new WorldEvent(world.idGenerator.next(), currentMinute, "ARMY_MUSTERED"));
         return CommandResult.accepted();
+    }
+
+    /**
+     * Raises a personal company for one commander, funded from that commander's own purse.
+     *
+     * <p>Unlike {@link #recruitRegiment} this needs neither a conscription law nor a realm
+     * treasury, so a landless adventurer can hire volunteers wherever the local smithy has
+     * weapons. The resulting army is flagged player-commanded (realm AI will not order it)
+     * and player-funded (upkeep comes from the purse, not a treasury).
+     */
+    public CommandResult raisePersonalCompany(long commanderPersonId, long settlementId, int requested,
+            Regiment.RegimentType type, MoneyAccount payer, long currentMinute) {
+        Settlement settlement = world.geography.getSettlement(settlementId);
+        Person commander = world.people.get(commanderPersonId);
+        if (settlement == null) return CommandResult.rejected("INVALID_MUSTER", "Settlement not found");
+        if (commander == null || !commander.alive) {
+            return CommandResult.rejected("INVALID_COMMANDER", "Commander not found");
+        }
+        if (commander.currentSettlementId == null || commander.currentSettlementId != settlementId) {
+            return CommandResult.rejected("NOT_PRESENT", "Travel to the settlement to raise a company");
+        }
+        if (settlement.occupyingRealmId != null
+                && !settlement.occupyingRealmId.equals(settlement.controllerRealmId)) {
+            return CommandResult.rejected("OCCUPIED", "An occupying power controls this settlement");
+        }
+        if (payer == null) return CommandResult.rejected("INVALID_STATE", "There is no purse to pay from");
+        if (requested <= 0) return CommandResult.rejected("INVALID_STRENGTH", "Company size must be positive");
+
+        List<Person> eligible = eligibleResidents(settlementId, currentMinute);
+        int equipmentAvailable = settlement.publicStockpile.getQuantity(GoodType.WEAPONS);
+        int affordable = (int) Math.min(Integer.MAX_VALUE, payer.copperCoins / COMPANY_RECRUITMENT_COST);
+        int count = Math.min(requested, Math.min(eligible.size(), Math.min(equipmentAvailable, affordable)));
+        if (count <= 0) {
+            return CommandResult.rejected("RECRUITMENT_RESOURCES",
+                    "Needs volunteers, a weapon each, and " + COMPANY_RECRUITMENT_COST + "c each from your purse"
+                            + " (volunteers " + eligible.size() + ", weapons " + equipmentAvailable
+                            + ", affordable " + affordable + ")");
+        }
+
+        Long ownerRealmId = settlement.controllerRealmId;
+        long companyRealmId = ownerRealmId == null ? -1L : ownerRealmId;
+        Regiment regiment = new Regiment(world.idGenerator.next(), companyRealmId, type, settlementId);
+        regiment.equipmentQuality = type == Regiment.RegimentType.LEVY_INFANTRY ? 40 : 55;
+        regiment.dailyPayPerSoldier = 3L;
+        for (int i = 0; i < count; i++) {
+            Person person = eligible.get(i);
+            removeFromCivilianJob(person);
+            person.regimentId = regiment.id;
+            person.preMilitaryType = person.type;
+            person.type = Person.PersonType.SOLDIER;
+            person.travelingPartyId = null;
+            regiment.soldierPersonIds.add(person.id);
+        }
+        regiment.officerPersonId = commanderPersonId;
+        world.regiments.put(regiment.id, regiment);
+        settlement.publicStockpile.remove(GoodType.WEAPONS, count);
+        long cost = count * COMPANY_RECRUITMENT_COST;
+        payer.subtract(cost);
+        settlement.treasury.add(cost);
+
+        Army army = new Army(world.idGenerator.next(), companyRealmId, commanderPersonId, settlementId,
+                new WorldPosition(settlement.position.x, settlement.position.y));
+        army.regimentIds.add(regiment.id);
+        army.order = Army.ArmyOrder.DEFEND;
+        army.playerCommanded = true;
+        army.playerFunded = true;
+        army.morale = 60.0;
+        // A short recruitment ration; after that the commander has to keep it fed.
+        transferSupply(settlement, army, GoodType.GRAIN, count * 6);
+        transferSupply(settlement, army, GoodType.VEGETABLES, count * 2);
+        world.armies.put(army.id, army);
+        assignToArmy(army);
+        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), currentMinute, "ARMY_MUSTERED",
+                (commander.givenName + " " + commander.familyName).trim() + " raises a company of "
+                        + count + " at " + settlement.name));
+        return new CommandResult(true, "COMPANY_RAISED",
+                "You raise a company of " + count + " for " + cost + "c");
+    }
+
+    /** Applies casualties from outside the encounter loop: assaults, ambushes, skirmishes. */
+    public CommandResult applyFieldCasualties(long armyId, int casualties, long currentMinute) {
+        Army army = world.armies.get(armyId);
+        if (army == null || army.state == Army.ArmyState.DISBANDED) {
+            return CommandResult.rejected("INVALID_ARMY", "Army is not active");
+        }
+        applyCasualties(army, Math.max(0, casualties), currentMinute);
+        return CommandResult.accepted();
+    }
+
+    /** The active army this person commands, or null if they command none. */
+    public Army armyCommandedBy(long commanderPersonId) {
+        Army newest = null;
+        for (Army army : world.armies.values()) {
+            if (army.commanderPersonId != commanderPersonId
+                    || army.state == Army.ArmyState.DISBANDED) continue;
+            if (newest == null || army.id > newest.id) newest = army;
+        }
+        return newest;
     }
 
     public CommandResult issueMoveOrder(long armyId, long destinationSettlementId,
@@ -157,6 +258,8 @@ public final class MilitarySystem {
         for (Army army : new ArrayList<>(world.armies.values())) {
             if (army.state == Army.ArmyState.DISBANDED) continue;
             Realm realm = world.realms.get(army.realmId);
+            MoneyAccount purse = army.playerFunded ? playerPurse() : null;
+            MoneyAccount payer = army.playerFunded ? purse : (realm == null ? null : realm.treasury);
             for (Long regimentId : army.regimentIds) {
                 Regiment regiment = world.regiments.get(regimentId);
                 if (regiment == null || !regiment.active) continue;
@@ -164,11 +267,14 @@ public final class MilitarySystem {
                     Person soldier = world.people.get(personId);
                     if (soldier == null || !soldier.alive) continue;
                     long pay = regiment.dailyPayPerSoldier * 30L;
-                    if (realm != null && realm.treasury.subtract(pay)) {
+                    if (payer != null && payer.subtract(pay)) {
                         Household household = soldier.householdId == null ? null : world.households.get(soldier.householdId);
                         if (household != null) household.account.add(pay);
                         soldier.militaryExperience = Math.min(100.0, soldier.militaryExperience + 1.0);
-                    } else army.morale = clamp(army.morale - 3.0);
+                    } else {
+                        // An unpaid company loses morale twice as fast as an unpaid levy.
+                        army.morale = clamp(army.morale - (army.playerFunded ? 6.0 : 3.0));
+                    }
                 }
             }
         }
@@ -220,6 +326,13 @@ public final class MilitarySystem {
     }
 
     public int strength(Army army) { return summarize(army).strength; }
+
+    /** The adventurer's purse, or null when there is no campaign player. */
+    private MoneyAccount playerPurse() {
+        if (world.player == null) return null;
+        world.WorldParty party = world.parties.get(world.player.partyId);
+        return party == null ? null : party.money;
+    }
 
     private List<Person> eligibleResidents(long settlementId, long minute) {
         List<Person> people = new ArrayList<>();

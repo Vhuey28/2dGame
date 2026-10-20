@@ -12,6 +12,8 @@ public final class Title {
     public Rank rank;
     public long realmId;
     public Long deJureProvinceId;
+    /** The settlement this title was minted from, for land won by conquest. */
+    public Long settlementId;
     public Long holderPersonId;
     public final Set<Long> claimIds = new HashSet<>();
     public final List<HolderRecord> holderHistory = new ArrayList<>();

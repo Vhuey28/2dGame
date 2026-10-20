@@ -44,6 +44,12 @@ public final class CampaignSnapshot {
     public final List<CrimeView> crimes;
     public final PlayerView player;
     public final List<EventView> recentEvents;
+    /** Active and recent wars, so the UI can explain who is fighting whom and why. */
+    public final List<WarView> wars;
+    /** Every siege, active first, with its breach/resolve/food/civilian progress. */
+    public final List<SiegeView> sieges;
+    /** Titles the player holds plus the crowns of every realm, for the holdings panel. */
+    public final List<TitleView> titles;
 
     private CampaignSnapshot(long worldMinute, int speed, boolean paused,
             int livingPopulation, int householdCount, int armyCount,
@@ -52,7 +58,8 @@ public final class CampaignSnapshot {
             List<RealmView> realms, List<SettlementView> settlements,
             List<RoadView> roads, List<CaravanView> caravans, List<ArmyView> armies,
             List<ContractView> contracts, List<PersonView> people, List<CrimeView> crimes,
-            PlayerView player, List<EventView> recentEvents) {
+            PlayerView player, List<EventView> recentEvents,
+            List<WarView> wars, List<SiegeView> sieges, List<TitleView> titles) {
         this.worldMinute = worldMinute;
         this.speed = speed;
         this.paused = paused;
@@ -74,6 +81,9 @@ public final class CampaignSnapshot {
         this.crimes = Collections.unmodifiableList(crimes);
         this.player = player;
         this.recentEvents = Collections.unmodifiableList(recentEvents);
+        this.wars = Collections.unmodifiableList(wars);
+        this.sieges = Collections.unmodifiableList(sieges);
+        this.titles = Collections.unmodifiableList(titles);
     }
 
     public static CampaignSnapshot capture(WorldSimulation simulation) {
@@ -204,7 +214,9 @@ public final class CampaignSnapshot {
             }
             armyViews.add(new ArmyView(army.id, army.realmId, army.position.x, army.position.y,
                     strength, army.morale, army.fatigue,
-                    army.supplies.getQuantity(GoodType.GRAIN), army.order.toString(), army.state.toString()));
+                    army.supplies.getQuantity(GoodType.GRAIN), army.order.toString(), army.state.toString(),
+                    army.currentSettlementId, army.destinationSettlementId,
+                    army.daysWithoutFood, army.playerCommanded));
         }
         armyViews.sort(Comparator.comparingLong(view -> view.id));
 
@@ -268,6 +280,8 @@ public final class CampaignSnapshot {
                 }
             }
             Realm affiliatedRealm = affiliatedRealmId == null ? null : world.realms.get(affiliatedRealmId);
+            Realm captorRealm = world.player.captorRealmId == null
+                    ? null : world.realms.get(world.player.captorRealmId);
             playerView = new PlayerView(world.player.currentSettlementId, coins,
                     world.player.cargo.getQuantity(GoodType.GRAIN),
                     world.player.cargo.getQuantity(GoodType.VEGETABLES),
@@ -276,7 +290,10 @@ public final class CampaignSnapshot {
                             : new ArrayList<>(playerParty.memberPersonIds),
                     world.player.acceptedContractIds.size(), affiliatedRealmId,
                     kingdomRole.toString(), affiliatedRealm == null ? null : affiliatedRealm.name,
-                    playerIsRuler);
+                    playerIsRuler, world.player.captiveDaysRemaining(minute), world.player.ransomCoins,
+                    captorRealm == null ? null : captorRealm.name, world.player.commandedArmyId,
+                    affiliatedRealmId == null ? 0
+                            : world.player.realmReputation.getOrDefault(affiliatedRealmId, 0));
         }
 
         List<EventView> eventViews = new ArrayList<>();
@@ -284,7 +301,7 @@ public final class CampaignSnapshot {
         int first = Math.max(0, events.size() - 6);
         for (int i = first; i < events.size(); i++) {
             WorldEvent event = events.get(i);
-            eventViews.add(new EventView(event.worldMinute, event.type));
+            eventViews.add(new EventView(event.eventId, event.worldMinute, event.type, event.detail));
         }
 
         int activeTreaties = 0;
@@ -297,11 +314,151 @@ public final class CampaignSnapshot {
         for (Siege siege : world.sieges.values()) {
             if (siege.state == Siege.SiegeState.ACTIVE) activeSieges++;
         }
+        List<WarView> warViews = new ArrayList<>();
+        for (War war : world.wars.values()) {
+            warViews.add(new WarView(war.id, war.goal.toString(), war.state.toString(),
+                    realmNames(world, war.attackerRealmIds), realmNames(world, war.defenderRealmIds),
+                    war.attackerScore, war.defenderScore, war.attackerExhaustion, war.defenderExhaustion,
+                    provinceName(world, war.targetProvinceId), titleName(world, war.targetTitleId),
+                    contributions(world, war.contributionByRealm), war.startMinute,
+                    daysSince(war.startMinute, minute), war.declarationReason,
+                    involvesPlayerRealm(world, war)));
+        }
+        warViews.sort((first, second) -> {
+            boolean firstActive = "ACTIVE".equals(first.state);
+            boolean secondActive = "ACTIVE".equals(second.state);
+            if (firstActive != secondActive) return firstActive ? -1 : 1;
+            return Long.compare(first.id, second.id);
+        });
+
+        List<SiegeView> siegeViews = new ArrayList<>();
+        for (Siege siege : world.sieges.values()) {
+            Settlement besieged = world.geography.getSettlement(siege.settlementId);
+            Army besieger = world.armies.get(siege.besiegingArmyId);
+            War siegeWar = world.wars.get(siege.warId);
+            siegeViews.add(new SiegeView(siege.id, siege.warId, siege.settlementId,
+                    besieged == null ? "Unknown settlement" : besieged.name,
+                    realmName(world, besieged == null ? null : besieged.controllerRealmId),
+                    siege.besiegingArmyId, realmName(world, besieger == null ? null : besieger.realmId),
+                    besieger == null ? 0 : countRegimentSoldiers(world, besieger),
+                    siege.state.toString(), siege.breachProgress, siege.defenderResolve,
+                    siege.foodConsumed, siege.civilianDeaths, daysSince(siege.startMinute, minute),
+                    siegeWar == null ? null : siegeWar.goal.toString(),
+                    involvesPlayerRealmSiege(world, siege)));
+        }
+        siegeViews.sort((first, second) -> {
+            boolean firstActive = "ACTIVE".equals(first.state);
+            boolean secondActive = "ACTIVE".equals(second.state);
+            if (firstActive != secondActive) return firstActive ? -1 : 1;
+            int byBreach = Double.compare(second.breachProgress, first.breachProgress);
+            return byBreach != 0 ? byBreach : Long.compare(first.id, second.id);
+        });
+
+        List<TitleView> titleViews = new ArrayList<>();
+        for (world.politics.Title title : world.titles.values()) {
+            Person holder = title.holderPersonId == null ? null : world.people.get(title.holderPersonId);
+            int liveClaims = 0;
+            for (Long claimId : title.claimIds) {
+                world.politics.Claim claim = world.claims.get(claimId);
+                if (claim != null && (claim.expiryMinute == null || claim.expiryMinute > minute)) liveClaims++;
+            }
+            world.geography.Settlement holding = title.settlementId == null
+                    ? null : world.geography.getSettlement(title.settlementId);
+            titleViews.add(new TitleView(title.id, title.name, title.rank.toString(), title.realmId,
+                    realmName(world, title.realmId), title.holderPersonId,
+                    holder == null ? "Vacant" : (holder.givenName + " " + holder.familyName).trim(),
+                    provinceName(world, title.deJureProvinceId), liveClaims,
+                    world.player != null && title.holderPersonId != null
+                            && title.holderPersonId == world.player.personId,
+                    isRealmCrown(world, title),
+                    holding == null ? null : holding.name,
+                    CampaignSession.dailyRent(title, holding)));
+        }
+        titleViews.sort((first, second) -> {
+            if (first.heldByPlayer != second.heldByPlayer) return first.heldByPlayer ? -1 : 1;
+            if (first.isCrown != second.isCrown) return first.isCrown ? -1 : 1;
+            return Long.compare(first.id, second.id);
+        });
+
         return new CampaignSnapshot(minute, simulation.getClock().getSpeed(),
                 simulation.getClock().isPaused(), living, world.households.size(),
                 armyViews.size(), world.caravans.size(), activeWars, activeTreaties, activeSieges, averageFood,
                 realmViews, settlementViews, roadViews, caravanViews, armyViews,
-                contractViews, personViews, crimeViews, playerView, eventViews);
+                contractViews, personViews, crimeViews, playerView, eventViews,
+                warViews, siegeViews, titleViews);
+    }
+
+    private static long daysSince(long startMinute, long currentMinute) {
+        return Math.max(0L, (currentMinute - startMinute) / WorldConfig.MINUTES_PER_DAY);
+    }
+
+    private static String realmName(WorldState world, Long realmId) {
+        if (realmId == null) return null;
+        Realm realm = world.realms.get(realmId);
+        return realm == null ? "Realm #" + realmId : realm.name;
+    }
+
+    private static List<String> realmNames(WorldState world, Set<Long> realmIds) {
+        List<String> names = new ArrayList<>();
+        for (Long realmId : realmIds) names.add(realmName(world, realmId));
+        Collections.sort(names);
+        return names;
+    }
+
+    private static String provinceName(WorldState world, Long provinceId) {
+        if (provinceId == null) return null;
+        world.geography.Province province = world.geography.getProvince(provinceId);
+        return province == null ? "Province #" + provinceId : province.name;
+    }
+
+    private static String titleName(WorldState world, Long titleId) {
+        if (titleId == null) return null;
+        world.politics.Title title = world.titles.get(titleId);
+        return title == null ? "Title #" + titleId : title.name;
+    }
+
+    private static List<String> contributions(WorldState world, java.util.Map<Long, Double> contributionByRealm) {
+        List<String> lines = new ArrayList<>();
+        for (java.util.Map.Entry<Long, Double> entry : contributionByRealm.entrySet()) {
+            lines.add(realmName(world, entry.getKey()) + " " + Math.round(entry.getValue()));
+        }
+        Collections.sort(lines);
+        return lines;
+    }
+
+    private static boolean involvesPlayerRealm(WorldState world, War war) {
+        if (world.player == null || world.player.affiliatedRealmId == null) return false;
+        return war.includes(world.player.affiliatedRealmId);
+    }
+
+    private static boolean involvesPlayerRealmSiege(WorldState world, Siege siege) {
+        if (world.player == null) return false;
+        Army besieger = world.armies.get(siege.besiegingArmyId);
+        Settlement besieged = world.geography.getSettlement(siege.settlementId);
+        Long playerRealmId = world.player.affiliatedRealmId;
+        if (playerRealmId != null && besieger != null && besieger.realmId == playerRealmId) return true;
+        return besieged != null && besieged.controllerRealmId != null
+                && besieged.controllerRealmId == playerRealmId;
+    }
+
+    private static int countRegimentSoldiers(WorldState world, Army army) {
+        int total = 0;
+        for (Long regimentId : army.regimentIds) {
+            world.military.Regiment regiment = world.regiments.get(regimentId);
+            if (regiment == null || !regiment.active) continue;
+            for (Long personId : regiment.soldierPersonIds) {
+                Person soldier = world.people.get(personId);
+                if (soldier != null && soldier.alive) total++;
+            }
+        }
+        return total;
+    }
+
+    private static boolean isRealmCrown(WorldState world, world.politics.Title title) {
+        for (Realm realm : world.realms.values()) {
+            if (realm.rulerTitleId == title.id) return true;
+        }
+        return false;
     }
 
     private static java.util.Map<String, Integer> snapshotLaws(Government government) {
@@ -463,11 +620,24 @@ public final class CampaignSnapshot {
         public final String kingdomRole;
         public final String kingdomName;
         public final boolean canManageKingdom;
+        /** Days of remaining captivity; zero while free. */
+        public final int captiveDaysRemaining;
+        public final long ransomCoins;
+        public final String captorRealmName;
+        /** Army the adventurer personally commands, if any. */
+        public final Long commandedArmyId;
+        public final int realmReputation;
+
+        public boolean isCaptive() {
+            return captiveDaysRemaining > 0;
+        }
 
         PlayerView(long settlementId, long coins, int grain, int vegetables,
                 int cargoUsed, int cargoCapacity, int reputation,
                 List<Long> partyMemberIds, int activeContracts, Long affiliatedRealmId,
-                String kingdomRole, String kingdomName, boolean canManageKingdom) {
+                String kingdomRole, String kingdomName, boolean canManageKingdom,
+                int captiveDaysRemaining, long ransomCoins, String captorRealmName,
+                Long commandedArmyId, int realmReputation) {
             this.settlementId = settlementId;
             this.coins = coins;
             this.grain = grain;
@@ -482,6 +652,11 @@ public final class CampaignSnapshot {
             this.kingdomRole = kingdomRole;
             this.kingdomName = kingdomName;
             this.canManageKingdom = canManageKingdom;
+            this.captiveDaysRemaining = captiveDaysRemaining;
+            this.ransomCoins = ransomCoins;
+            this.captorRealmName = captorRealmName;
+            this.commandedArmyId = commandedArmyId;
+            this.realmReputation = realmReputation;
         }
     }
 
@@ -606,9 +781,17 @@ public final class CampaignSnapshot {
         public final int grain;
         public final String order;
         public final String state;
+        /** Where the army stands right now, and where it is marching, for the order UI. */
+        public final Long currentSettlementId;
+        public final Long destinationSettlementId;
+        public final int daysWithoutFood;
+        /** True when the adventurer personally commands this army. */
+        public final boolean playerCommanded;
 
         ArmyView(long id, long realmId, double worldX, double worldY, int strength,
-                double morale, double fatigue, int grain, String order, String state) {
+                double morale, double fatigue, int grain, String order, String state,
+                Long currentSettlementId, Long destinationSettlementId,
+                int daysWithoutFood, boolean playerCommanded) {
             this.id = id;
             this.realmId = realmId;
             this.worldX = worldX;
@@ -619,16 +802,188 @@ public final class CampaignSnapshot {
             this.grain = grain;
             this.order = order;
             this.state = state;
+            this.currentSettlementId = currentSettlementId;
+            this.destinationSettlementId = destinationSettlementId;
+            this.daysWithoutFood = daysWithoutFood;
+            this.playerCommanded = playerCommanded;
         }
     }
 
     public static final class EventView {
+        /** World event id, so the UI can show a notification exactly once. */
+        public final long eventId;
         public final long worldMinute;
         public final String type;
+        /** Player-readable detail when the publishing system supplied one; may be null. */
+        public final String detail;
 
-        EventView(long worldMinute, String type) {
+        EventView(long eventId, long worldMinute, String type, String detail) {
+            this.eventId = eventId;
             this.worldMinute = worldMinute;
             this.type = type;
+            this.detail = detail;
         }
+    }
+
+    /** One war: who is fighting, why, how it is going, and whether the player's realm is in it. */
+    public static final class WarView {
+        public final long id;
+        public final String goal;
+        public final String state;
+        public final List<String> attackerNames;
+        public final List<String> defenderNames;
+        public final double attackerScore;
+        public final double defenderScore;
+        public final double attackerExhaustion;
+        public final double defenderExhaustion;
+        public final String targetProvinceName;
+        public final String targetTitleName;
+        public final List<String> contributions;
+        public final long startMinute;
+        public final long daysRunning;
+        public final String declarationReason;
+        public final boolean involvesPlayerRealm;
+
+        WarView(long id, String goal, String state, List<String> attackerNames, List<String> defenderNames,
+                double attackerScore, double defenderScore, double attackerExhaustion,
+                double defenderExhaustion, String targetProvinceName, String targetTitleName,
+                List<String> contributions, long startMinute, long daysRunning, String declarationReason,
+                boolean involvesPlayerRealm) {
+            this.id = id;
+            this.goal = goal;
+            this.state = state;
+            this.attackerNames = Collections.unmodifiableList(new ArrayList<>(attackerNames));
+            this.defenderNames = Collections.unmodifiableList(new ArrayList<>(defenderNames));
+            this.attackerScore = attackerScore;
+            this.defenderScore = defenderScore;
+            this.attackerExhaustion = attackerExhaustion;
+            this.defenderExhaustion = defenderExhaustion;
+            this.targetProvinceName = targetProvinceName;
+            this.targetTitleName = targetTitleName;
+            this.contributions = Collections.unmodifiableList(new ArrayList<>(contributions));
+            this.startMinute = startMinute;
+            this.daysRunning = daysRunning;
+            this.declarationReason = declarationReason;
+            this.involvesPlayerRealm = involvesPlayerRealm;
+        }
+
+        public boolean isActive() {
+            return "ACTIVE".equals(state);
+        }
+
+        public String belligerents() {
+            return String.join(", ", attackerNames) + " vs " + String.join(", ", defenderNames);
+        }
+    }
+
+    /** One siege with the progress the simulation is actually tracking. */
+    public static final class SiegeView {
+        public final long id;
+        public final long warId;
+        public final long settlementId;
+        public final String settlementName;
+        public final String defenderRealmName;
+        public final long besiegingArmyId;
+        public final String besiegerRealmName;
+        public final int besiegerStrength;
+        public final String state;
+        public final double breachProgress;
+        public final double defenderResolve;
+        public final int foodConsumed;
+        public final int civilianDeaths;
+        public final long daysRunning;
+        public final String warGoal;
+        public final boolean involvesPlayerRealm;
+
+        SiegeView(long id, long warId, long settlementId, String settlementName, String defenderRealmName,
+                long besiegingArmyId, String besiegerRealmName, int besiegerStrength, String state,
+                double breachProgress, double defenderResolve, int foodConsumed, int civilianDeaths,
+                long daysRunning, String warGoal, boolean involvesPlayerRealm) {
+            this.id = id;
+            this.warId = warId;
+            this.settlementId = settlementId;
+            this.settlementName = settlementName;
+            this.defenderRealmName = defenderRealmName;
+            this.besiegingArmyId = besiegingArmyId;
+            this.besiegerRealmName = besiegerRealmName;
+            this.besiegerStrength = besiegerStrength;
+            this.state = state;
+            this.breachProgress = breachProgress;
+            this.defenderResolve = defenderResolve;
+            this.foodConsumed = foodConsumed;
+            this.civilianDeaths = civilianDeaths;
+            this.daysRunning = daysRunning;
+            this.warGoal = warGoal;
+            this.involvesPlayerRealm = involvesPlayerRealm;
+        }
+
+        public boolean isActive() {
+            return "ACTIVE".equals(state);
+        }
+    }
+
+    /** A legal title: rank, holder, de jure province, and how many live claims contest it. */
+    public static final class TitleView {
+        public final long id;
+        public final String name;
+        public final String rank;
+        public final long realmId;
+        public final String realmName;
+        public final Long holderPersonId;
+        public final String holderName;
+        public final String deJureProvinceName;
+        public final int claimCount;
+        public final boolean heldByPlayer;
+        public final boolean isCrown;
+        /** The settlement a conquered holding covers, and what it pays its holder per day. */
+        public final String settlementName;
+        public final long rentPerDay;
+
+        TitleView(long id, String name, String rank, long realmId, String realmName, Long holderPersonId,
+                String holderName, String deJureProvinceName, int claimCount, boolean heldByPlayer,
+                boolean isCrown, String settlementName, long rentPerDay) {
+            this.id = id;
+            this.name = name;
+            this.rank = rank;
+            this.realmId = realmId;
+            this.realmName = realmName;
+            this.holderPersonId = holderPersonId;
+            this.holderName = holderName;
+            this.settlementName = settlementName;
+            this.rentPerDay = rentPerDay;
+            this.deJureProvinceName = deJureProvinceName;
+            this.claimCount = claimCount;
+            this.heldByPlayer = heldByPlayer;
+            this.isCrown = isCrown;
+        }
+    }
+
+    public WarView findWar(long id) {
+        for (WarView war : wars) if (war.id == id) return war;
+        return null;
+    }
+
+    public SiegeView findSiege(long id) {
+        for (SiegeView siege : sieges) if (siege.id == id) return siege;
+        return null;
+    }
+
+    public SiegeView findActiveSiegeAt(long settlementId) {
+        for (SiegeView siege : sieges) {
+            if (siege.settlementId == settlementId && siege.isActive()) return siege;
+        }
+        return null;
+    }
+
+    public TitleView findTitle(long id) {
+        for (TitleView title : titles) if (title.id == id) return title;
+        return null;
+    }
+
+    /** Titles the adventurer personally holds — their fiefs. */
+    public List<TitleView> playerTitles() {
+        List<TitleView> held = new ArrayList<>();
+        for (TitleView title : titles) if (title.heldByPlayer) held.add(title);
+        return held;
     }
 }

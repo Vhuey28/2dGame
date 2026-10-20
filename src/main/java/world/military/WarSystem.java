@@ -72,7 +72,9 @@ public final class WarSystem {
             }
         }
         attacker.stability = Math.max(0.0, attacker.stability - 2.0);
-        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), currentMinute, "WAR_DECLARED"));
+        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), currentMinute, "WAR_DECLARED",
+                attacker.name + " declares war on " + defender.name + " "
+                        + goalLabel(goal, targetProvinceId, targetTitleId)));
         return CommandResult.accepted();
     }
 
@@ -146,6 +148,54 @@ public final class WarSystem {
         return CommandResult.accepted();
     }
 
+    /**
+     * Storms a besieged settlement instead of waiting for breach or resolve to run out.
+     * Costs the attacker heavily, damages the settlement, kills civilians, jumps breach
+     * progress, and captures the settlement when the breach completes. A player-led assault
+     * is better directed than a routine storm: more breach, fewer losses.
+     */
+    public CommandResult assaultSiege(long siegeId, boolean playerLed, long currentMinute) {
+        Siege siege = world.sieges.get(siegeId);
+        if (siege == null || siege.state != Siege.SiegeState.ACTIVE) {
+            return CommandResult.rejected("INVALID_SIEGE", "There is no active siege to assault");
+        }
+        War war = world.wars.get(siege.warId);
+        Army besieger = world.armies.get(siege.besiegingArmyId);
+        Settlement settlement = world.geography.getSettlement(siege.settlementId);
+        if (war == null || besieger == null || settlement == null) {
+            return CommandResult.rejected("INVALID_SIEGE", "That siege has collapsed");
+        }
+        int strength = military.strength(besieger);
+        if (strength <= 0) {
+            return CommandResult.rejected("NO_TROOPS", "The besieging army has no troops left to storm the walls");
+        }
+        double fortification = Math.max(5.0, settlement.security * 0.45);
+        double push = (playerLed ? 30.0 : 20.0) + strength / fortification;
+        siege.breachProgress += push;
+        siege.defenderResolve = Math.max(0.0, siege.defenderResolve - (playerLed ? 22.0 : 15.0));
+        int attackerLosses = Math.max(1, (int) Math.round(strength * (playerLed ? 0.10 : 0.14)));
+        military.applyFieldCasualties(besieger.id, attackerLosses, currentMinute);
+        settlement.security = Math.max(0.0, settlement.security - 0.05);
+        settlement.unrest = Math.min(1.0, settlement.unrest + 0.06);
+        int civilianDeaths = 0;
+        for (int i = 0; i < Math.max(1, attackerLosses / 4); i++) {
+            if (killCivilian(settlement.id, currentMinute)) civilianDeaths++;
+        }
+        siege.civilianDeaths += civilianDeaths;
+        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), currentMinute, "SIEGE_ASSAULT",
+                (playerLed ? "You storm " : realmName(besieger.realmId) + " storms ") + settlement.name
+                        + " - " + attackerLosses + " attackers and " + civilianDeaths + " civilians die"));
+        if (siege.breachProgress >= 100.0 || siege.defenderResolve <= 0.0) {
+            captureSettlement(war, siege, besieger, settlement, currentMinute);
+            return new CommandResult(true, "SIEGE_ASSAULT_CAPTURED",
+                    settlement.name + " is stormed and falls. Your losses: " + attackerLosses
+                            + ". Occupation is not ownership - claim it before peace returns it.");
+        }
+        return new CommandResult(true, "SIEGE_ASSAULT",
+                "The assault on " + settlement.name + " pushes the breach to "
+                        + Math.round(siege.breachProgress) + "%. Your losses: " + attackerLosses);
+    }
+
     private void startEligibleSieges(War war, long minute) {
         for (Army army : world.armies.values()) {
             if (army.state == Army.ArmyState.DISBANDED || army.order != Army.ArmyOrder.BESIEGE
@@ -158,7 +208,8 @@ public final class WarSystem {
             if (!exists) {
                 Siege siege = new Siege(world.idGenerator.next(), war.id, army.id, settlement.id, minute);
                 world.sieges.put(siege.id, siege);
-                context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "SIEGE_STARTED"));
+                context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "SIEGE_STARTED",
+                        realmName(army.realmId) + " lays siege to " + settlement.name));
             }
         }
     }
@@ -224,7 +275,8 @@ public final class WarSystem {
         siege.endMinute = minute;
         war.attackerScore = Math.min(100.0, war.attackerScore + 35.0);
         war.contributionByRealm.merge(army.realmId, 35.0, Double::sum);
-        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "SETTLEMENT_OCCUPIED"));
+        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "SETTLEMENT_OCCUPIED",
+                settlement.name + " falls to " + realmName(army.realmId)));
     }
 
     private void processBattleReports(War war) {
@@ -280,6 +332,34 @@ public final class WarSystem {
         };
     }
 
+    /** Player-readable realm name for event details. */
+    private String realmName(Long realmId) {
+        Realm realm = realmId == null ? null : world.realms.get(realmId);
+        return realm == null ? "an unknown realm" : realm.name;
+    }
+
+    /** Player-readable war goal, naming the province or title it targets. */
+    private String goalLabel(War.WarGoal goal, Long provinceId, Long titleId) {
+        switch (goal) {
+            case CONQUER_PROVINCE: {
+                world.geography.Province province = provinceId == null
+                        ? null : world.geography.getProvince(provinceId);
+                return "to conquer " + (province == null ? "a province" : province.name);
+            }
+            case CLAIM_TITLE: {
+                world.politics.Title title = titleId == null ? null : world.titles.get(titleId);
+                return "to claim " + (title == null ? "a title" : title.name);
+            }
+            case INDEPENDENCE:
+                return "to win independence";
+            case VASSALIZE:
+                return "to demand vassalage";
+            case PUNITIVE:
+            default:
+                return "over a grievance";
+        }
+    }
+
     private boolean hasActiveGrievance(long offended, long offender) {
         return world.grievances.values().stream().anyMatch(grievance -> !grievance.resolved
                 && grievance.offendedRealmId == offended && grievance.offenderRealmId == offender);
@@ -303,8 +383,13 @@ public final class WarSystem {
         }
     }
 
-    private Army strongestArmy(long realmId) {
+    /**
+     * The strongest field army a realm can commit to a war. Armies the adventurer personally
+     * commands are excluded: realm AI must not order them about or spend them as its own.
+     */
+    public Army strongestArmy(long realmId) {
         return world.armies.values().stream().filter(army -> army.realmId == realmId
+                && !army.playerCommanded
                 && army.state != Army.ArmyState.DISBANDED && military.strength(army) > 0)
                 .max(Comparator.comparingInt(military::strength)).orElse(null);
     }
@@ -361,7 +446,10 @@ public final class WarSystem {
                 }
             }
         }
-        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "SIEGE_CIVILIAN_DIED"));
+        Settlement starvedOut = world.geography.getSettlement(settlementId);
+        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "SIEGE_CIVILIAN_DIED",
+                (starvedOut == null ? "A besieged settlement" : starvedOut.name)
+                        + " starves: " + victim.givenName + " " + victim.familyName));
         return true;
     }
 
@@ -437,7 +525,9 @@ public final class WarSystem {
         createTruce(offer.proposerRealmId, offer.recipientRealmId, minute);
         for (Long realmId : war.attackerRealmIds) resetRealmWarExhaustion(realmId);
         for (Long realmId : war.defenderRealmIds) resetRealmWarExhaustion(realmId);
-        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "PEACE_ENFORCED"));
+        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "PEACE_ENFORCED",
+                "Peace ends the war between " + realmName(offer.proposerRealmId) + " and "
+                        + realmName(offer.recipientRealmId)));
     }
 
     private void transferProvince(Long provinceId, long oldRealmId, long newRealmId) {

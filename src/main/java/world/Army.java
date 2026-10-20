@@ -32,6 +32,14 @@ public final class Army {
     public int daysWithoutFood;
     public final Set<Long> detectedArmyIds = new HashSet<>();
     public final Set<Long> prisonerPersonIds = new HashSet<>();
+    /**
+     * True when the adventurer commands this army: realm AI must not issue orders to it or
+     * pick it as a realm's field army. Independent of funding, so a king can command a
+     * realm-funded army and a landless adventurer can command a self-funded company.
+     */
+    public boolean playerCommanded;
+    /** True when upkeep is paid from the adventurer's own purse instead of a realm treasury. */
+    public boolean playerFunded;
 
     public Army(long id, long realmId, long commanderPersonId,
             long settlementId, WorldPosition position) {

@@ -72,6 +72,36 @@ public final class WorldInvariantValidator {
             }
             if (world.geography.getSettlement(crime.settlementId) == null) violations.add("crime " + crime.id + " has missing settlement");
         }
+        for (world.politics.Title title : world.titles.values()) {
+            if (title.holderPersonId != null && !world.people.containsKey(title.holderPersonId)) {
+                violations.add("title " + title.id + " has missing holder " + title.holderPersonId);
+            }
+            if (!world.realms.containsKey(title.realmId)) {
+                violations.add("title " + title.id + " has missing realm " + title.realmId);
+            }
+            if (title.settlementId != null && world.geography.getSettlement(title.settlementId) == null) {
+                violations.add("title " + title.id + " has missing settlement " + title.settlementId);
+            }
+            for (Long claimId : title.claimIds) {
+                if (!world.claims.containsKey(claimId)) {
+                    violations.add("title " + title.id + " has missing claim " + claimId);
+                }
+            }
+        }
+        for (world.politics.Claim claim : world.claims.values()) {
+            if (!world.titles.containsKey(claim.titleId)) {
+                violations.add("claim " + claim.id + " has missing title " + claim.titleId);
+            }
+            if (!world.people.containsKey(claim.claimantPersonId)) {
+                violations.add("claim " + claim.id + " has missing claimant " + claim.claimantPersonId);
+            }
+        }
+        for (world.diplomacy.Grievance grievance : world.grievances.values()) {
+            if (!world.realms.containsKey(grievance.offendedRealmId)
+                    || !world.realms.containsKey(grievance.offenderRealmId)) {
+                violations.add("grievance " + grievance.id + " has a missing realm");
+            }
+        }
         for (Road road : world.geography.getRouteGraph().getAllRoads()) {
             if (world.geography.getSettlement(road.fromSettlementId) == null
                     || world.geography.getSettlement(road.toSettlementId) == null) {

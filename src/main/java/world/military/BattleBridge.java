@@ -33,15 +33,28 @@ public final class BattleBridge {
 
     public BattleContext createContext(long attackerArmyId, long defenderArmyId,
             boolean playerInvolved, long strategicMinute) {
+        return createContext(attackerArmyId, defenderArmyId, playerInvolved,
+                java.util.Collections.<Long>emptyList(), strategicMinute);
+    }
+
+    /**
+     * Projects a strategic battle into tactical combatants. When the player leads the attack
+     * their travelling companions are projected in as well, so they fight - and can fall -
+     * beside the company instead of sitting out the war.
+     */
+    public BattleContext createContext(long attackerArmyId, long defenderArmyId, boolean playerInvolved,
+            List<Long> companionPersonIds, long strategicMinute) {
         Army attacker = requireArmy(attackerArmyId);
         Army defender = requireArmy(defenderArmyId);
         if (attacker.realmId == defender.realmId) throw new IllegalArgumentException("Battle sides must be hostile realms");
         if (attacker.state == Army.ArmyState.DISBANDED || defender.state == Army.ArmyState.DISBANDED) {
             throw new IllegalStateException("Disbanded armies cannot enter battle");
         }
+        BattleContext.BattleSide attackerSide = projectSide(attacker);
+        if (playerInvolved) attackerSide = addCompanions(attackerSide, attacker, companionPersonIds);
         long battleId = world.idGenerator.next();
         BattleContext contextSnapshot = new BattleContext(battleId, strategicMinute,
-                projectSide(attacker), projectSide(defender), terrainAt(attacker),
+                attackerSide, projectSide(defender), terrainAt(attacker),
                 weatherAt(strategicMinute), playerInvolved);
         world.battleContexts.put(battleId, contextSnapshot);
         attacker.state = Army.ArmyState.ENGAGED;
@@ -112,6 +125,12 @@ public final class BattleBridge {
                 projectedLoot(loser.armyId), experienceFor(battle), retreatFor(winner), durationMinutes);
     }
 
+    /** Player-readable realm name for event details. */
+    private String realmName(Army army) {
+        world.Realm realm = army == null ? null : world.realms.get(army.realmId);
+        return realm == null ? "An unknown force" : realm.name;
+    }
+
     public CommandResult reconcile(BattleResult result) {
         BattleContext battle = result == null ? null : world.battleContexts.get(result.battleId);
         if (battle == null) return CommandResult.rejected("UNKNOWN_BATTLE", "No matching immutable battle context");
@@ -144,9 +163,44 @@ public final class BattleBridge {
         }
         context.getClock().advance(result.tacticalDurationMinutes);
         long resolvedMinute = context.getClock().getWorldMinute();
-        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), resolvedMinute, "BATTLE_RECONCILED"));
+        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), resolvedMinute, "BATTLE_RECONCILED",
+                (winner == null ? "An indecisive battle ends" : realmName(winner) + " wins the battle")
+                        + " (" + attackerLosses + " losses vs " + defenderLosses + ")"));
         context.eventBus.publish(new WorldEvent(world.idGenerator.next(), resolvedMinute, "AUTOSAVE_SAFE_POINT"));
         return CommandResult.accepted();
+    }
+
+    /**
+     * Adds the player's companions to the attacking side. They belong to no regiment, so they
+     * carry regiment id -1; casualty handling already tolerates an unknown regiment.
+     */
+    private BattleContext.BattleSide addCompanions(BattleContext.BattleSide side, Army army,
+            List<Long> companionPersonIds) {
+        if (companionPersonIds == null || companionPersonIds.isEmpty()) return side;
+        // BattleSide.combatants is immutable, so build a replacement side instead of
+        // mutating it (adding to it would throw UnsupportedOperationException).
+        List<BattleContext.TacticalCombatant> combatants = new ArrayList<>(side.combatants);
+        for (Long personId : companionPersonIds) {
+            if (personId == null) continue;
+            boolean alreadyProjected = false;
+            for (BattleContext.TacticalCombatant combatant : combatants) {
+                if (combatant.sourcePersonId == personId) { alreadyProjected = true; break; }
+            }
+            if (alreadyProjected) continue;
+            Person person = world.people.get(personId);
+            if (person == null || !person.alive || person.capturedByRealmId != null) continue;
+            double martial = person.skills.martial / 250.0;
+            double experience = person.militaryExperience / 200.0;
+            combatants.add(new BattleContext.TacticalCombatant(person.id, -1L, army.id,
+                    BattleContext.TacticalRole.MELEE,
+                    0.95 + martial * 0.6 + experience,
+                    0.95 + martial * 0.6 + experience * 0.7,
+                    0.90 + martial,
+                    Math.max(0.0, Math.min(100.0, army.morale + 10.0))));
+        }
+        if (combatants.size() == side.combatants.size()) return side;
+        return new BattleContext.BattleSide(side.armyId, side.realmId, side.commanderPersonId,
+                side.startingMorale, side.startingFatigue, combatants);
     }
 
     private BattleContext.BattleSide projectSide(Army army) {

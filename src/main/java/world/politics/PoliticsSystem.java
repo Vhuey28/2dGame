@@ -87,7 +87,7 @@ public final class PoliticsSystem {
             }
         }
         context.eventBus.publish(new WorldEvent(world.idGenerator.next(), currentMinute,
-                "RULER_SUCCEEDED"));
+                "RULER_SUCCEEDED", realm.name + " is now ruled by " + heir.givenName + " " + heir.familyName));
     }
 
     private List<Person> eligibleCandidates(Realm realm, long currentMinute) {

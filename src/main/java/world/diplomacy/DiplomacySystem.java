@@ -75,6 +75,25 @@ public final class DiplomacySystem {
                 + ", peace factions " + factionPressure + ", tension -" + tension + ")";
     }
 
+    /** Player-readable realm name for event details. */
+    private String realmName(Long realmId) {
+        Realm realm = realmId == null ? null : world.realms.get(realmId);
+        return realm == null ? "an unknown realm" : realm.name;
+    }
+
+    /** Player-readable list of a treaty's participants. */
+    private String participantNames(Treaty treaty) {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        for (Long realmId : treaty.participantRealmIds) names.add(realmName(realmId));
+        java.util.Collections.sort(names);
+        return String.join(" and ", names);
+    }
+
+    /** Player-readable treaty type. */
+    private String treatyLabel(Treaty.TreatyType type) {
+        return type.toString().replace('_', ' ').toLowerCase();
+    }
+
     public CommandResult proposeTreaty(long proposerRealmId, long recipientRealmId,
             Treaty.TreatyType type, long durationMinutes, long currentMinute) {
         Realm proposer = world.realms.get(proposerRealmId);
@@ -112,7 +131,8 @@ public final class DiplomacySystem {
         world.treaties.put(treaty.id, treaty);
         state.treatyIds.add(treaty.id);
         state.trust = DiplomaticState.clamp(state.trust + 5);
-        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), currentMinute, "TREATY_SIGNED"));
+        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), currentMinute, "TREATY_SIGNED",
+                proposer.name + " and " + recipient.name + " sign a " + treatyLabel(type)));
         return CommandResult.accepted();
     }
 
@@ -136,7 +156,9 @@ public final class DiplomacySystem {
             state.trust = DiplomaticState.clamp(state.trust - 40);
             state.opinion = DiplomaticState.clamp(state.opinion - 25);
         }
-        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), currentMinute, "TREATY_VIOLATED"));
+        context.eventBus.publish(new WorldEvent(world.idGenerator.next(), currentMinute, "TREATY_VIOLATED",
+                realmName(violatorRealmId) + " violates the " + treatyLabel(treaty.type)
+                        + " with " + realmName(offended)));
         return CommandResult.accepted();
     }
 
@@ -163,7 +185,9 @@ public final class DiplomacySystem {
             if (!treaty.active) continue;
             if (treaty.endMinute != null && minute >= treaty.endMinute) {
                 treaty.active = false;
-                context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "TREATY_EXPIRED"));
+                context.eventBus.publish(new WorldEvent(world.idGenerator.next(), minute, "TREATY_EXPIRED",
+                        "The " + treatyLabel(treaty.type) + " between "
+                                + participantNames(treaty) + " expires"));
                 continue;
             }
             if (treaty.type == Treaty.TreatyType.TRIBUTE && treaty.tributePayerRealmId != null) {

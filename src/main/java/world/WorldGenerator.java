@@ -238,7 +238,21 @@ public final class WorldGenerator {
                 2.0, 5, "farming"));
         settlement.addWorkplace(garden);
         world.workplaces.put(gardenId, garden);
-        System.out.println("Created farm and garden in " + settlement.name);
+
+        // A smithy keeps the weapons stock renewable. Recruitment (realm and player alike)
+        // consumes one weapon per soldier, so without production every settlement would run
+        // out of its 16 starting weapons and could never raise troops again.
+        long smithyId = world.idGenerator.next();
+        Workplace smithy = new Workplace(smithyId, settlement.name + " Smithy", settlement.id);
+        smithy.maxWorkers = 3;
+        java.util.EnumMap<GoodType, Integer> weaponOutputs = new java.util.EnumMap<>(GoodType.class);
+        weaponOutputs.put(GoodType.WEAPONS, 1);
+        smithy.recipes.add(new ProductionRecipe("Weapon Production",
+                new java.util.EnumMap<>(GoodType.class), weaponOutputs,
+                2.0, 1, "crafting"));
+        settlement.addWorkplace(smithy);
+        world.workplaces.put(smithyId, smithy);
+        System.out.println("Created farm, garden and smithy in " + settlement.name);
     }
 
     /**

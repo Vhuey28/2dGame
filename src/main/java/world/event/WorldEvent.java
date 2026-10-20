@@ -11,11 +11,22 @@ public class WorldEvent {
     public final long eventId;
     public final long worldMinute;
     public final String type;
+    /**
+     * Optional player-readable detail ("Kern declared war on Aldenmyr to conquer Wold").
+     * Null when the publishing system has not been given a description yet; the UI then
+     * falls back to a readable rendering of the type alone.
+     */
+    public final String detail;
 
     public WorldEvent(long eventId, long worldMinute, String type) {
+        this(eventId, worldMinute, type, null);
+    }
+
+    public WorldEvent(long eventId, long worldMinute, String type, String detail) {
         this.eventId = eventId;
         this.worldMinute = worldMinute;
         this.type = type;
+        this.detail = detail;
     }
 
     @Override

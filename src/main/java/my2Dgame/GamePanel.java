@@ -145,7 +145,7 @@ public class GamePanel extends JPanel implements Runnable{
 		private Long selectedCampaignSettlementId;
 		private Long hoveredCampaignSettlementId;
 		private java.awt.Point campaignMousePoint = new java.awt.Point();
-		private enum CampaignTab { OVERVIEW, INVENTORY, PARTY, CONTRACTS, KINGDOM, ENCYCLOPEDIA, CRIME }
+		private enum CampaignTab { OVERVIEW, INVENTORY, PARTY, CONTRACTS, KINGDOM, WAR, FIEFS, ENCYCLOPEDIA, CRIME }
 		private CampaignTab activeCampaignTab = CampaignTab.OVERVIEW;
 		private final java.util.Map<CampaignTab, Rectangle> campaignTabHitboxes = new java.util.EnumMap<>(CampaignTab.class);
 		private final java.util.Map<String, Rectangle> kingdomManagementHitboxes = new java.util.LinkedHashMap<>();
@@ -161,6 +161,18 @@ public class GamePanel extends JPanel implements Runnable{
 		private final java.util.List<LocalPlaceholder> campaignLocalPlaceholders = new java.util.ArrayList<>();
 		private String localInteractionMessage = "Walk near a marker and press F";
 		private BattleContext activeCampaignBattle;
+		/** Transient world-map banner: defeat results, captivity, rest, and action feedback. */
+		private String campaignNotice;
+		private int campaignNoticeTicks;
+		private static final int CAMPAIGN_NOTICE_TICKS = 60 * 12;
+		/** Stacked notifications for major world events, each shown exactly once. */
+		private final java.util.List<String> campaignToasts = new java.util.ArrayList<>();
+		private int campaignToastTicks;
+		private long lastCampaignEventId = -1L;
+		private boolean campaignToastsPrimed;
+		private static final int CAMPAIGN_TOAST_TICKS = 60 * 9;
+		/** Full-screen control and systems reference, toggled with H on the world map. */
+		private boolean campaignHelpOpen;
 		private world.LocalPlayerState campaignLocalPlayerState;
 		private final java.nio.file.Path campaignSavePath = java.nio.file.Paths.get(
 			System.getProperty("user.home"), ".chronicle-conquest", "campaign.ccq");
@@ -285,6 +297,19 @@ public class GamePanel extends JPanel implements Runnable{
 					return;
 				}
 				if (cheatMenuOpen) return;
+				if (code == KeyEvent.VK_H && gameStarted && gameMode == GameMode.CAMPAIGN
+						&& currentLayer == GameLayer.WORLD_MAP) {
+					campaignHelpOpen = !campaignHelpOpen;
+					repaint();
+					return;
+				}
+				if (campaignHelpOpen) {
+					if (code == KeyEvent.VK_ESCAPE) {
+						campaignHelpOpen = false;
+						repaint();
+					}
+					return;
+				}
 				if (campaignContextMenu != CampaignContextMenu.NONE && code == KeyEvent.VK_ESCAPE) {
 					campaignContextMenu = CampaignContextMenu.NONE;
 					repaint();
@@ -322,8 +347,11 @@ public class GamePanel extends JPanel implements Runnable{
 							try {
 								campaignSession.save(campaignSavePath);
 								localInteractionMessage = "Campaign saved";
+								showCampaignNotice("Campaign saved. This is a partial (beta) save: wars, sieges,"
+									+ " titles and armies are re-simulated from the seed when you load.");
 							} catch (java.io.IOException failure) {
 								localInteractionMessage = "Save failed: " + failure.getMessage();
+								showCampaignNotice("Save failed: " + failure.getMessage());
 							}
 							repaint();
 							return;
@@ -334,9 +362,23 @@ public class GamePanel extends JPanel implements Runnable{
 								campaignSnapshot = campaignSession.getSnapshot();
 								selectedCampaignSettlementId = campaignSnapshot.player.settlementId;
 								currentLayer = GameLayer.WORLD_MAP;
+								// A loaded session has no projected battle and none of the old
+								// person IDs, so drop tactical actors instead of dangling them.
+								activeCampaignBattle = null;
+								enemies.clear();
+								troops.clear();
+								heroes.clear();
+								recruitedHeroes.clear();
+								allySquad.members.clear();
+								enemySquad.members.clear();
+								campaignLocalPlayerState = null;
+								clearPlayerDeathState();
 								localInteractionMessage = "Campaign loaded";
+								showCampaignNotice("Campaign loaded. Wars, sieges, titles and armies were"
+									+ " re-simulated from the seed, so they may differ from what you saved.");
 							} catch (java.io.IOException failure) {
 								localInteractionMessage = "Load failed: " + failure.getMessage();
+								showCampaignNotice("Load failed: " + failure.getMessage());
 							}
 							repaint();
 							return;
@@ -466,6 +508,11 @@ public class GamePanel extends JPanel implements Runnable{
 				java.awt.Point point = toGamePoint(e.getPoint());
 				if (cheatMenuOpen) {
 					handleCheatMenuClick(point);
+					return;
+				}
+				if (campaignHelpOpen) {
+					campaignHelpOpen = false;
+					repaint();
 					return;
 				}
 				if (campaignContextMenu != CampaignContextMenu.NONE) {
@@ -1007,6 +1054,10 @@ public class GamePanel extends JPanel implements Runnable{
 			} else if (nearest.type == LocalPlaceholder.Type.MARKET) {
 				campaignContextMenu = CampaignContextMenu.MARKET;
 				campaignContextMessage = "Choose a good and buy or sell";
+			} else if (nearest.type == LocalPlaceholder.Type.INN) {
+				world.command.CommandResult result = campaignSession.restAtInn(8);
+				localInteractionMessage = result.message;
+				if (result.accepted) syncCampaignPlayerHealthFromPerson();
 			} else {
 				localInteractionMessage = nearest.label + ": " + nearest.interactionText;
 			}
@@ -1077,24 +1128,51 @@ public class GamePanel extends JPanel implements Runnable{
 
 		private void startCampaignTacticalBattle() {
 			if (campaignSession == null || activeCampaignBattle != null) return;
-			java.util.List<world.Army> armies = new java.util.ArrayList<>(campaignSession.getWorld().armies.values());
-			armies.removeIf(army -> army.state == world.Army.ArmyState.DISBANDED
-				|| campaignSession.getSimulation().getMilitarySystem().strength(army) <= 0);
-			armies.sort(java.util.Comparator.comparingLong(army -> army.id));
-			world.Army first = null;
-			world.Army second = null;
-			for (int i = 0; i < armies.size() && first == null; i++) {
-				for (int j = i + 1; j < armies.size(); j++) {
-					if (armies.get(i).realmId != armies.get(j).realmId) {
-						first = armies.get(i);
-						second = armies.get(j);
-						break;
-					}
+			if (campaignSnapshot == null || campaignSnapshot.player == null) return;
+			if (campaignSnapshot.player.commandedArmyId == null) {
+				showCampaignNotice("You command no army. Right-click a settlement you are standing in and raise a"
+					+ " company, or take command of a realm army once you rule one.");
+				return;
+			}
+			if (selectedCampaignActorId == null) {
+				showCampaignNotice("Right-click an enemy army on the map to select it, then press K to attack it.");
+				return;
+			}
+			world.command.CommandResult cleared = campaignSession.canEngageArmy(selectedCampaignActorId);
+			if (!cleared.accepted) {
+				showCampaignNotice(cleared.message);
+				return;
+			}
+			launchCampaignBattle(campaignSnapshot.player.commandedArmyId, selectedCampaignActorId);
+		}
+
+		/**
+		 * Projects two strategic armies into a tactical battle the player fights themselves.
+		 * Your own army is always the attacker, so troops are yours and enemies are theirs.
+		 */
+		private void launchCampaignBattle(long attackerArmyId, long defenderArmyId) {
+			if (campaignSession == null || activeCampaignBattle != null) return;
+			world.Army attacker = campaignSession.getWorld().armies.get(attackerArmyId);
+			world.Army defender = campaignSession.getWorld().armies.get(defenderArmyId);
+			if (attacker == null || defender == null) {
+				showCampaignNotice("That army is gone - the world moved on.");
+				return;
+			}
+			// Companions fight beside you, and their wounds and deaths are reconciled.
+			java.util.List<Long> companions = new java.util.ArrayList<>();
+			if (campaignSnapshot.player != null) {
+				long adventurer = campaignSession.getPlayerState().personId;
+				for (Long memberId : campaignSnapshot.player.partyMemberIds) {
+					if (memberId != null && memberId != adventurer) companions.add(memberId);
 				}
 			}
-			if (first == null || second == null) return;
-			activeCampaignBattle = campaignSession.getSimulation().getBattleBridge().createContext(
-				first.id, second.id, true, campaignSnapshot.worldMinute);
+			try {
+				activeCampaignBattle = campaignSession.getSimulation().getBattleBridge().createContext(
+					attacker.id, defender.id, true, companions, campaignSnapshot.worldMinute);
+			} catch (RuntimeException e) {
+				showCampaignNotice("You cannot attack that army: " + e.getMessage());
+				return;
+			}
 			setupMap("map1.txt");
 			enemies.clear();
 			troops.clear();
@@ -1128,6 +1206,16 @@ public class GamePanel extends JPanel implements Runnable{
 				index++;
 			}
 			teleportPlayerForMap("map1.txt");
+			// Bring the recruited companions onto the battlefield next to the player.
+			syncCampaignHeroesFromParty();
+			int heroIndex = 0;
+			for (Hero hero : heroes) {
+				if (!hero.isRecruited || hero.isActivePlayer) continue;
+				hero.x = tileSize * (3 + heroIndex % 3);
+				hero.y = tileSize * (9 + heroIndex / 3);
+				hero.health = hero.maxHealth;
+				heroIndex++;
+			}
 			currentLayer = GameLayer.BATTLE;
 		}
 
@@ -1138,6 +1226,16 @@ public class GamePanel extends JPanel implements Runnable{
 		}
 
 		private void resolveCampaignTacticalBattle() {
+			finishCampaignBattle(null);
+		}
+
+		/**
+		 * Ends the projected strategic battle and reconciles it exactly once.
+		 * A non-null forcedWinner overrides the living-count result; that is how a player
+		 * defeat is settled. Leaving the context unreconciled used to freeze both armies in
+		 * ENGAGED and permanently block every later campaign battle.
+		 */
+		private void finishCampaignBattle(BattleResult.WinningSide forcedWinner) {
 			if (activeCampaignBattle == null || campaignSession == null) return;
 			java.util.Map<Long, BattleResult.CasualtyOutcome> outcomes = new java.util.HashMap<>();
 			int attackerLiving = 0;
@@ -1162,14 +1260,80 @@ public class GamePanel extends JPanel implements Runnable{
 				if (outcome != BattleResult.CasualtyOutcome.KILLED) defenderLiving++;
 				outcomes.put(enemy.sourcePersonId, outcome);
 			}
-			BattleResult.WinningSide winner = attackerLiving == defenderLiving ? BattleResult.WinningSide.DRAW
+			BattleResult.WinningSide winner = forcedWinner != null ? forcedWinner
+				: attackerLiving == defenderLiving ? BattleResult.WinningSide.DRAW
 				: attackerLiving > defenderLiving ? BattleResult.WinningSide.ATTACKER : BattleResult.WinningSide.DEFENDER;
 			BattleResult result = campaignSession.getSimulation().getBattleBridge().resultFromTactical(
 				activeCampaignBattle.battleId, winner, outcomes, 60L);
 			campaignSession.getSimulation().getBattleBridge().reconcile(result);
+			if (forcedWinner == null) {
+				campaignSession.notePlayerBattleResult(winner != BattleResult.WinningSide.DEFENDER);
+			}
+			// A forced winner means the player died; handleCampaignDefeat already reports that.
+			String fieldReport = forcedWinner == null
+				? (winner == BattleResult.WinningSide.DEFENDER
+					? "You are driven off the field. " + defenderLiving + " of the enemy still stand."
+					: winner == BattleResult.WinningSide.DRAW
+						? "The battle ends indecisively. Both sides pull back."
+						: "You hold the field. " + attackerLiving + " of your troops still stand.")
+				: null;
 			activeCampaignBattle = null;
 			campaignSnapshot = CampaignSnapshot.capture(campaignSession.getSimulation());
 			currentLayer = GameLayer.WORLD_MAP;
+			if (fieldReport != null) showCampaignNotice(fieldReport);
+		}
+
+		/**
+		 * The adventurer died in campaign mode. Settles any projected battle as a loss and
+		 * lets the session roll the consequence (wounded, captured for ransom, or routed —
+		 * a rout destroys a commanded army and can kill companions).
+		 */
+		private void handleCampaignDefeat() {
+			if (campaignSession == null) {
+				currentLayer = GameLayer.WORLD_MAP;
+				respawnPlayer();
+				return;
+			}
+			// Dying outside a projected battle (a local skirmish) is a minor setback, not a rout.
+			double defeatMargin = 0.15;
+			Long captorRealmId = null;
+			if (activeCampaignBattle != null) {
+				int yourLiving = 0;
+				for (entity.Troop troop : troops) {
+					if (troop.health > 0 && !troop.isMeleeDying && !troop.isArcherDying) yourLiving++;
+				}
+				int enemyLiving = 0;
+				for (Enemy enemy : enemies) {
+					if (!enemy.dead && enemy.health > 0) enemyLiving++;
+				}
+				int total = yourLiving + enemyLiving;
+				// 0 = you nearly held the field, 1 = nothing of yours survived
+				defeatMargin = total == 0 ? 1.0 : Math.max(0.0, Math.min(1.0, 1.0 - yourLiving / (double) total));
+				captorRealmId = activeCampaignBattle.defender.realmId;
+				finishCampaignBattle(BattleResult.WinningSide.DEFENDER);
+			}
+			world.command.CommandResult result = campaignSession.resolvePlayerDefeat(captorRealmId, defeatMargin);
+			enemies.clear();
+			troops.clear();
+			allySquad.members.clear();
+			enemySquad.members.clear();
+			currentLayer = GameLayer.WORLD_MAP;
+			campaignSnapshot = campaignSession.getSnapshot();
+			respawnPlayer();
+			// Wounds live on the world person; the local sprite reads health back from it.
+			syncCampaignPlayerHealthFromPerson();
+			showCampaignNotice(result.message);
+		}
+
+		/** Copies the world person's health onto the local Player sprite (campaign only). */
+		private void syncCampaignPlayerHealthFromPerson() {
+			if (campaignSession == null) return;
+			world.Person adventurer = campaignSession.getWorld().people.get(
+				campaignSession.getPlayerState().personId);
+			if (adventurer == null) return;
+			int restored = (int) Math.round(adventurer.health.healthLevel / 100.0 * player.maxHealth);
+			player.health = Math.max(1, Math.min(player.maxHealth, restored));
+			if (activeHero != null && activeHero.isActivePlayer) activeHero.health = player.health;
 		}
 
 		private void startSurvivalMode() {
@@ -1742,12 +1906,14 @@ System.nanoTime();
 				gamePaused = true;
 				deathMenuOpen = true;
 			}
-			if (!gameStarted || gamePaused || cheatMenuOpen || campaignContextMenu != CampaignContextMenu.NONE) {
+			if (!gameStarted || gamePaused || cheatMenuOpen || campaignHelpOpen
+					|| campaignContextMenu != CampaignContextMenu.NONE) {
 				return;
 			}
 			if (gameMode == GameMode.CAMPAIGN && campaignSession != null) {
 				campaignSession.update(1.0 / FPS);
 				campaignSnapshot = campaignSession.getSnapshot();
+				pumpCampaignToasts(campaignSnapshot);
 				if (currentLayer == GameLayer.OVERWORLD) {
 					campaignSession.updateLocalScene(1.0 / FPS,
 						getCurrentMapWidthTiles() * tileSize, getCurrentMapHeightTiles() * tileSize);
@@ -1827,9 +1993,9 @@ System.nanoTime();
 					deathMenuOpen = true;
 					break;
 				case CAMPAIGN:
-					// Return player to world view to continue playing
-					currentLayer = GameLayer.WORLD_MAP;
-					respawnPlayer();
+					// Defeat is a real cost now: reconcile any projected battle exactly once,
+					// then roll a graded consequence (wounded / captured / routed).
+					handleCampaignDefeat();
 					break;
 				case SANDBOX:
 					// Respawn the player
@@ -2218,6 +2384,7 @@ System.nanoTime();
 			if (gameCrashed) drawCrashMenu(g2);
 			drawCampaignContextMenu(g2);
 			drawCheatMenu(g2);
+			drawCampaignHelp(g2);
 			g2.setTransform(oldTransform);
 			g2.dispose();
 			return;
@@ -2414,6 +2581,18 @@ System.nanoTime();
 				addContextButton(g2, "JOIN_MERCENARY", "Join realm as mercenary", x + 28, y + 275, 200, 42);
 				addContextButton(g2, "JOIN_LORD", "Pledge allegiance as lord", x + 250, y + 275, 200, 42);
 			}
+			world.geography.Settlement garrisoned = campaignSession.getWorld().geography
+					.getSettlement(settlement.id);
+			int weaponsHere = garrisoned == null ? 0
+					: garrisoned.publicStockpile.getQuantity(GoodType.WEAPONS);
+			g2.setColor(new Color(190, 200, 210));
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+			g2.drawString("Raise your own company: 35c and one weapon per volunteer, from your purse."
+					+ "  Weapons here: " + weaponsHere, x + 28, y + 330);
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+			addContextButton(g2, "RAISE_INFANTRY", "Raise 10 infantry", x + 28, y + 336, 140, 32);
+			addContextButton(g2, "RAISE_ARCHERS", "Raise 5 archers", x + 176, y + 336, 130, 32);
+			addContextButton(g2, "RAISE_SPEARS", "Raise 5 spears", x + 314, y + 336, 130, 32);
 		} else if (campaignContextMenu == CampaignContextMenu.MARKET && settlement != null) {
 			GoodType good = GoodType.values()[Math.floorMod(marketGoodIndex, GoodType.values().length)];
 			int stock = campaignSession.getWorld().geography.getSettlement(settlement.id).publicStockpile.getQuantity(good);
@@ -2473,18 +2652,69 @@ System.nanoTime();
 				world.Person commander = campaignSession.getWorld().people.get(army.commanderPersonId);
 				CampaignSnapshot.RealmView realm = campaignSnapshot.findRealm(army.realmId);
 				int strength = campaignSession.getSimulation().getMilitarySystem().strength(army);
+				Long commandedArmyId = campaignSnapshot.player == null
+						? null : campaignSnapshot.player.commandedArmyId;
+				boolean isYourArmy = commandedArmyId != null && commandedArmyId == army.id;
 				g2.setFont(new Font("Serif", Font.BOLD, 20));
-				g2.drawString((realm == null ? "Unknown" : realm.name) + " Army #" + army.id, x + 20, y + 78);
+				g2.drawString(isYourArmy ? "YOUR ARMY #" + army.id
+						: (realm == null ? "Stateless" : realm.name) + " Army #" + army.id, x + 20, y + 78);
 				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
-				g2.drawString("Commander: " + personName(commander) + " | Strength " + strength, x + 20, y + 103);
+				g2.drawString((isYourArmy ? "You command. " : "")
+						+ "Commander: " + personName(commander) + " | Strength " + strength, x + 20, y + 103);
 				g2.drawString("Order " + army.order + " | State " + army.state + " | Regiments " + army.regimentIds.size(), x + 20, y + 122);
 				g2.drawString("Morale " + Math.round(army.morale) + "% | Fatigue " + Math.round(army.fatigue)
 						+ "% | Days unfed " + army.daysWithoutFood, x + 20, y + 141);
 				g2.drawString("Supplies: grain " + army.supplies.getQuantity(GoodType.GRAIN)
 						+ " | vegetables " + army.supplies.getQuantity(GoodType.VEGETABLES), x + 20, y + 160);
-				addContextButton(g2, "SPEAK_COMMANDER", "Speak to commander", x + 20, y + 210, 132, 44);
-				addContextButton(g2, "SUPPLY_ARMY", "Donate 5 grain", x + 173, y + 210, 132, 44);
-				addContextButton(g2, "VIEW_ARMY_PEOPLE", "View soldiers", x + 326, y + 210, 132, 44);
+				g2.drawString("Destination: " + (army.destinationSettlementId == null ? "none"
+						: settlementName(campaignSnapshot, army.destinationSettlementId))
+						+ (army.routeRoadIds.isEmpty() ? "" : "   |   road leg " + (army.routeIndex + 1)
+								+ " of " + army.routeRoadIds.size())
+						+ "   |   at " + settlementName(campaignSnapshot, army.currentSettlementId), x + 20, y + 179);
+				if (isYourArmy) {
+					addContextButton(g2, "SUPPLY_ARMY", "Feed 5 grain", x + 173, y + 210, 132, 44);
+					addContextButton(g2, "VIEW_ARMY_PEOPLE", "View soldiers", x + 326, y + 210, 132, 44);
+					CampaignSnapshot.SettlementView orderTarget = selectedCampaignSettlementId == null
+							? null : campaignSnapshot.findSettlement(selectedCampaignSettlementId);
+					g2.setColor(new Color(255, 215, 110));
+					g2.setFont(new Font("SansSerif", Font.BOLD, 11));
+					g2.drawString("YOUR ARMY  -  orders go to: "
+							+ (orderTarget == null ? "nothing selected (click a settlement first)"
+									: orderTarget.name), x + 20, y + 266);
+					g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+					addContextButton(g2, "ORDER_MOVE", "Move", x + 20, y + 274, 104, 32);
+					addContextButton(g2, "ORDER_DEFEND", "Defend", x + 132, y + 274, 104, 32);
+					addContextButton(g2, "ORDER_BESIEGE", "Besiege", x + 244, y + 274, 104, 32);
+					addContextButton(g2, "ORDER_RAID", "Raid", x + 356, y + 274, 100, 32);
+					addContextButton(g2, "ORDER_HOME", "March home", x + 20, y + 314, 122, 32);
+					int buttonX = 150;
+					CampaignSnapshot.SiegeView siegeHere = campaignSnapshot.findActiveSiegeAt(
+							army.currentSettlementId);
+					if (siegeHere != null) {
+						addContextButton(g2, "ASSAULT_SIEGE", "Storm the walls", x + buttonX, y + 314, 142, 32);
+						buttonX += 150;
+					}
+					addContextButton(g2, "RELEASE_COMMAND",
+							army.playerFunded ? "Pay off company" : "Give up command", x + buttonX, y + 314, 148, 32);
+				} else {
+					addContextButton(g2, "SPEAK_COMMANDER", "Speak to commander", x + 20, y + 210, 132, 44);
+					addContextButton(g2, "SUPPLY_ARMY", "Donate 5 grain", x + 173, y + 210, 132, 44);
+					addContextButton(g2, "VIEW_ARMY_PEOPLE", "View soldiers", x + 326, y + 210, 132, 44);
+					boolean youRule = campaignSnapshot.player != null && campaignSnapshot.player.canManageKingdom;
+					int buttonX = x + 20;
+					if (youRule) {
+						addContextButton(g2, "TAKE_COMMAND", "Take command", buttonX, y + 274, 142, 40);
+						buttonX += 152;
+					}
+					addContextButton(g2, "ENGAGE_ARMY", "Attack this army", buttonX, y + 274, 152, 40);
+					g2.setColor(Color.LIGHT_GRAY);
+					g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+					g2.drawString(youRule
+							? "Attacking needs your own army within 12 of this one."
+							: "Raise your own company at a settlement, or rule a realm to take command of its armies.",
+							x + 20, y + 332);
+					g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+				}
 			}
 		} else if (campaignContextMenu == CampaignContextMenu.CARAVAN) {
 			world.Caravan caravan = selectedCampaignActorId == null ? null
@@ -2571,6 +2801,52 @@ System.nanoTime();
 		world.command.CommandResult result = null;
 		if ("SUPPLY_ARMY".equals(clicked) && selectedCampaignActorId != null) {
 			result = campaignSession.supplyArmy(selectedCampaignActorId, 5);
+		}
+		if ("RAISE_INFANTRY".equals(clicked)) {
+			result = campaignSession.raiseCompany(10, world.military.Regiment.RegimentType.LEVY_INFANTRY);
+		}
+		if ("RAISE_ARCHERS".equals(clicked)) {
+			result = campaignSession.raiseCompany(5, world.military.Regiment.RegimentType.ARCHER);
+		}
+		if ("RAISE_SPEARS".equals(clicked)) {
+			result = campaignSession.raiseCompany(5, world.military.Regiment.RegimentType.SPEAR);
+		}
+		if ("TAKE_COMMAND".equals(clicked) && selectedCampaignActorId != null) {
+			result = campaignSession.takeCommandOfArmy(selectedCampaignActorId);
+		}
+		if ("RELEASE_COMMAND".equals(clicked)) {
+			result = campaignSession.relinquishCommand();
+		}
+		if ("ASSAULT_SIEGE".equals(clicked) && selectedCampaignActorId != null) {
+			world.Army yourArmy = campaignSession.getWorld().armies.get(selectedCampaignActorId);
+			CampaignSnapshot.SiegeView siege = yourArmy == null ? null
+					: campaignSnapshot.findActiveSiegeAt(yourArmy.currentSettlementId);
+			result = siege == null
+					? world.command.CommandResult.rejected("INVALID_SIEGE", "There is no active siege here")
+					: campaignSession.assaultSiege(siege.id);
+		}
+		if (clicked.startsWith("ORDER_") && selectedCampaignSettlementId != null) {
+			world.Army.ArmyOrder order = switch (clicked) {
+				case "ORDER_DEFEND" -> world.Army.ArmyOrder.DEFEND;
+				case "ORDER_BESIEGE" -> world.Army.ArmyOrder.BESIEGE;
+				case "ORDER_RAID" -> world.Army.ArmyOrder.RAID;
+				case "ORDER_HOME" -> world.Army.ArmyOrder.RETURN_HOME;
+				default -> world.Army.ArmyOrder.MOVE;
+			};
+			result = campaignSession.issueArmyOrder(selectedCampaignSettlementId, order);
+		}
+		if (clicked.startsWith("ORDER_") && selectedCampaignSettlementId == null) {
+			result = world.command.CommandResult.rejected("NO_DESTINATION",
+					"Click a settlement on the map first, then choose the order");
+		}
+		if ("ENGAGE_ARMY".equals(clicked) && selectedCampaignActorId != null) {
+			world.command.CommandResult cleared = campaignSession.canEngageArmy(selectedCampaignActorId);
+			if (cleared.accepted) {
+				campaignContextMenu = CampaignContextMenu.NONE;
+				launchCampaignBattle(campaignSnapshot.player.commandedArmyId, selectedCampaignActorId);
+				return;
+			}
+			result = cleared;
 		}
 		if ("TALK_PERSON".equals(clicked) && selectedCampaignActorId != null) {
 			result = campaignSession.talkToPerson(selectedCampaignActorId);
@@ -2919,13 +3195,37 @@ System.nanoTime();
 	}
 
 		private void handleCampaignMapClick(java.awt.Point point) {
-			if (activeCampaignTab == CampaignTab.KINGDOM && campaignSession != null) {
+			if (campaignSession != null && !kingdomManagementHitboxes.isEmpty()) {
 				for (java.util.Map.Entry<String, Rectangle> entry : kingdomManagementHitboxes.entrySet()) {
 					if (!entry.getValue().contains(point)) continue;
-					String[] command = entry.getKey().split(":");
-					campaignSession.adjustKingdomLaw(
-							Government.LawType.valueOf(command[0]), Integer.parseInt(command[1]));
+					world.command.CommandResult result;
+					if ("SEIZE_THRONE".equals(entry.getKey())) {
+						Long realmId = campaignSnapshot.player == null
+							? null : campaignSnapshot.player.affiliatedRealmId;
+						result = realmId == null
+							? world.command.CommandResult.rejected("NO_REALM", "You serve no kingdom")
+							: campaignSession.seizeThrone(realmId);
+					} else if ("PAY_RANSOM".equals(entry.getKey())) {
+						result = campaignSession.payRansom();
+					} else if (entry.getKey().startsWith("DECLARE_WAR:")) {
+						result = campaignSession.declareWarAsRuler(
+								Long.parseLong(entry.getKey().substring("DECLARE_WAR:".length())),
+								world.War.WarGoal.CONQUER_PROVINCE, null, null);
+					} else if (entry.getKey().startsWith("CLAIM_HOLDING:")) {
+						result = campaignSession.claimHolding(
+								Long.parseLong(entry.getKey().substring("CLAIM_HOLDING:".length())));
+					} else if (entry.getKey().startsWith("STORM_SIEGE:")) {
+						result = campaignSession.assaultSiege(
+								Long.parseLong(entry.getKey().substring("STORM_SIEGE:".length())));
+					} else {
+						String[] command = entry.getKey().split(":");
+						result = campaignSession.adjustKingdomLaw(
+								Government.LawType.valueOf(command[0]), Integer.parseInt(command[1]));
+					}
 					campaignSnapshot = campaignSession.getSnapshot();
+					if (result != null && result.message != null && !result.message.isBlank()) {
+						showCampaignNotice(result.message);
+					}
 					repaint();
 					return;
 				}
@@ -2969,6 +3269,409 @@ System.nanoTime();
 			}
 		}
 
+		/** Shows a temporary banner on the campaign world map. */
+		private void showCampaignNotice(String message) {
+			campaignNotice = message;
+			campaignNoticeTicks = message == null || message.isBlank() ? 0 : CAMPAIGN_NOTICE_TICKS;
+		}
+
+		/** Word-wraps campaign text to a pixel width. Shared by notices, tooltips, and event feed. */
+		private java.util.List<String> wrapCampaignText(Graphics2D g2, String text, int maxWidth, int maxLines) {
+			java.util.List<String> lines = new java.util.ArrayList<>();
+			if (text == null || text.isEmpty()) return lines;
+			java.awt.FontMetrics fm = g2.getFontMetrics();
+			StringBuilder line = new StringBuilder();
+			for (String word : text.split("\\s+")) {
+				if (word.isEmpty()) continue;
+				if (line.length() == 0) {
+					line.append(word);
+					continue;
+				}
+				if (fm.stringWidth(line + " " + word) <= maxWidth) {
+					line.append(' ').append(word);
+				} else {
+					lines.add(line.toString());
+					if (lines.size() >= maxLines) return lines;
+					line.setLength(0);
+					line.append(word);
+				}
+			}
+			if (lines.size() < maxLines && line.length() > 0) lines.add(line.toString());
+			return lines;
+		}
+
+		private void drawCampaignNotice(Graphics2D g2) {
+			if (campaignNotice == null || campaignNoticeTicks <= 0) return;
+			campaignNoticeTicks--;
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 12));
+			int boxW = 500;
+			java.util.List<String> lines = wrapCampaignText(g2, campaignNotice, boxW - 24, 4);
+			if (lines.isEmpty()) return;
+			int boxH = 12 + lines.size() * 16;
+			int boxX = (screenWidth - boxW) / 2;
+			int boxY = 84;
+			int alpha = Math.min(235, campaignNoticeTicks * 6);
+			g2.setColor(new Color(12, 18, 25, alpha));
+			g2.fillRoundRect(boxX, boxY, boxW, boxH, 10, 10);
+			g2.setColor(new Color(215, 140, 90, alpha));
+			g2.drawRoundRect(boxX, boxY, boxW, boxH, 10, 10);
+			g2.setColor(new Color(255, 236, 210, Math.min(255, alpha + 20)));
+			int y = boxY + 18;
+			for (String line : lines) {
+				g2.drawString(line, boxX + 12, y);
+				y += 16;
+			}
+		}
+
+		/**
+		 * Renders one world event as a readable line. Returns null for internal bookkeeping
+		 * events that should never reach the player.
+		 */
+		private String readableEvent(CampaignSnapshot.EventView event) {
+			String text = event.detail != null && !event.detail.isBlank()
+					? event.detail : eventFallbackText(event.type);
+			if (text == null) return null;
+			return "Day " + (event.worldMinute / WorldConfig.MINUTES_PER_DAY + 1) + ": " + text;
+		}
+
+		/** Fallback wording for event types whose system does not publish a detail yet. */
+		private String eventFallbackText(String type) {
+			switch (type) {
+				case "WAR_DECLARED": return "A war is declared";
+				case "SIEGE_STARTED": return "A siege begins";
+				case "SETTLEMENT_OCCUPIED": return "A settlement is occupied";
+				case "SIEGE_CIVILIAN_DIED": return "A civilian starves in a besieged settlement";
+				case "PEACE_ENFORCED": return "Peace is enforced";
+				case "TREATY_SIGNED": return "A treaty is signed";
+				case "TREATY_VIOLATED": return "A treaty is violated";
+				case "TREATY_EXPIRED": return "A treaty expires";
+				case "RULER_SUCCEEDED": return "A new ruler takes the throne";
+				case "BATTLE_RECONCILED": return "A battle is resolved";
+				case "BATTLE_CONTEXT_CREATED": return "Armies meet in battle";
+				case "BATTLE_PERSON_DIED": return "A soldier dies in battle";
+				case "ARMY_MUSTERED": return "An army is mustered";
+				case "ARMY_DEPARTED": return "An army marches out";
+				case "ARMY_ARRIVED": return "An army reaches its destination";
+				case "ARMY_DETECTED": return "Scouts spot a foreign army";
+				case "ARMY_DEMOBILIZED": return "An army is disbanded";
+				case "SOLDIER_DESERTED": return "A soldier deserts";
+				case "PERSON_DIED": return "Someone dies";
+				case "BIRTH": return "A child is born";
+				case "HOUSEHOLD_MIGRATED": return "A household migrates";
+				case "CONTRACT_ACCEPTED": return "A contract is accepted";
+				case "CONTRACT_COMPLETED": return "A contract is completed";
+				case "CONTRACT_FAILED": return "A contract fails";
+				case "CRIME_DISCOVERED": return "A crime is discovered";
+				case "SCHEME_EXPOSED": return "A covert scheme is exposed";
+				case "PLAYER_CAPTURED": return "You are taken prisoner";
+				case "PLAYER_RELEASED": return "You are released from captivity";
+				case "COMPANION_KILLED": return "One of your companions is killed";
+				case "THRONE_CLAIMED": return "The throne is claimed by right";
+				case "THRONE_USURPED": return "The throne is usurped";
+				case "CHEAT_RULER_CHANGED": return "A ruler is replaced (cheat menu)";
+				case "CHEAT_ARMY_SPAWNED": return "An army appears (cheat menu)";
+				case "CHEAT_SETTLEMENT_TRANSFERRED": return "A settlement changes hands (cheat menu)";
+				case "SIEGE_ASSAULT": return "The walls are stormed";
+				case "HOLDING_CLAIMED": return "Conquered land is claimed as a holding";
+				case "HOLDING_LOST": return "One of your holdings is no longer yours";
+				case "PLAYER_TOOK_COMMAND": return "You take command of an army";
+				// Internal bookkeeping: never shown to the player.
+				case "AUTOSAVE_SAFE_POINT": return null;
+				default: return type.replace('_', ' ').toLowerCase();
+			}
+		}
+
+		/** Colour coding so the eye finds wars, sieges and personal news in the feed. */
+		private Color eventColor(String type) {
+			switch (type) {
+				case "WAR_DECLARED":
+				case "SIEGE_STARTED":
+				case "SETTLEMENT_OCCUPIED":
+				case "BATTLE_RECONCILED":
+				case "BATTLE_CONTEXT_CREATED":
+				case "SIEGE_ASSAULT":
+					return new Color(255, 150, 110);
+				case "SIEGE_CIVILIAN_DIED":
+				case "PERSON_DIED":
+				case "BATTLE_PERSON_DIED":
+				case "SOLDIER_DESERTED":
+				case "COMPANION_KILLED":
+					return new Color(190, 190, 200);
+				case "PLAYER_CAPTURED":
+				case "PLAYER_RELEASED":
+				case "THRONE_CLAIMED":
+				case "THRONE_USURPED":
+				case "RULER_SUCCEEDED":
+				case "HOLDING_CLAIMED":
+				case "HOLDING_LOST":
+				case "PLAYER_TOOK_COMMAND":
+					return new Color(255, 214, 120);
+				case "PEACE_ENFORCED":
+				case "TREATY_SIGNED":
+					return new Color(160, 220, 170);
+				default:
+					return Color.LIGHT_GRAY;
+			}
+		}
+
+		/** Major world events the player should be told about without opening a tab. */
+		private boolean isToastWorthy(String type) {
+			switch (type) {
+				case "WAR_DECLARED":
+				case "SIEGE_STARTED":
+				case "SETTLEMENT_OCCUPIED":
+				case "PEACE_ENFORCED":
+				case "TREATY_SIGNED":
+				case "TREATY_VIOLATED":
+				case "RULER_SUCCEEDED":
+				case "BATTLE_RECONCILED":
+				case "PLAYER_CAPTURED":
+				case "PLAYER_RELEASED":
+				case "COMPANION_KILLED":
+				case "THRONE_CLAIMED":
+				case "THRONE_USURPED":
+				case "SIEGE_CIVILIAN_DIED":
+				case "SIEGE_ASSAULT":
+				case "HOLDING_CLAIMED":
+				case "HOLDING_LOST":
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		/** Queues unseen major events as toasts, exactly once each. */
+		private void pumpCampaignToasts(CampaignSnapshot snapshot) {
+			if (snapshot == null) return;
+			long newest = lastCampaignEventId;
+			for (CampaignSnapshot.EventView event : snapshot.recentEvents) {
+				if (event.eventId > newest) newest = event.eventId;
+			}
+			if (!campaignToastsPrimed) {
+				// First frame after entering or loading a campaign: do not replay history.
+				campaignToastsPrimed = true;
+				lastCampaignEventId = newest;
+				return;
+			}
+			for (CampaignSnapshot.EventView event : snapshot.recentEvents) {
+				if (event.eventId <= lastCampaignEventId) continue;
+				lastCampaignEventId = event.eventId;
+				if (!isToastWorthy(event.type)) continue;
+				String text = readableEvent(event);
+				if (text == null) continue;
+				campaignToasts.add(text);
+				while (campaignToasts.size() > 3) campaignToasts.remove(0);
+				campaignToastTicks = CAMPAIGN_TOAST_TICKS;
+			}
+		}
+
+		private void drawCampaignToasts(Graphics2D g2) {
+			if (campaignToasts.isEmpty() || campaignToastTicks <= 0) return;
+			campaignToastTicks--;
+			if (campaignToastTicks == 0) {
+				campaignToasts.clear();
+				return;
+			}
+			int alpha = Math.min(225, campaignToastTicks * 9);
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 11));
+			int boxY = 232;
+			for (String toast : campaignToasts) {
+				java.util.List<String> lines = wrapCampaignText(g2, toast, 272, 2);
+				int h = 8 + lines.size() * 14;
+				g2.setColor(new Color(14, 20, 27, alpha));
+				g2.fillRoundRect(28, boxY, 296, h, 8, 8);
+				g2.setColor(new Color(226, 178, 76, alpha));
+				g2.drawRoundRect(28, boxY, 296, h, 8, 8);
+				g2.setColor(new Color(255, 240, 205, Math.min(255, alpha + 25)));
+				int textY = boxY + 15;
+				for (String line : lines) {
+					g2.drawString(line, 38, textY);
+					textY += 14;
+				}
+				boxY += h + 6;
+			}
+		}
+
+		/** Symbol key for the strategic map, drawn inside the map frame. */
+		private void drawCampaignMapLegend(Graphics2D g2, int mapX, int mapY, int mapW, int mapH) {
+			int boxW = 268;
+			int boxH = 62;
+			int x = mapX + mapW - boxW - 8;
+			int y = mapY + mapH - boxH - 8;
+			g2.setColor(new Color(9, 16, 22, 210));
+			g2.fillRoundRect(x, y, boxW, boxH, 8, 8);
+			g2.setColor(new Color(120, 140, 120));
+			g2.drawRoundRect(x, y, boxW, boxH, 8, 8);
+			g2.setFont(new Font("SansSerif", Font.BOLD, 9));
+			g2.setColor(new Color(222, 204, 155));
+			g2.drawString("MAP KEY", x + 8, y + 12);
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+
+			int row1 = y + 26;
+			int row2 = y + 42;
+			int row3 = y + 56;
+			int col1 = x + 8;
+			int col2 = x + 140;
+
+			// Settlement: realm-coloured dot.
+			g2.setColor(colorForRealm(1L));
+			g2.fillOval(col1, row1 - 5, 8, 8);
+			g2.setColor(Color.WHITE);
+			g2.drawOval(col1, row1 - 5, 8, 8);
+			g2.setColor(Color.LIGHT_GRAY);
+			g2.drawString("Settlement (owner colour)", col1 + 13, row1 + 2);
+
+			// Army: realm-coloured square with its strength.
+			g2.setColor(colorForRealm(2L));
+			g2.fillRect(col1, row2 - 6, 9, 9);
+			g2.setColor(Color.WHITE);
+			g2.drawRect(col1, row2 - 6, 9, 9);
+			g2.setColor(Color.LIGHT_GRAY);
+			g2.drawString("Army (number = troops)", col1 + 13, row2 + 2);
+
+			// Caravan: yellow diamond.
+			g2.setColor(new Color(245, 196, 65));
+			g2.fillPolygon(new int[] {col1 + 4, col1 + 9, col1 + 4, col1 - 1},
+					new int[] {row3 - 7, row3 - 2, row3 + 3, row3 - 2}, 4);
+			g2.setColor(Color.LIGHT_GRAY);
+			g2.drawString("Merchant caravan", col1 + 13, row3 + 2);
+
+			// You are here: cyan ring.
+			g2.setColor(Color.CYAN);
+			g2.drawOval(col2, row1 - 7, 11, 11);
+			g2.setColor(Color.LIGHT_GRAY);
+			g2.drawString("You are here", col2 + 16, row1 + 2);
+
+			// Contract destination: gold ring.
+			g2.setColor(new Color(255, 190, 45));
+			g2.setStroke(new BasicStroke(2f));
+			g2.drawOval(col2, row2 - 7, 11, 11);
+			g2.setStroke(new BasicStroke(1f));
+			g2.setColor(Color.LIGHT_GRAY);
+			g2.drawString("Contract destination", col2 + 16, row2 + 2);
+
+			// Occupation + siege.
+			g2.setColor(new Color(255, 92, 62));
+			g2.setStroke(new BasicStroke(2f));
+			g2.drawLine(col2, row3 - 6, col2 + 10, row3 + 4);
+			g2.drawLine(col2, row3 + 4, col2 + 10, row3 - 6);
+			g2.setStroke(new BasicStroke(1f));
+			g2.setColor(Color.LIGHT_GRAY);
+			g2.drawString("Under siege", col2 + 16, row3 + 2);
+		}
+
+		/** Full-screen campaign reference: every control plus how the simulation fits together. */
+		private void drawCampaignHelp(Graphics2D g2) {
+			if (!campaignHelpOpen) return;
+			g2.setColor(new Color(0, 0, 0, 225));
+			g2.fillRect(0, 0, screenWidth, screenHeight);
+			int x = 26, y = 22, w = screenWidth - 52, h = screenHeight - 44;
+			g2.setColor(new Color(20, 27, 35));
+			g2.fillRoundRect(x, y, w, h, 14, 14);
+			g2.setColor(new Color(230, 178, 65));
+			g2.drawRoundRect(x, y, w, h, 14, 14);
+			g2.setFont(new Font("Serif", Font.BOLD, 21));
+			g2.setColor(new Color(235, 205, 130));
+			g2.drawString("CAMPAIGN - CONTROLS AND HOW THE WORLD WORKS", x + 18, y + 28);
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+
+			String[] left = {
+				"WORLD MAP",
+				"  click settlement/army/caravan   inspect it",
+				"  click your own settlement       full menu",
+				"  TAB        enter/leave the local settlement",
+				"  T          travel to the selected settlement",
+				"  B / V      buy 5 grain / 5 vegetables",
+				"  N / M      sell 5 grain / 5 vegetables",
+				"  C          accept the first contract offered",
+				"  K          attack the selected enemy army with yours",
+				"  R          (in battle) reconcile casualties",
+				"  1 / 2 / 3  speed: 1x, 1 hour/s, 1 day/s",
+				"  0          pause or resume the world",
+				"  H          this help      F1  cheat menu",
+				"  F5 / F9    save / load (partial beta save)",
+				"  F3         debug overlay  F6  advance a day",
+				"  ESC        close the open menu",
+				"",
+				"LOCAL SETTLEMENT",
+				"  move with WASD or the arrows",
+				"  F          use the Market, Notice Board or Inn",
+				"  TAB        back to the world map",
+				"",
+				"TABS (bottom bar)",
+				"  OVERVIEW   world status and news",
+				"  INVENTORY  your coins and cargo",
+				"  PARTY      companions you have recruited",
+				"  CONTRACTS  work you have accepted",
+				"  REALM      your kingdom, role and laws",
+				"  WAR        every war and siege, with progress",
+				"  FIEFS      titles you hold and every crown",
+				"  WORLD      the world encyclopedia",
+				"  CRIME      recent incidents",
+			};
+			String[] right = {
+				"HOW THE WORLD WORKS",
+				"  Every person is simulated: they work, earn, eat, marry,",
+				"  age, migrate and die. Markets set real prices.",
+				"  Realms raise armies, pay and feed them, march them along",
+				"  roads, and fight over claims, provinces and grievances.",
+				"  A siege eats a settlement's grain, breaks defender",
+				"  resolve, starves civilians and ends in occupation at",
+				"  100% breach. Occupation is not ownership: legal title",
+				"  changes only through peace terms or a claim.",
+				"",
+				"YOUR ARMY",
+				"  Right-click a settlement you stand in and raise a",
+				"  company: 35c and one weapon per volunteer, your purse.",
+				"  Right-click your army (gold ring) for orders: move,",
+				"  defend, besiege, raid, march home, storm the walls.",
+				"  Besieging needs a war - as ruler, declare one on the WAR",
+				"  tab. A ruler may also take command of a realm army.",
+				"  K attacks a selected enemy army with yours, as a battle",
+				"  you fight yourself. Sieges and victories earn war",
+				"  contribution, which is what lets you claim land.",
+				"",
+				"YOUR PATH",
+				"  1. Trade goods and carry contracts to earn coin.",
+				"  2. Recruit companions (talk, gift food, invite).",
+				"  3. Supply a realm's army with grain for reputation.",
+				"  4. Pledge to that realm as a mercenary or a lord.",
+				"  5. As a lord, press a claim to the throne when you have",
+				"     a legal claim, or when the realm is in crisis and",
+				"     trusts you (stability under 25, 25+ reputation).",
+				"  6. Win a siege or battle yourself, then claim the",
+				"     occupied land as your holding on the FIEFS tab. It",
+				"     pays you daily - and its old owner gets a claim.",
+				"  7. As ruler, change the laws of the realm and declare",
+				"     wars from the WAR tab.",
+				"",
+				"  Losing a battle costs you: wounds, coin, cargo, capture",
+				"  for ransom, or a rout that destroys your army and can",
+				"  kill companions. Captivity blocks travel, trade,",
+				"  contracts and recruiting until you pay or serve the term.",
+			};
+			int colY = y + 48;
+			int leftX = x + 18;
+			int rightX = x + 300;
+			for (String line : left) {
+				g2.setColor(line.isEmpty() ? Color.WHITE
+						: Character.isSpaceChar(line.charAt(0)) || line.startsWith("  ")
+								? new Color(215, 220, 225) : new Color(245, 196, 65));
+				g2.drawString(line, leftX, colY);
+				colY += 13;
+			}
+			colY = y + 48;
+			for (String line : right) {
+				g2.setColor(line.isEmpty() ? Color.WHITE
+						: line.startsWith("  ") ? new Color(215, 220, 225) : new Color(245, 196, 65));
+				g2.drawString(line, rightX, colY);
+				colY += 13;
+			}
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
+			g2.setColor(Color.LIGHT_GRAY);
+			g2.drawString("Press H or ESC, or click anywhere, to close.", x + 18, y + h - 12);
+		}
+
 		private void drawCampaignWorld(Graphics2D g2) {
 			CampaignSnapshot snapshot = campaignSnapshot;
 			g2.setColor(new Color(16, 22, 29));
@@ -2979,7 +3682,7 @@ System.nanoTime();
 			g2.drawString("Chronicle Conquest - Campaign", 20, 34);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 12));
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("TAB local | T travel | C contract | F1 cheats | F5 save | F9 load", 20, 55);
+			g2.drawString("TAB local | T travel | C contract | K battle | 0-3 speed | F1 cheats | F5 save | F9 load", 20, 55);
 
 			if (snapshot == null) {
 				g2.setColor(Color.WHITE);
@@ -3046,8 +3749,18 @@ System.nanoTime();
 					g2.drawRect(x - radius - 4, y - radius - 4, radius * 2 + 8, radius * 2 + 8);
 					g2.setStroke(new BasicStroke(1f));
 				}
+				boolean underSiege = snapshot.findActiveSiegeAt(settlement.id) != null;
+				if (underSiege) {
+					// Crossed blades over the settlement: the clearest possible "this is under siege".
+					g2.setColor(new Color(255, 92, 62));
+					g2.setStroke(new BasicStroke(2f));
+					g2.drawLine(x - radius - 7, y - radius - 7, x + radius + 7, y + radius + 7);
+					g2.drawLine(x - radius - 7, y + radius + 7, x + radius + 7, y - radius - 7);
+					g2.setStroke(new BasicStroke(1f));
+				}
 				g2.setFont(new Font("SansSerif", Font.BOLD, 11));
-				int labelWidth = Math.max(g2.getFontMetrics().stringWidth(settlement.name), 66) + 8;
+				String settlementLabel = underSiege ? settlement.name + " (SIEGE)" : settlement.name;
+				int labelWidth = Math.max(g2.getFontMetrics().stringWidth(settlementLabel), 66) + 8;
 				Rectangle label = placeCampaignLabel(x, y, labelWidth, 29,
 					mapX + 4, mapY + 4, mapX + mapW - 4, mapY + mapH - 4, occupiedMapLabels);
 				occupiedMapLabels.add(label);
@@ -3055,22 +3768,30 @@ System.nanoTime();
 				g2.fillRoundRect(label.x, label.y, label.width, label.height, 6, 6);
 				g2.setColor(new Color(205, 205, 190));
 				g2.drawLine(x, y, label.x + label.width / 2, label.y + label.height / 2);
-				g2.setColor(Color.WHITE);
-				g2.drawString(settlement.name, label.x + 4, label.y + 11);
+				g2.setColor(underSiege ? new Color(255, 170, 140) : Color.WHITE);
+				g2.drawString(settlementLabel, label.x + 4, label.y + 11);
 				g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
 				g2.drawString("Pop " + settlement.population, label.x + 4, label.y + 23);
 			}
 
 			campaignArmyHitboxes.clear();
+			Long yourArmyId = snapshot.player == null ? null : snapshot.player.commandedArmyId;
 			for (CampaignSnapshot.ArmyView army : snapshot.armies) {
 				int x = campaignMapCoordinate(army.worldX, bounds[0], bounds[1], mapX, mapW);
 				int y = campaignMapCoordinate(army.worldY, bounds[2], bounds[3], mapY, mapH);
+				boolean isYours = yourArmyId != null && yourArmyId == army.id;
 				g2.setColor(colorForRealm(army.realmId));
 				g2.fillRect(x - 6, y - 6, 12, 12);
-				g2.setColor(Color.WHITE);
+				g2.setColor(isYours ? new Color(255, 215, 90) : Color.WHITE);
 				g2.drawRect(x - 6, y - 6, 12, 12);
-				g2.drawString(Integer.toString(army.strength), x + 8, y + 4);
-				campaignArmyHitboxes.put(army.id, new Rectangle(x - 10, y - 10, 28, 20));
+				if (isYours) {
+					g2.drawRect(x - 9, y - 9, 18, 18);
+					g2.setFont(new Font("SansSerif", Font.BOLD, 9));
+					g2.drawString("YOU", x - 9, y - 12);
+					g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+				}
+				g2.drawString(Integer.toString(army.strength), x + 11, y + 4);
+				campaignArmyHitboxes.put(army.id, new Rectangle(x - 12, y - 12, 34, 24));
 			}
 
 			campaignCaravanHitboxes.clear();
@@ -3085,6 +3806,8 @@ System.nanoTime();
 				g2.drawPolygon(xs, ys, 4);
 				campaignCaravanHitboxes.put(caravan.id, new Rectangle(x - 10, y - 10, 20, 20));
 			}
+
+			drawCampaignMapLegend(g2, mapX, mapY, mapW, mapH);
 
 			int panelX = 535;
 			int y = 80;
@@ -3115,8 +3838,32 @@ System.nanoTime();
 				g2.drawString("You: " + snapshot.player.coins + "c cargo "
 					+ snapshot.player.cargoUsed + "/" + snapshot.player.cargoCapacity, panelX, y); y += 17;
 				g2.drawString("Party " + snapshot.player.partySize + " contracts "
-					+ snapshot.player.activeContracts + " rep " + snapshot.player.reputation, panelX, y); y += 17;
+						+ snapshot.player.activeContracts + " rep " + snapshot.player.reputation, panelX, y); y += 17;
+				CampaignSnapshot.ArmyView yourArmy = findCommandedArmy(snapshot);
+				if (yourArmy != null) {
+					g2.setColor(new Color(255, 220, 130));
+					g2.drawString("YOUR ARMY: " + yourArmy.strength + " troops, morale "
+						+ Math.round(yourArmy.morale) + "%, " + yourArmy.grain + " grain"
+						+ (yourArmy.daysWithoutFood > 0 ? " (" + yourArmy.daysWithoutFood + "d unfed)" : ""),
+						panelX, y); y += 16;
+					g2.drawString("   " + yourArmy.order + " at " + settlementName(snapshot, yourArmy.currentSettlementId)
+						+ (yourArmy.destinationSettlementId == null ? ""
+							: " -> " + settlementName(snapshot, yourArmy.destinationSettlementId)), panelX, y); y += 16;
+					g2.setColor(new Color(200, 205, 210));
+					g2.drawString("   It is ringed gold on the map. Right-click it for orders; K attacks.",
+						panelX, y); y += 17;
+				} else if (snapshot.player.commandedArmyId != null) {
+					g2.drawString("Your army is gone - disbanded or destroyed.", panelX, y); y += 17;
+				}
+				if (snapshot.player.isCaptive()) {
+					g2.setColor(new Color(255, 140, 110));
+					g2.drawString("PRISONER: " + snapshot.player.captiveDaysRemaining + " day(s), ransom "
+							+ snapshot.player.ransomCoins + "c", panelX, y); y += 17;
+				}
 			}
+			g2.setColor(new Color(160, 145, 120));
+			g2.drawString("Saves are partial (beta): wars, sieges,", panelX, y); y += 12;
+			g2.drawString("titles and armies are re-simulated on load.", panelX, y); y += 17;
 			y += 7;
 
 			g2.setColor(new Color(222, 204, 155));
@@ -3143,14 +3890,99 @@ System.nanoTime();
 				g2.drawString("No major events yet", panelX, y);
 			} else {
 				for (CampaignSnapshot.EventView event : snapshot.recentEvents) {
-					g2.drawString("D" + (event.worldMinute / WorldConfig.MINUTES_PER_DAY + 1) + " " + event.type, panelX, y);
-					y += 12;
-					if (y > screenHeight - 10) break;
+					String line = readableEvent(event);
+					if (line == null) continue;
+					g2.setColor(eventColor(event.type));
+					for (String part : wrapCampaignText(g2, line, screenWidth - panelX - 10, 2)) {
+						g2.drawString(part, panelX, y);
+						y += 11;
+					}
+					y += 2;
+					if (y > screenHeight - 48) break;
 				}
 			}
 
 			drawCampaignTabs(g2, snapshot);
 			drawSettlementHoverCard(g2, snapshot);
+			drawCaptivityBanner(g2, snapshot);
+			drawCampaignToasts(g2);
+			drawCampaignNotice(g2);
+		}
+
+		/**
+		 * Prominent banner while the adventurer is a prisoner of war. Registers its button in
+		 * the kingdom hitbox map, which drawCampaignTabs has already cleared and refilled, so
+		 * this must run after the tabs.
+		 */
+		private void drawCaptivityBanner(Graphics2D g2, CampaignSnapshot snapshot) {
+			if (snapshot == null || snapshot.player == null || !snapshot.player.isCaptive()) return;
+			int w = 520, h = 60;
+			int x = (screenWidth - w) / 2, y = 150;
+			g2.setColor(new Color(38, 18, 18, 235));
+			g2.fillRoundRect(x, y, w, h, 12, 12);
+			g2.setColor(new Color(215, 120, 90));
+			g2.drawRoundRect(x, y, w, h, 12, 12);
+			g2.setFont(new Font("Serif", Font.BOLD, 15));
+			g2.setColor(new Color(255, 214, 170));
+			String captor = snapshot.player.captorRealmName == null
+					? "THE ENEMY" : snapshot.player.captorRealmName.toUpperCase();
+			g2.drawString("PRISONER OF " + captor, x + 16, y + 22);
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+			g2.setColor(Color.WHITE);
+			g2.drawString(snapshot.player.captiveDaysRemaining
+					+ " day(s) left. Travel, trade, contracts and recruiting are blocked.", x + 16, y + 42);
+			Rectangle pay = new Rectangle(x + w - 172, y + 13, 156, 34);
+			kingdomManagementHitboxes.put("PAY_RANSOM", pay);
+			g2.setColor(new Color(72, 52, 34));
+			g2.fillRoundRect(pay.x, pay.y, pay.width, pay.height, 8, 8);
+			g2.setColor(new Color(230, 195, 110));
+			g2.drawRoundRect(pay.x, pay.y, pay.width, pay.height, 8, 8);
+			g2.setColor(Color.WHITE);
+			g2.setFont(new Font("SansSerif", Font.BOLD, 11));
+			String label = "Pay ransom " + snapshot.player.ransomCoins + "c";
+			g2.drawString(label, pay.x + (pay.width - g2.getFontMetrics().stringWidth(label)) / 2, pay.y + 21);
+		}
+
+		/** Short labels so nine tabs still fit the 768px tab bar. */
+		private String campaignTabLabel(CampaignTab tab) {
+			switch (tab) {
+				case KINGDOM:
+					return "REALM";
+				case WAR:
+					return "WAR";
+				case FIEFS:
+					return "FIEFS";
+				case ENCYCLOPEDIA:
+					return "WORLD";
+				default:
+					return tab.toString();
+			}
+		}
+
+		/** Turns a raw war-goal enum name into something a player can read. */
+		private String readableWarGoal(String goal, String provinceName, String titleName) {
+			String text;
+			switch (goal) {
+				case "CONQUER_PROVINCE":
+					text = "Conquest of " + (provinceName == null ? "a province" : provinceName);
+					break;
+				case "CLAIM_TITLE":
+					text = "Claim to " + (titleName == null ? "a title" : titleName);
+					break;
+				case "INDEPENDENCE":
+					text = "Independence";
+					break;
+				case "VASSALIZE":
+					text = "Vassalage";
+					break;
+				case "PUNITIVE":
+					text = "Punitive war over a grievance";
+					break;
+				default:
+					text = goal;
+					break;
+			}
+			return text;
 		}
 
 		private void drawCampaignTabs(Graphics2D g2, CampaignSnapshot snapshot) {
@@ -3173,17 +4005,20 @@ System.nanoTime();
 				g2.fillRoundRect(rect.x + 2, rect.y + 3, rect.width - 4, rect.height - 5, 7, 7);
 				g2.setColor(Color.WHITE);
 				g2.setFont(new Font("SansSerif", Font.BOLD, 10));
-				String label = tab.toString();
+				String label = campaignTabLabel(tab);
 				g2.drawString(label, rect.x + (rect.width - g2.getFontMetrics().stringWidth(label)) / 2, rect.y + 20);
 			}
 			if (activeCampaignTab == CampaignTab.OVERVIEW) return;
-			int panelY = screenHeight - 205;
+			// The war and fief panels need two-column detail, so they are allowed to be taller.
+			int panelHeight = activeCampaignTab == CampaignTab.WAR || activeCampaignTab == CampaignTab.FIEFS
+					? 212 : 166;
+			int panelY = screenHeight - 39 - panelHeight;
 			g2.setColor(new Color(12, 18, 25, 242));
-			g2.fillRoundRect(18, panelY, screenWidth - 36, 166, 12, 12);
+			g2.fillRoundRect(18, panelY, screenWidth - 36, panelHeight, 12, 12);
 			g2.setColor(new Color(205, 178, 112));
-			g2.drawRoundRect(18, panelY, screenWidth - 36, 166, 12, 12);
+			g2.drawRoundRect(18, panelY, screenWidth - 36, panelHeight, 12, 12);
 			g2.setFont(new Font("Serif", Font.BOLD, 17));
-			g2.drawString(activeCampaignTab.toString(), 32, panelY + 24);
+			g2.drawString(campaignTabLabel(activeCampaignTab), 32, panelY + 24);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 			g2.setColor(Color.WHITE);
 			int y = panelY + 44;
@@ -3233,6 +4068,20 @@ System.nanoTime();
 					if (!playerView.canManageKingdom) {
 						g2.setColor(Color.LIGHT_GRAY);
 						g2.drawString("Kingdom management is reserved for the ruler.", 32, y);
+						if ("LORD".equals(playerView.kingdomRole)) {
+							Rectangle throne = new Rectangle(32, y + 10, 268, 26);
+							kingdomManagementHitboxes.put("SEIZE_THRONE", throne);
+							g2.setColor(new Color(70, 48, 34));
+							g2.fillRoundRect(throne.x, throne.y, throne.width, throne.height, 8, 8);
+							g2.setColor(new Color(225, 190, 105));
+							g2.drawRoundRect(throne.x, throne.y, throne.width, throne.height, 8, 8);
+							g2.setColor(new Color(255, 226, 160));
+							g2.drawString("Press your claim to the throne", throne.x + 14, throne.y + 17);
+							g2.setColor(Color.LIGHT_GRAY);
+							g2.drawString("Needs a claim on the crown, or a kingdom in crisis (stability under 25)"
+								+ " and 25+ realm reputation (you have " + playerView.realmReputation + ")",
+								throne.x + throne.width + 14, throne.y + 17);
+						}
 						break;
 					}
 					g2.setColor(new Color(255, 215, 110));
@@ -3252,6 +4101,153 @@ System.nanoTime();
 						g2.setColor(new Color(58, 76, 91)); g2.fillRect(minus.x, minus.y, minus.width, minus.height); g2.fillRect(plus.x, plus.y, plus.width, plus.height);
 						g2.setColor(Color.WHITE); g2.drawString("-", minus.x + 10, minus.y + 12); g2.drawString("+", plus.x + 8, plus.y + 12);
 						lawIndex++;
+					}
+				}
+				case WAR -> {
+					int warsShown = 0;
+					for (CampaignSnapshot.WarView war : snapshot.wars) {
+						if (!war.isActive()) continue;
+						g2.setColor(war.involvesPlayerRealm ? new Color(255, 170, 90) : new Color(228, 218, 194));
+						g2.drawString(war.belligerents() + "  -  "
+							+ readableWarGoal(war.goal, war.targetProvinceName, war.targetTitleName), 32, y);
+						y += 14;
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.drawString("Day " + war.daysRunning + "  |  war score "
+							+ Math.round(war.attackerScore) + " - " + Math.round(war.defenderScore)
+							+ "  |  exhaustion " + Math.round(war.attackerExhaustion) + " - "
+							+ Math.round(war.defenderExhaustion), 44, y);
+						y += 13;
+						g2.drawString("Contribution: "
+							+ (war.contributions.isEmpty() ? "none yet" : String.join(", ", war.contributions))
+							+ "  (contribution decides who may claim captured land)", 44, y);
+						y += 18;
+						if (++warsShown >= 2 || y > panelY + panelHeight - 46) break;
+					}
+					if (warsShown == 0) {
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.drawString("No active wars. Realms go to war over claims, provinces, grievances and vassalage.", 32, y);
+						y += 16;
+					}
+					g2.setColor(new Color(222, 204, 155));
+					g2.setFont(new Font("SansSerif", Font.BOLD, 12));
+					g2.drawString("SIEGES", 32, y);
+					g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+					y += 15;
+					int siegesShown = 0;
+					for (CampaignSnapshot.SiegeView siege : snapshot.sieges) {
+						if (!siege.isActive()) continue;
+						g2.setColor(siege.involvesPlayerRealm ? new Color(255, 170, 90) : Color.WHITE);
+						g2.drawString(siege.besiegerRealmName + " besieges " + siege.settlementName
+							+ " (held by " + siege.defenderRealmName + ")  -  " + siege.besiegerStrength
+							+ " troops, day " + siege.daysRunning, 32, y);
+						y += 14;
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.drawString("Breach " + Math.round(siege.breachProgress)
+							+ "%  |  defender resolve " + Math.round(siege.defenderResolve)
+							+ "%  |  food consumed " + siege.foodConsumed
+							+ "  |  civilian deaths " + siege.civilianDeaths, 44, y);
+						y += 17;
+						if (++siegesShown >= 2 || y > panelY + panelHeight - 14) break;
+					}
+					if (siegesShown == 0) {
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.drawString("No active sieges. A besieging army has to reach an enemy settlement while a war is on.", 32, y);
+					}
+					// Rulers can open a war from here; that is what makes a BESIEGE order legal.
+					java.util.List<Long> warTargets = campaignSession == null
+						? java.util.Collections.emptyList() : campaignSession.declarableWarTargets();
+					if (!warTargets.isEmpty()) {
+						g2.setColor(new Color(222, 204, 155));
+						g2.setFont(new Font("SansSerif", Font.BOLD, 12));
+						g2.drawString("AS RULER: DECLARE A WAR OF CONQUEST", 430, panelY + 40);
+						g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.drawString("War is what lets an army besiege and take land.", 430, panelY + 56);
+						int by = panelY + 64;
+						int shown = 0;
+						for (Long targetRealmId : warTargets) {
+							CampaignSnapshot.RealmView target = snapshot.findRealm(targetRealmId);
+							if (target == null) continue;
+							Rectangle button = new Rectangle(430, by, 152, 22);
+							drawCampaignTabButton(g2, button, "War: " + target.name);
+							kingdomManagementHitboxes.put("DECLARE_WAR:" + targetRealmId, button);
+							by += 26;
+							if (++shown >= 5 || by > panelY + panelHeight - 20) break;
+						}
+					}
+					if (!snapshot.sieges.isEmpty()) {
+						int sy = panelY + 64;
+						for (CampaignSnapshot.SiegeView siege : snapshot.sieges) {
+							if (!siege.isActive()) continue;
+							Rectangle button = new Rectangle(590, sy, 140, 20);
+							drawCampaignTabButton(g2, button, "Storm " + siege.settlementName);
+							kingdomManagementHitboxes.put("STORM_SIEGE:" + siege.id, button);
+							sy += 24;
+							if (sy > panelY + panelHeight - 20) break;
+						}
+					}
+				}
+				case FIEFS -> {
+					java.util.List<CampaignSnapshot.TitleView> held = snapshot.playerTitles();
+					int heldShown = 0;
+					for (CampaignSnapshot.TitleView title : held) {
+						g2.setColor(new Color(255, 215, 110));
+						g2.drawString(title.rank + "  -  " + title.name, 32, y);
+						y += 14;
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.drawString("Held under " + title.realmName + "  |  de jure "
+							+ (title.deJureProvinceName == null ? "unassigned" : title.deJureProvinceName)
+							+ "  |  claims against you " + title.claimCount, 44, y);
+						y += 13;
+						g2.drawString((title.settlementName == null ? "" : title.settlementName + "  |  ")
+							+ "pays about " + title.rentPerDay + "c a day into your purse", 44, y);
+						y += 17;
+						if (++heldShown >= 3 || y > panelY + panelHeight - 60) break;
+					}
+					if (heldShown == 0) {
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.drawString("You hold no land. Fiefs are won by conquest and then claimed, or granted by a ruler.", 32, y);
+						y += 16;
+					}
+					Long claimRealmId = snapshot.player == null ? null : snapshot.player.affiliatedRealmId;
+					if (claimRealmId != null && campaignSession != null) {
+						g2.setColor(new Color(222, 204, 155));
+						g2.setFont(new Font("SansSerif", Font.BOLD, 12));
+						g2.drawString("CLAIM CONQUERED LAND", 430, panelY + 40);
+						g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.drawString("Your conquest contribution: "
+							+ Math.round(campaignSession.getPlayerState().conquestContribution)
+							+ "  (25 barony, 40 county)", 430, panelY + 56);
+						int claimY = panelY + 66;
+						int claimable = 0;
+						for (CampaignSnapshot.SettlementView occupied : snapshot.settlements) {
+							if (occupied.occupyingRealmId == null
+									|| occupied.occupyingRealmId.longValue() != claimRealmId.longValue()) continue;
+							Rectangle button = new Rectangle(430, claimY, 300, 22);
+							drawCampaignTabButton(g2, button, "Claim " + occupied.name + " as your holding");
+							kingdomManagementHitboxes.put("CLAIM_HOLDING:" + occupied.id, button);
+							claimY += 26;
+							if (++claimable >= 5 || claimY > panelY + panelHeight - 20) break;
+						}
+						if (claimable == 0) {
+							g2.setColor(Color.LIGHT_GRAY);
+							g2.drawString(campaignRealmName(snapshot, claimRealmId)
+								+ " occupies nothing. Take a settlement by siege first.", 430, claimY);
+						}
+					}
+					g2.setColor(new Color(222, 204, 155));
+					g2.setFont(new Font("SansSerif", Font.BOLD, 12));
+					g2.drawString("CROWNS", 32, y);
+					g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+					y += 15;
+					for (CampaignSnapshot.TitleView title : snapshot.titles) {
+						if (!title.isCrown) continue;
+						g2.setColor(title.heldByPlayer ? new Color(170, 230, 170) : Color.WHITE);
+						g2.drawString(title.realmName + ": " + title.name + "  -  " + title.holderName
+							+ (title.claimCount > 0 ? "  (" + title.claimCount + " claimants)" : ""), 32, y);
+						y += 14;
+						if (y > panelY + panelHeight - 14) break;
 					}
 				}
 				case ENCYCLOPEDIA -> {
@@ -3298,24 +4294,73 @@ System.nanoTime();
 			if (hoveredCampaignSettlementId == null) return;
 			CampaignSnapshot.SettlementView settlement = snapshot.findSettlement(hoveredCampaignSettlementId);
 			if (settlement == null) return;
-			int width = 220;
+			int width = 236;
+			int height = 168;
 			int x = Math.min(screenWidth - width - 8, campaignMousePoint.x + 14);
-			int y = Math.min(screenHeight - 150, campaignMousePoint.y + 14);
+			int y = Math.min(screenHeight - height - 40, campaignMousePoint.y + 14);
 			g2.setColor(new Color(8, 13, 18, 235));
-			g2.fillRoundRect(x, y, width, 132, 10, 10);
+			g2.fillRoundRect(x, y, width, height, 10, 10);
 			g2.setColor(new Color(225, 194, 120));
-			g2.drawRoundRect(x, y, width, 132, 10, 10);
+			g2.drawRoundRect(x, y, width, height, 10, 10);
 			g2.setFont(new Font("Serif", Font.BOLD, 15));
 			g2.drawString(settlement.name, x + 10, y + 20);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+			// Ownership first: it is the question the map colours only half answer.
+			g2.setColor(colorForRealm(settlement.realmId));
+			g2.drawString("Owner: " + campaignRealmName(snapshot, settlement.realmId), x + 10, y + 38);
+			if (settlement.occupyingRealmId != null) {
+				g2.setColor(new Color(255, 150, 110));
+				g2.drawString("Occupied by " + campaignRealmName(snapshot, settlement.occupyingRealmId), x + 10, y + 52);
+			}
+			CampaignSnapshot.SiegeView siege = snapshot.findActiveSiegeAt(settlement.id);
+			if (siege != null) {
+				g2.setColor(new Color(255, 110, 90));
+				g2.drawString("UNDER SIEGE by " + siege.besiegerRealmName, x + 10, y + 66);
+				g2.drawString("  breach " + Math.round(siege.breachProgress) + "%  resolve "
+						+ Math.round(siege.defenderResolve) + "%", x + 10, y + 79);
+			}
 			g2.setColor(Color.WHITE);
-			g2.drawString("Population " + settlement.population + "  households " + settlement.households, x + 10, y + 39);
-			g2.drawString("Treasury " + settlement.treasury + "c", x + 10, y + 55);
-			g2.drawString("Grain " + settlement.grain + " @ " + settlement.grainPrice + "c", x + 10, y + 71);
-			g2.drawString("Vegetables " + settlement.vegetables + " @ " + settlement.vegetablePrice + "c", x + 10, y + 87);
-			g2.drawString(String.format("Security %.0f%%  unrest %.0f%%", settlement.security * 100, settlement.unrest * 100), x + 10, y + 103);
+			int row = siege != null ? 96 : 68;
+			g2.drawString("Population " + settlement.population + "  households " + settlement.households, x + 10, y + row);
+			g2.drawString("Treasury " + settlement.treasury + "c", x + 10, y + row + 15);
+			g2.drawString("Grain " + settlement.grain + " @ " + settlement.grainPrice + "c"
+					+ "   Veg " + settlement.vegetables + " @ " + settlement.vegetablePrice + "c", x + 10, y + row + 30);
+			g2.drawString(String.format("Security %.0f%%  unrest %.0f%%  food %.0f%%",
+					settlement.security * 100, settlement.unrest * 100, settlement.foodSecurity * 100), x + 10, y + row + 45);
 			long crimeCount = snapshot.crimes.stream().filter(crime -> crime.settlementId == settlement.id).count();
-			g2.drawString("Recorded crime " + crimeCount + "  food " + Math.round(settlement.foodSecurity * 100) + "%", x + 10, y + 119);
+			g2.drawString("Recorded crime " + crimeCount, x + 10, y + row + 60);
+		}
+
+		/** Realm name lookup for hover cards and panels, tolerant of stale ids. */
+		/** Small gold-outlined button used inside the world tab panel. */
+		private void drawCampaignTabButton(Graphics2D g2, Rectangle button, String label) {
+			g2.setColor(new Color(58, 40, 30));
+			g2.fillRoundRect(button.x, button.y, button.width, button.height, 6, 6);
+			g2.setColor(new Color(205, 178, 112));
+			g2.drawRoundRect(button.x, button.y, button.width, button.height, 6, 6);
+			g2.setColor(new Color(240, 228, 200));
+			g2.drawString(label, button.x + 8, button.y + button.height - 7);
+		}
+
+		private CampaignSnapshot.ArmyView findCommandedArmy(CampaignSnapshot snapshot) {
+			if (snapshot == null || snapshot.player == null || snapshot.player.commandedArmyId == null) return null;
+			long wanted = snapshot.player.commandedArmyId;
+			for (CampaignSnapshot.ArmyView army : snapshot.armies) {
+				if (army.id == wanted) return army;
+			}
+			return null;
+		}
+
+		private String settlementName(CampaignSnapshot snapshot, Long settlementId) {
+			if (snapshot == null || settlementId == null) return "the field";
+			CampaignSnapshot.SettlementView settlement = snapshot.findSettlement(settlementId);
+			return settlement == null ? "the field" : settlement.name;
+		}
+
+		private String campaignRealmName(CampaignSnapshot snapshot, Long realmId) {
+			if (realmId == null) return "independent";
+			CampaignSnapshot.RealmView realm = snapshot.findRealm(realmId);
+			return realm == null ? "Realm #" + realmId : realm.name;
 		}
 
 		private Rectangle placeCampaignLabel(int x, int y, int width, int height,
@@ -4231,6 +5276,52 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 		}
 	}
 
+	/**
+	 * Picks a companion's hero class from the simulated person rather than their ID, so a
+	 * blacksmith no longer shows up as a necromancer. Uses the person's real skills and
+	 * social type; an undeveloped person stays a generic ADVENTURER.
+	 */
+	private Hero.HeroClass heroClassForPerson(world.Person person) {
+		if (person == null) return Hero.HeroClass.ADVENTURER;
+		world.PersonSkills s = person.skills;
+		java.util.Map<Hero.HeroClass, Double> scores = new java.util.EnumMap<>(Hero.HeroClass.class);
+		scores.put(Hero.HeroClass.WARRIOR, s.martial * 2.0 + s.leadership);
+		scores.put(Hero.HeroClass.PALADIN, s.martial + s.medicine * 0.6 + s.diplomacy * 0.6);
+		scores.put(Hero.HeroClass.ARCHER, s.martial * 0.9 + s.crafting * 0.9);
+		scores.put(Hero.HeroClass.ROGUE, s.intrigue * 1.4 + s.trade * 0.6);
+		scores.put(Hero.HeroClass.CLERIC, s.medicine * 1.5 + s.diplomacy * 0.5);
+		scores.put(Hero.HeroClass.MAGE, s.learning * 1.5 + s.intrigue * 0.3);
+		scores.put(Hero.HeroClass.DRUID, s.farming * 1.2 + s.medicine * 0.6);
+		// Necromancy is the rare dark-scholar path: it only wins on very high intrigue + learning.
+		scores.put(Hero.HeroClass.NECROMANCER, s.intrigue * 1.1 + s.learning * 0.7 - 25.0);
+		switch (person.type) {
+			case SOLDIER:
+				scores.merge(Hero.HeroClass.WARRIOR, 20.0, Double::sum);
+				break;
+			case NOBLE:
+				scores.merge(Hero.HeroClass.PALADIN, 15.0, Double::sum);
+				scores.merge(Hero.HeroClass.WARRIOR, 10.0, Double::sum);
+				break;
+			case MERCHANT:
+				scores.merge(Hero.HeroClass.ROGUE, 15.0, Double::sum);
+				break;
+			case SERVANT:
+				scores.merge(Hero.HeroClass.CLERIC, 10.0, Double::sum);
+				break;
+			default:
+				break;
+		}
+		double best = -1.0;
+		Hero.HeroClass bestClass = Hero.HeroClass.ADVENTURER;
+		for (java.util.Map.Entry<Hero.HeroClass, Double> entry : scores.entrySet()) {
+			if (entry.getValue() > best) {
+				best = entry.getValue();
+				bestClass = entry.getKey();
+			}
+		}
+		return best < 20.0 ? Hero.HeroClass.ADVENTURER : bestClass;
+	}
+
 	private void syncCampaignHeroesFromParty() {
 		if (campaignSession == null) return;
 		world.WorldParty party = campaignSession.getWorld().parties.get(campaignSession.getPlayerState().partyId);
@@ -4241,9 +5332,8 @@ private void drawCameraRect(Graphics2D g2, int miniX, int miniY, float centerCol
 			if (exists) continue;
 			world.Person person = campaignSession.getWorld().people.get(personId);
 			if (person == null || !person.alive) continue;
-			Hero.HeroClass[] classes = Hero.HeroClass.values();
 			Hero hero = new Hero(this, (person.givenName + " " + person.familyName).trim(),
-				classes[(int) Math.floorMod(person.id, classes.length)], (int) player.x + tileSize, (int) player.y);
+				heroClassForPerson(person), (int) player.x + tileSize, (int) player.y);
 			hero.sourcePersonId = person.id;
 			hero.isRecruited = true;
 			hero.activePlayerReference = player;

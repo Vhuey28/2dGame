@@ -161,6 +161,7 @@ public final class CheatService {
         Title title = new Title(world.idGenerator.next(), "Lordship of " + settlement.name,
                 Title.Rank.BARONY, settlement.controllerRealmId);
         title.deJureProvinceId = settlement.provinceId;
+        title.settlementId = settlement.id;
         title.installHolder(person.id, minute(), "CHEAT_APPOINTMENT");
         world.titles.put(title.id, title);
         return accepted(person.givenName + " appointed lord of " + settlement.name);
