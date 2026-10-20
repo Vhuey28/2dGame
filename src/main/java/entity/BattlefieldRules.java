@@ -1,5 +1,7 @@
 package entity;
 
+import java.util.Set;
+
 /**
  * Pure, UI-free rules shared by the local combat entities and the campaign
  * battle projection. Keeping the thresholds here makes the "hero keeps
@@ -66,6 +68,23 @@ public final class BattlefieldRules {
                 + Math.min(15.0, Math.max(0, playerKills) * 1.5)
                 + Math.max(0, opposingStanding - remainingEnemies) * 2.0;
         return remainingFraction <= 0.55 && hopelessness >= 48.0;
+    }
+
+    /**
+     * Whether a local Hero must sit out a projected campaign battle. A Hero
+     * whose world person is already a projected troop would give that person
+     * a second body, health pool, and unreconciled abilities; an unrecruited
+     * map hero is not part of either projected army at all. The troop is the
+     * reconciled representation, and the player-controlled active hero is
+     * never suppressed.
+     */
+    public static boolean shouldSuppressHeroInProjectedBattle(boolean projectedBattleActive,
+            boolean activePlayerHero, boolean recruited, Long sourcePersonId,
+            Set<Long> projectedPersonIds) {
+        if (!projectedBattleActive || activePlayerHero) return false;
+        if (!recruited) return true;
+        return sourcePersonId != null && projectedPersonIds != null
+                && projectedPersonIds.contains(sourcePersonId);
     }
 
     /** Returns 1 when the first force should prevail, -1 for the second, or 0 for a draw. */

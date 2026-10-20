@@ -198,6 +198,8 @@ public class GamePanel extends JPanel implements Runnable{
 		/** Preserved tactical projections, so dead units removed from the live sprite lists still reconcile. */
 		private final java.util.List<entity.Troop> campaignBattleTroops = new java.util.ArrayList<>();
 		private final java.util.List<Enemy> campaignBattleEnemies = new java.util.ArrayList<>();
+		/** Friendly persons in, or deliberately excluded from, the troop projection; matching Heroes sit out. */
+		private final java.util.Set<Long> campaignBattleProjectedPersonIds = new java.util.HashSet<>();
 		private int campaignBattleInitialAttackers;
 		private int campaignBattleInitialDefenders;
 		private int campaignBattlePlayerKillsAtStart;
@@ -1581,12 +1583,17 @@ public class GamePanel extends JPanel implements Runnable{
 			allySquad.members.clear();
 			enemySquad.members.clear();
 			resetCampaignBattleProjectionState();
+			// Include companions BattleBridge deliberately excluded (for
+			// example because they are captured): their Hero twins must not
+			// sneak into the projected roster through the local hero list.
+			campaignBattleProjectedPersonIds.addAll(companions);
 			int index = 0;
 			for (BattleContext.TacticalCombatant combatant : activeCampaignBattle.attacker.combatants) {
 				entity.Troop.Role role = combatant.role == BattleContext.TacticalRole.ARCHER
 					? entity.Troop.Role.ARCHER : entity.Troop.Role.MELEE;
 				entity.Troop troop = new entity.Troop(this, tileSize * (5 + index % 4), tileSize * (7 + index / 4), role);
 				applyStrategicSource(troop, combatant);
+				campaignBattleProjectedPersonIds.add(combatant.sourcePersonId);
 				troop.maxHealth = Math.max(10, (int) Math.round(30 * combatant.defenseModifier));
 				troop.health = troop.maxHealth;
 				troop.beginCharge();
@@ -1621,11 +1628,13 @@ public class GamePanel extends JPanel implements Runnable{
 			player.resetDeathState();
 			// Any health above zero is enough to fight, including while wounded.
 			syncCampaignPlayerHealthFromPerson();
-			// Bring the recruited companions onto the battlefield next to the player.
+			// Party companions are already in the troop projection; sync their
+			// Hero records for after the battle, but do not place a duplicate.
 			syncCampaignHeroesFromParty();
 			int heroIndex = 0;
 			for (Hero hero : heroes) {
-				if (!hero.isRecruited || hero.isActivePlayer) continue;
+				if (!hero.isRecruited || hero.isActivePlayer
+						|| isHeroProjectedAsCampaignTroop(hero)) continue;
 				hero.x = tileSize * (3 + heroIndex % 3);
 				hero.y = tileSize * (9 + heroIndex / 3);
 				hero.health = hero.maxHealth;
@@ -1647,6 +1656,7 @@ public class GamePanel extends JPanel implements Runnable{
 		private void resetCampaignBattleProjectionState() {
 			campaignBattleTroops.clear();
 			campaignBattleEnemies.clear();
+			campaignBattleProjectedPersonIds.clear();
 			campaignBattleInitialAttackers = 0;
 			campaignBattleInitialDefenders = 0;
 			campaignBattlePlayerKillsAtStart = player == null ? 0 : player.totalKills;
@@ -1660,6 +1670,40 @@ public class GamePanel extends JPanel implements Runnable{
 			campaignBattlePhaseMessage = "";
 			if (campaignContextMenu == CampaignContextMenu.BATTLE_DECISION) {
 				campaignContextMenu = CampaignContextMenu.NONE;
+			}
+		}
+
+		/**
+		 * A campaign companion is already represented by the reconciled Troop
+		 * projection above. Its local Hero twin must not give the same person
+		 * a second body, second health pool, and unreconciled hero abilities.
+		 */
+		private boolean isHeroProjectedAsCampaignTroop(Hero hero) {
+			return hero != null && entity.BattlefieldRules.shouldSuppressHeroInProjectedBattle(
+					activeCampaignBattle != null, hero.isActivePlayer, hero.isRecruited,
+					hero.sourcePersonId, campaignBattleProjectedPersonIds);
+		}
+
+		/**
+		 * After reconciliation, mirror each suppressed Hero twin from its world
+		 * person. A companion killed as a projected troop must not reappear in
+		 * the local scene merely because the unused Hero object kept old HP.
+		 */
+		private void syncProjectedHeroesAfterCampaignBattle() {
+			if (campaignSession == null) return;
+			for (Hero hero : new java.util.ArrayList<>(heroes)) {
+				if (hero == null || hero.isActivePlayer || hero.sourcePersonId == null
+						|| !campaignBattleProjectedPersonIds.contains(hero.sourcePersonId)) continue;
+				world.Person person = campaignSession.getWorld().people.get(hero.sourcePersonId);
+				if (person == null || !person.alive) {
+					heroes.remove(hero);
+					recruitedHeroes.remove(hero);
+					continue;
+				}
+				int restored = (int) Math.round(hero.maxHealth * person.health.healthLevel / 100.0);
+				hero.health = Math.max(1, Math.min(hero.maxHealth, restored));
+				hero.isDying = false;
+				hero.resetDeathAnimation();
 			}
 		}
 
@@ -2057,12 +2101,14 @@ public class GamePanel extends JPanel implements Runnable{
 				fieldReport = knockedOut.message + " " + (fieldReport == null ? "" : fieldReport);
 			}
 
+			syncProjectedHeroesAfterCampaignBattle();
 			activeCampaignBattle = null;
 			campaignContextMenu = CampaignContextMenu.NONE;
 			campaignContextMessage = "";
 			campaignContextButtons.clear();
 			campaignBattleTroops.clear();
 			campaignBattleEnemies.clear();
+			campaignBattleProjectedPersonIds.clear();
 			campaignBattleEnemyBroken = false;
 			campaignBattlePursuingRout = false;
 			campaignBattlePursuitTicks = 0;
@@ -3014,6 +3060,7 @@ System.nanoTime();
 		// Active heroes update cooldowns/animation without AI; companions use AI.
 		if (activeHero != null && activeHero.isActivePlayer) activeHero.health = player.health;
 		for (Hero hero : heroes) {
+			if (isHeroProjectedAsCampaignTroop(hero)) continue;
 			if (hero.isRecruited) hero.activePlayerReference = player;
 			hero.update();
 		}
@@ -3066,7 +3113,7 @@ System.nanoTime();
 		// NEW — check heroes, so troops/enemies (and heroes moving past each other) can't walk through them
 		for (int i = 0; i < heroes.size(); i++) {
 			Hero hero = heroes.get(i);
-			if (hero != null && hero != self) {
+			if (hero != null && hero != self && !isHeroProjectedAsCampaignTroop(hero)) {
 				Rectangle heroRect = new Rectangle((int)Math.floor(hero.x) + padding, (int)Math.floor(hero.y) + padding, tileSize - padding * 2, tileSize - padding * 2);
 				if (nextRect.intersects(heroRect)) {
 					return true;
@@ -3284,6 +3331,7 @@ System.nanoTime();
 		drawCampaignLocalActors(g2);
 		drawCampaignLocalPlaceholders(g2);
 		for (Hero hero : heroesSnapshot) {
+			if (isHeroProjectedAsCampaignTroop(hero)) continue;
 			if (hero.isRecruited) {
 					hero.draw(g2, (int)cameraX, (int)cameraY);
 				
@@ -7333,7 +7381,7 @@ private void drawHeroMarkers(Graphics2D g2, int miniX, int miniY, float centerCo
                               float viewRadiusTiles) {
     float pxPerTile = mapSizeHalf() / viewRadiusTiles;
     for (Hero hero : new java.util.ArrayList<>(heroes)) {
-        if (hero == null) continue;
+        if (hero == null || isHeroProjectedAsCampaignTroop(hero)) continue;
         float col = hero.x / tileSize;
         float row = hero.y / tileSize;
         float px = miniX + mapSizeHalf() + (col - centerCol) * pxPerTile;

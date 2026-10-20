@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Set;
+
 import org.junit.jupiter.api.Test;
 
 class BattlefieldRulesTest {
@@ -61,6 +63,29 @@ class BattlefieldRulesTest {
                 20, 15, 50.0, true, 10, 20));
         assertFalse(BattlefieldRules.surrenderAccepted(
                 20, 0, 0.0, true, 20, 20));
+    }
+
+    @Test
+    void projectedBattleSuppressesDuplicateAndUnrecruitedHeroes() {
+        Set<Long> projected = Set.of(42L, 99L);
+
+        assertTrue(BattlefieldRules.shouldSuppressHeroInProjectedBattle(
+                true, false, true, 42L, projected));
+        assertTrue(BattlefieldRules.shouldSuppressHeroInProjectedBattle(
+                true, false, false, null, projected),
+                "ambient recruitable heroes are not part of either projected army");
+        assertFalse(BattlefieldRules.shouldSuppressHeroInProjectedBattle(
+                true, true, true, 42L, projected), "the player-controlled hero remains active");
+        assertFalse(BattlefieldRules.shouldSuppressHeroInProjectedBattle(
+                true, false, true, 7L, projected), "an unrelated recruited hero is not a duplicate");
+        assertFalse(BattlefieldRules.shouldSuppressHeroInProjectedBattle(
+                false, false, true, 42L, projected), "heroes act normally outside projected battles");
+        assertFalse(BattlefieldRules.shouldSuppressHeroInProjectedBattle(
+                false, false, false, null, projected), "ambient heroes remain in local scenes");
+        assertFalse(BattlefieldRules.shouldSuppressHeroInProjectedBattle(
+                true, false, true, null, projected));
+        assertFalse(BattlefieldRules.shouldSuppressHeroInProjectedBattle(
+                true, false, true, 42L, null));
     }
 
     @Test
