@@ -24,7 +24,8 @@ import world.politics.Government;
 /** Versioned Phase 4 campaign checkpoint. Derived caches are rebuilt rather than serialized. */
 public final class CampaignSaveCodec {
     private static final int MAGIC = 0x43435134; // CCQ4
-    private static final int VERSION = 4;
+    private static final int VERSION = 5;
+    private static final int ROAD_TRAVEL_VERSION = 4;
     private static final int LEGACY_VERSION = 3;
 
     private CampaignSaveCodec() {}
@@ -134,11 +135,13 @@ public final class CampaignSaveCodec {
             out.writeLong(contract.escrowCoins);
         }
 
-        // Version 4 appends continuous road travel after the v3 payload. Keeping
-        // it at the end lets the loader share the complete v3 restore path.
+        // Version 5 appends continuous player travel plus field presence after
+        // the earlier payload. v3 has no travel block; v4 has only road travel.
         out.writeBoolean(player.isTraveling());
         if (player.isTraveling()) {
-            out.writeLong(player.travelDestinationSettlementId);
+            out.writeInt(player.travelMode.ordinal());
+            out.writeLong(player.travelDestinationSettlementId == null
+                    ? -1L : player.travelDestinationSettlementId);
             out.writeInt(player.travelRouteSettlementIds.size());
             for (Long settlementId : player.travelRouteSettlementIds) out.writeLong(settlementId);
             out.writeInt(player.travelRouteIndex);
@@ -147,7 +150,12 @@ public final class CampaignSaveCodec {
             out.writeLong(player.travelLastMinute);
             out.writeDouble(party.position == null ? Double.NaN : party.position.x);
             out.writeDouble(party.position == null ? Double.NaN : party.position.y);
+            out.writeDouble(player.travelDestinationX);
+            out.writeDouble(player.travelDestinationY);
         }
+        out.writeBoolean(player.atSettlement);
+        out.writeDouble(party.position == null ? Double.NaN : party.position.x);
+        out.writeDouble(party.position == null ? Double.NaN : party.position.y);
     }
 
     private static void restoreWorld(CampaignSession session, DataInputStream in, int version)
@@ -162,6 +170,7 @@ public final class CampaignSaveCodec {
         }
         long settlementId = in.readLong();
         player.currentSettlementId = settlementId;
+        player.atSettlement = true;
         player.cargoCapacity = in.readInt();
         WorldParty party = world.parties.get(player.partyId);
         party.memberPersonIds.clear();
@@ -248,8 +257,31 @@ public final class CampaignSaveCodec {
         }
 
         player.clearTravel();
-        if (version >= 4 && in.readBoolean()) {
+        player.atSettlement = true;
+        if (version == ROAD_TRAVEL_VERSION && in.readBoolean()) {
             restoreTravel(session, in);
+        } else if (version >= 5) {
+            boolean traveling = in.readBoolean();
+            if (traveling) restoreTravelV5(session, in);
+            boolean atSettlement = in.readBoolean();
+            double partyX = in.readDouble();
+            double partyY = in.readDouble();
+            player.atSettlement = !traveling && atSettlement;
+            if (!traveling) {
+                WorldParty restoredParty = world.parties.get(player.partyId);
+                if (Double.isFinite(partyX) && Double.isFinite(partyY)) {
+                    restoredParty.position = new WorldPosition(partyX, partyY);
+                }
+                if (player.atSettlement) {
+                    restoredParty.state = WorldParty.PartyState.AT_SETTLEMENT;
+                    restoredParty.currentSettlementId = settlementId;
+                    restoredParty.destinationSettlementId = null;
+                } else {
+                    restoredParty.state = WorldParty.PartyState.IN_FIELD;
+                    restoredParty.currentSettlementId = null;
+                    restoredParty.destinationSettlementId = null;
+                }
+            }
         }
     }
 
@@ -291,7 +323,14 @@ public final class CampaignSaveCodec {
         }
 
         player.traveling = true;
+        player.atSettlement = false;
+        player.travelMode = PlayerCampaignState.TravelMode.ROAD;
         player.travelDestinationSettlementId = destinationId;
+        Settlement destination = world.geography.getSettlement(destinationId);
+        if (destination != null && destination.position != null) {
+            player.travelDestinationX = destination.position.x;
+            player.travelDestinationY = destination.position.y;
+        }
         player.travelRouteSettlementIds.clear();
         player.travelRouteSettlementIds.addAll(route);
         player.travelRouteIndex = routeIndex;
@@ -317,10 +356,105 @@ public final class CampaignSaveCodec {
         }
     }
 
+    /** Restores a v5 cross-country journey, or a legacy road journey resaved by v5. */
+    private static void restoreTravelV5(CampaignSession session, DataInputStream in)
+            throws IOException {
+        WorldState world = session.getWorld();
+        PlayerCampaignState player = session.getPlayerState();
+        WorldParty party = world.parties.get(player.partyId);
+
+        int modeOrdinal = in.readInt();
+        PlayerCampaignState.TravelMode[] modes = PlayerCampaignState.TravelMode.values();
+        if (modeOrdinal < 0 || modeOrdinal >= modes.length) {
+            throw new IOException("Invalid saved travel mode " + modeOrdinal);
+        }
+        PlayerCampaignState.TravelMode mode = modes[modeOrdinal];
+
+        long destinationId = in.readLong();
+        Settlement destination = null;
+        if (destinationId >= 0) {
+            destination = world.geography.getSettlement(destinationId);
+            if (destination == null) {
+                throw new IOException("Save references unknown travel destination " + destinationId);
+            }
+        }
+
+        int routeSize = in.readInt();
+        if (routeSize < 0 || routeSize > 4096) {
+            throw new IOException("Invalid saved travel route length " + routeSize);
+        }
+        java.util.List<Long> route = new java.util.ArrayList<>(routeSize);
+        for (int i = 0; i < routeSize; i++) {
+            long routeSettlementId = in.readLong();
+            if (world.geography.getSettlement(routeSettlementId) == null) {
+                throw new IOException("Save references unknown travel route settlement "
+                        + routeSettlementId);
+            }
+            route.add(routeSettlementId);
+        }
+        int routeIndex = in.readInt();
+        double segmentProgress = in.readDouble();
+        double speedPerHour = in.readDouble();
+        long lastMinute = in.readLong();
+        double savedX = in.readDouble();
+        double savedY = in.readDouble();
+        double destinationX = in.readDouble();
+        double destinationY = in.readDouble();
+
+        boolean commonValid = Double.isFinite(segmentProgress)
+                && segmentProgress >= 0.0 && segmentProgress <= 1.0
+                && Double.isFinite(speedPerHour) && speedPerHour > 0.0;
+        boolean modeValid;
+        if (mode == PlayerCampaignState.TravelMode.ROAD) {
+            modeValid = destination != null && route.size() >= 2
+                    && route.get(route.size() - 1).longValue() == destinationId
+                    && routeIndex >= 1 && routeIndex < route.size();
+            if (destination != null && destination.position != null
+                    && (!Double.isFinite(destinationX) || !Double.isFinite(destinationY))) {
+                destinationX = destination.position.x;
+                destinationY = destination.position.y;
+            }
+        } else {
+            modeValid = route.isEmpty() && routeIndex == 0
+                    && Double.isFinite(destinationX) && Double.isFinite(destinationY);
+        }
+        if (!commonValid || !modeValid) throw new IOException("Invalid saved travel state");
+
+        player.traveling = true;
+        player.atSettlement = false;
+        player.travelMode = mode;
+        player.travelDestinationSettlementId = destinationId < 0 ? null : destinationId;
+        player.travelDestinationX = destinationX;
+        player.travelDestinationY = destinationY;
+        player.travelRouteSettlementIds.clear();
+        player.travelRouteSettlementIds.addAll(route);
+        player.travelRouteIndex = routeIndex;
+        player.travelSegmentProgress = segmentProgress;
+        player.travelSpeedPerHour = Math.max(1.0, Math.min(20.0, speedPerHour));
+        long currentMinute = session.getSimulation().getClock().getWorldMinute();
+        player.travelLastMinute = lastMinute == Long.MIN_VALUE
+                ? currentMinute : Math.min(lastMinute, currentMinute);
+
+        party.state = WorldParty.PartyState.TRAVELING;
+        party.currentSettlementId = null;
+        party.destinationSettlementId = destinationId < 0 ? null : destinationId;
+        if (Double.isFinite(savedX) && Double.isFinite(savedY)) {
+            party.position = new WorldPosition(savedX, savedY);
+        } else if (mode == PlayerCampaignState.TravelMode.ROAD) {
+            Settlement from = world.geography.getSettlement(route.get(routeIndex - 1));
+            Settlement to = world.geography.getSettlement(route.get(routeIndex));
+            if (from != null && to != null && from.position != null && to.position != null) {
+                party.position = new WorldPosition(
+                        from.position.x + (to.position.x - from.position.x) * segmentProgress,
+                        from.position.y + (to.position.y - from.position.y) * segmentProgress);
+            }
+        }
+    }
+
     private static int validateHeader(DataInputStream in) throws IOException {
         if (in.readInt() != MAGIC) throw new IOException("Not a Chronicle Conquest campaign save");
         int version = in.readInt();
-        if (version != VERSION && version != LEGACY_VERSION) {
+        if (version != VERSION && version != ROAD_TRAVEL_VERSION && version != LEGACY_VERSION) {
             throw new IOException("Unsupported campaign save version " + version);
         }
         return version;

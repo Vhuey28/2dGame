@@ -42,26 +42,43 @@ public final class PlayerCampaignState {
     public Long captorRealmId;
     public long ransomCoins;
 
+    /** Player movement is free cross-country; ROAD remains for journeys loaded from older saves. */
+    public enum TravelMode { ROAD, CROSS_COUNTRY }
+
     /**
-     * Continuous campaign-map travel. The route is stored as settlement ids from the
-     * last settlement behind the party to the final destination. {@code travelRouteIndex}
-     * is the settlement currently being approached, and {@code travelSegmentProgress}
-     * is the fraction travelled from route[index - 1] to route[index]. The party's
-     * {@code currentSettlementId} deliberately remains the last completed destination
-     * until final arrival, matching the older instant-travel contract for the many
-     * systems that require the adventurer to be somewhere.
+     * Continuous campaign-map travel. New journeys are direct cross-country
+     * movement to a map coordinate, optionally entering a settlement at the
+     * end. Road journeys from older saves retain the settlement-id route:
+     * {@code travelRouteIndex} is the settlement currently being approached,
+     * and {@code travelSegmentProgress} is the fraction travelled from
+     * route[index - 1] to route[index].
+     *
+     * <p>{@code currentSettlementId} remains the last settlement the party
+     * actually entered, even while travelling or camped in the field. The
+     * separate {@code atSettlement} flag records physical presence there so
+     * market, recruiting, contract, and local-scene actions cannot be used
+     * remotely from the countryside.</p>
      */
+    public boolean atSettlement = true;
     public boolean traveling;
+    public TravelMode travelMode = TravelMode.CROSS_COUNTRY;
     public Long travelDestinationSettlementId;
+    public double travelDestinationX = Double.NaN;
+    public double travelDestinationY = Double.NaN;
     public final List<Long> travelRouteSettlementIds = new ArrayList<>();
     public int travelRouteIndex;
     public double travelSegmentProgress;
     public double travelSpeedPerHour = 10.0;
     public long travelLastMinute = Long.MIN_VALUE;
 
-    /** True while a well-formed road journey is in progress. */
+    /** True while a well-formed cross-country or legacy road journey is in progress. */
     public boolean isTraveling() {
-        return traveling && travelDestinationSettlementId != null
+        if (!traveling) return false;
+        if (travelMode == TravelMode.CROSS_COUNTRY) {
+            return Double.isFinite(travelDestinationX)
+                    && Double.isFinite(travelDestinationY);
+        }
+        return travelDestinationSettlementId != null
                 && travelRouteSettlementIds.size() >= 2
                 && travelRouteIndex >= 1
                 && travelRouteIndex < travelRouteSettlementIds.size();
@@ -70,7 +87,10 @@ public final class PlayerCampaignState {
     /** Clears all transient journey state without moving the party. */
     public void clearTravel() {
         traveling = false;
+        travelMode = TravelMode.CROSS_COUNTRY;
         travelDestinationSettlementId = null;
+        travelDestinationX = Double.NaN;
+        travelDestinationY = Double.NaN;
         travelRouteSettlementIds.clear();
         travelRouteIndex = 0;
         travelSegmentProgress = 0.0;

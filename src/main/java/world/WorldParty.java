@@ -29,5 +29,5 @@ public final class WorldParty {
         return Math.max(0, cargoCapacity - cargo.totalQuantity());
     }
 
-    public enum PartyState { AT_SETTLEMENT, TRAVELING, LOCAL_SCENE }
+    public enum PartyState { AT_SETTLEMENT, TRAVELING, IN_FIELD, LOCAL_SCENE }
 }

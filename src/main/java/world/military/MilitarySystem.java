@@ -831,6 +831,12 @@ public final class MilitarySystem {
         Settlement settlement = world.geography.getSettlement(army.currentSettlementId);
         if (settlement == null || settlement.controllerRealmId == null
                 || settlement.controllerRealmId != army.realmId) return;
+        // currentSettlementId is an administrative anchor for a player army
+        // camped in the field; only an army physically at the settlement can
+        // draw its stores.
+        if (army.position == null || settlement.position == null
+                || Math.hypot(army.position.x - settlement.position.x,
+                        army.position.y - settlement.position.y) > 12.0) return;
         int grainTarget = strength * 12;
         int vegetablesTarget = strength * 4;
         transferSupply(settlement, army, GoodType.GRAIN,

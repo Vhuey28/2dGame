@@ -511,8 +511,7 @@ public class GamePanel extends JPanel implements Runnable{
 								campaignFollowAnchorSettlementId = null;
 								world.command.CommandResult result = campaignSession.cancelTravel();
 								if (result != null && result.message != null && !result.message.isBlank()) {
-									showCampaignNotice(result.accepted
-											? "You turn back along the road." : result.message);
+								showCampaignNotice(result.message);
 								}
 							}
 							if (selectedCampaignSettlementId != null) {
@@ -1210,18 +1209,20 @@ public class GamePanel extends JPanel implements Runnable{
 			campaignCamera.clampTo(bounds[0] - 90, bounds[1] + 90,
 					bounds[2] - 90, bounds[3] + 90, screenWidth, screenHeight, 70);
 
-			// Follow a moving target by riding to the settlement it is currently
-			// marching toward. Re-issue only when that anchor changes, so the road
-			// route is not rebuilt every frame.
-			Long followAnchor = null;
+			// Follow a moving target by riding cross-country to its live token
+			// position. Retarget only after it has moved a couple of map units
+			// from the currently marked destination, avoiding a new order on
+			// every rendered frame.
+			Double followTargetX = null;
+			Double followTargetY = null;
 			if (campaignFollowArmyId != null) {
 				CampaignSnapshot.ArmyView target = snapshot.findArmy(campaignFollowArmyId);
 				if (target == null) {
 					campaignFollowArmyId = null;
 					campaignFollowAnchorSettlementId = null;
 				} else {
-					followAnchor = target.destinationSettlementId != null
-							? target.destinationSettlementId : target.currentSettlementId;
+					followTargetX = target.worldX;
+					followTargetY = target.worldY;
 				}
 			} else if (campaignFollowCaravanId != null) {
 				CampaignSnapshot.CaravanView target = snapshot.findCaravan(campaignFollowCaravanId);
@@ -1229,17 +1230,23 @@ public class GamePanel extends JPanel implements Runnable{
 					campaignFollowCaravanId = null;
 					campaignFollowAnchorSettlementId = null;
 				} else {
-					followAnchor = target.destinationSettlementId != null
-							? target.destinationSettlementId : target.currentSettlementId;
+					followTargetX = target.worldX;
+					followTargetY = target.worldY;
 				}
 			}
-			if (followAnchor != null) {
-				boolean needsRide = !followAnchor.equals(campaignFollowAnchorSettlementId)
-						|| (!snapshot.player.traveling
-								&& followAnchor.longValue() != snapshot.player.settlementId);
-				if (needsRide && followAnchor.longValue() != snapshot.player.settlementId) {
-					campaignFollowAnchorSettlementId = followAnchor;
-					world.command.CommandResult result = campaignSession.beginTravelTo(followAnchor);
+			if (followTargetX != null && followTargetY != null) {
+				double distanceToTarget = Math.hypot(
+						followTargetX - snapshot.player.worldX,
+						followTargetY - snapshot.player.worldY);
+				boolean destinationStale = !snapshot.player.traveling
+						|| !Double.isFinite(snapshot.player.travelDestinationWorldX)
+						|| !Double.isFinite(snapshot.player.travelDestinationWorldY)
+						|| Math.hypot(followTargetX - snapshot.player.travelDestinationWorldX,
+								followTargetY - snapshot.player.travelDestinationWorldY) > 2.0;
+				if (distanceToTarget > 10.5 && destinationStale) {
+					campaignFollowAnchorSettlementId = null;
+					world.command.CommandResult result = campaignSession.beginMoveTo(
+							followTargetX, followTargetY);
 					if (result != null && !result.accepted) {
 						campaignFollowArmyId = null;
 						campaignFollowCaravanId = null;
@@ -1266,7 +1273,8 @@ public class GamePanel extends JPanel implements Runnable{
 			} else if (campaignWasTraveling) {
 				Long arrivedAt = campaignTravelDestinationSeen;
 				campaignTravelDestinationSeen = null;
-				if (arrivedAt != null && snapshot.player.settlementId == arrivedAt.longValue()
+				if (arrivedAt != null && snapshot.player.atSettlement
+						&& snapshot.player.settlementId == arrivedAt.longValue()
 						&& campaignFollowArmyId == null && campaignFollowCaravanId == null
 						&& campaignContextMenu == CampaignContextMenu.NONE) {
 					selectedCampaignSettlementId = arrivedAt;
@@ -1348,10 +1356,18 @@ public class GamePanel extends JPanel implements Runnable{
 		private void enterCampaignLocalView() {
 			if (campaignSession == null || campaignSnapshot == null || campaignSnapshot.player == null) return;
 			if (campaignSnapshot.player.traveling) {
-				showCampaignNotice("You are on the road to "
+				showCampaignNotice("You are riding cross-country to "
 						+ (campaignSnapshot.player.travelDestinationName == null
 								? "your destination" : campaignSnapshot.player.travelDestinationName)
-						+ ". Arrive there, or press X to turn back, before entering a settlement.");
+						+ ". Arrive there, or press X to stop, before entering a settlement.");
+				return;
+			}
+			if (!campaignSnapshot.player.atSettlement) {
+				showCampaignNotice("You are in the countryside near "
+						+ (campaignSnapshot.player.nearestSettlementName == null
+								? "the nearest settlement"
+								: campaignSnapshot.player.nearestSettlementName)
+						+ ". Ride onto a settlement to enter its local view.");
 				return;
 			}
 			CampaignSnapshot.SettlementView settlement = campaignSnapshot.findSettlement(
@@ -3637,7 +3653,8 @@ System.nanoTime();
 			g2.drawString(settlement.name, x + 20, y + 50);
 		}
 		if (campaignContextMenu == CampaignContextMenu.SETTLEMENT && settlement != null) {
-			boolean playerHere = campaignSnapshot.player != null && !campaignSnapshot.player.traveling
+			boolean playerHere = campaignSnapshot.player != null && campaignSnapshot.player.atSettlement
+					&& !campaignSnapshot.player.traveling
 					&& campaignSnapshot.player.settlementId == settlement.id;
 			g2.drawString("Population " + settlement.population + " | Households " + settlement.households, x + 20, y + 72);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
@@ -4634,10 +4651,8 @@ System.nanoTime();
 							campaignFollowCaravanId = null;
 							campaignFollowAnchorSettlementId = null;
 							world.command.CommandResult result = campaignSession.cancelTravel();
-							if (result != null && !result.accepted && result.message != null) {
+							if (result != null && result.message != null) {
 								showCampaignNotice(result.message);
-							} else {
-								showCampaignNotice("You turn back along the road.");
 							}
 						}
 						default -> { }
@@ -4730,15 +4745,15 @@ System.nanoTime();
 						return;
 					}
 					// Bannerlord behaviour: left-click a party to ride to it. The
-					// per-frame updater keeps retargeting the moving army's anchor.
+					// per-frame updater keeps retargeting its live map position.
 					campaignFollowArmyId = army.id;
 					campaignFollowCaravanId = null;
 					campaignFollowAnchorSettlementId = null;
-					Long anchor = army.destinationSettlementId != null
-							? army.destinationSettlementId : army.currentSettlementId;
-					if (anchor != null && anchor.longValue() != campaignSnapshot.player.settlementId) {
-						campaignFollowAnchorSettlementId = anchor;
-						world.command.CommandResult result = campaignSession.beginTravelTo(anchor);
+					double armyDistance = Math.hypot(army.worldX - campaignSnapshot.player.worldX,
+							army.worldY - campaignSnapshot.player.worldY);
+					if (armyDistance > 10.5) {
+						world.command.CommandResult result = campaignSession.beginMoveTo(
+								army.worldX, army.worldY);
 						campaignSnapshot = campaignSession.getSnapshot();
 						if (result != null && !result.accepted) {
 							campaignFollowArmyId = null;
@@ -4771,11 +4786,12 @@ System.nanoTime();
 					campaignFollowCaravanId = caravan.id;
 					campaignFollowArmyId = null;
 					campaignFollowAnchorSettlementId = null;
-					Long anchor = caravan.destinationSettlementId != null
-							? caravan.destinationSettlementId : caravan.currentSettlementId;
-					if (anchor != null && anchor.longValue() != campaignSnapshot.player.settlementId) {
-						campaignFollowAnchorSettlementId = anchor;
-						world.command.CommandResult result = campaignSession.beginTravelTo(anchor);
+					double caravanDistance = Math.hypot(
+							caravan.worldX - campaignSnapshot.player.worldX,
+							caravan.worldY - campaignSnapshot.player.worldY);
+					if (caravanDistance > 10.5) {
+						world.command.CommandResult result = campaignSession.beginMoveTo(
+								caravan.worldX, caravan.worldY);
 						campaignSnapshot = campaignSession.getSnapshot();
 						if (result != null && !result.accepted) {
 							campaignFollowCaravanId = null;
@@ -4795,6 +4811,7 @@ System.nanoTime();
 				if (entry.getValue().contains(point)) {
 					selectedCampaignSettlementId = entry.getKey();
 					boolean playerHere = campaignSnapshot != null && campaignSnapshot.player != null
+							&& campaignSnapshot.player.atSettlement
 							&& !campaignSnapshot.player.traveling
 							&& campaignSnapshot.player.settlementId == entry.getKey().longValue();
 					if (playerHere || rightClick) {
@@ -4818,6 +4835,32 @@ System.nanoTime();
 					}
 					repaint();
 					return;
+				}
+			}
+
+			// Empty land is a free-movement destination. Drag-panning is
+			// suppressed before this handler, so an ordinary left-click here
+			// means "ride to this exact map position" rather than a road node.
+			if (!rightClick && campaignSession != null && campaignCameraInitialized) {
+				int panelHeight = activeCampaignTab == CampaignTab.WAR
+						|| activeCampaignTab == CampaignTab.FIEFS ? 212 : 166;
+				int mapBottom = activeCampaignTab == CampaignTab.OVERVIEW
+						? screenHeight - 32 : screenHeight - 39 - panelHeight;
+				Rectangle legend = new Rectangle(screenWidth - 276, screenHeight - 102, 268, 62);
+				boolean onLegend = activeCampaignTab == CampaignTab.OVERVIEW
+						&& legend.contains(point);
+				if (point.y < mapBottom && !onLegend) {
+					campaignFollowArmyId = null;
+					campaignFollowCaravanId = null;
+					campaignFollowAnchorSettlementId = null;
+					double targetX = campaignCamera.screenToWorldX(point.x, screenWidth);
+					double targetY = campaignCamera.screenToWorldY(point.y, screenHeight);
+					world.command.CommandResult result = campaignSession.beginMoveTo(targetX, targetY);
+					campaignSnapshot = campaignSession.getSnapshot();
+					if (result != null && result.message != null && !result.message.isBlank()) {
+						showCampaignNotice(result.message);
+					}
+					repaint();
 				}
 			}
 		}
@@ -5150,13 +5193,13 @@ System.nanoTime();
 
 			String[] left = {
 				"WORLD MAP",
-				"  LEFT-click settlement  ride there on the roads",
+				"  LEFT-click land/settlement ride there cross-country",
 				"  LEFT-click army/caravan ride to intercept/follow",
 				"  RIGHT-click anything   inspect / select target",
 				"  RIGHT-click settlement menu: travel or start/join siege",
 				"  drag map   pan        mouse wheel  zoom",
 				"  Home       centre on your party",
-				"  X          turn back on the current road",
+				"  X          stop where you are in the countryside",
 				"  TAB        enter/leave the local settlement",
 				"  T          ride to the selected settlement",
 				"  B / V      buy 5 grain / 5 vegetables",
@@ -5312,6 +5355,30 @@ System.nanoTime();
 				g2.drawLine(x1, y1, x2, y2);
 			}
 			g2.setStroke(new BasicStroke(1f));
+
+			// The player's marked cross-country destination and direct line of march.
+			if (snapshot.player != null && snapshot.player.traveling
+					&& Double.isFinite(snapshot.player.travelDestinationWorldX)
+					&& Double.isFinite(snapshot.player.travelDestinationWorldY)) {
+				int startX = campaignCamera.worldToScreenX(snapshot.player.worldX, screenWidth);
+				int startY = campaignCamera.worldToScreenY(snapshot.player.worldY, screenHeight);
+				int destX = campaignCamera.worldToScreenX(
+						snapshot.player.travelDestinationWorldX, screenWidth);
+				int destY = campaignCamera.worldToScreenY(
+						snapshot.player.travelDestinationWorldY, screenHeight);
+				g2.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
+						0f, new float[] {7f, 5f}, 0f));
+				g2.setColor(new Color(255, 215, 90, 190));
+				g2.drawLine(startX, startY, destX, destY);
+				g2.setStroke(new BasicStroke(2f));
+				g2.setColor(new Color(35, 28, 12, 220));
+				g2.drawOval(destX - 8, destY - 8, 16, 16);
+				g2.setColor(new Color(255, 215, 90));
+				g2.drawOval(destX - 7, destY - 7, 14, 14);
+				g2.drawLine(destX - 4, destY - 4, destX + 4, destY + 4);
+				g2.drawLine(destX - 4, destY + 4, destX + 4, destY - 4);
+				g2.setStroke(new BasicStroke(1f));
+			}
 
 			java.util.Map<Long, java.awt.Point> settlementPoints = new java.util.HashMap<>();
 			for (CampaignSnapshot.SettlementView settlement : snapshot.settlements) {
@@ -5871,7 +5938,7 @@ System.nanoTime();
 				g2.drawRoundRect(stop.x, stop.y, stop.width, stop.height, 6, 6);
 				g2.setColor(Color.WHITE);
 				g2.setFont(new Font("SansSerif", Font.BOLD, 9));
-				g2.drawString("Turn back", stop.x + 7, stop.y + 17);
+				g2.drawString("Stop", stop.x + 18, stop.y + 17);
 			}
 
 			// Party resources, top right.
@@ -5896,7 +5963,11 @@ System.nanoTime();
 				String place = snapshot.player.traveling
 						? "Riding to " + snapshot.player.travelDestinationName
 								+ " · " + campaignEtaText(snapshot.player.travelEtaMinutes)
-						: "At " + settlementName(snapshot, snapshot.player.settlementId);
+						: snapshot.player.atSettlement
+								? "At " + settlementName(snapshot, snapshot.player.settlementId)
+								: "In the field near " + (snapshot.player.nearestSettlementName == null
+										? "the nearest settlement"
+										: snapshot.player.nearestSettlementName);
 				g2.drawString(place, x + 10, 39);
 			}
 
@@ -5940,8 +6011,13 @@ System.nanoTime();
 							+ snapshot.player.travelDestinationName + " · "
 							+ String.format("%.1f", snapshot.player.travelSpeedPerHour) + "/h · "
 							+ campaignEtaText(snapshot.player.travelEtaMinutes)
-					: "Your party (" + snapshot.player.partySize + ") at "
-							+ settlementName(snapshot, snapshot.player.settlementId);
+					: snapshot.player.atSettlement
+							? "Your party (" + snapshot.player.partySize + ") at "
+									+ settlementName(snapshot, snapshot.player.settlementId)
+							: "Your party (" + snapshot.player.partySize + ") in the field near "
+									+ (snapshot.player.nearestSettlementName == null
+											? "the nearest settlement"
+											: snapshot.player.nearestSettlementName);
 			g2.drawString(partyLine, panelX + 8, lineY);
 			lineY += 13;
 			if (yourArmy != null) {
@@ -6072,10 +6148,15 @@ System.nanoTime();
 				g2.drawString("Riding to " + snapshot.player.travelDestinationName, x + 10, y + 76);
 				g2.drawString("Speed " + String.format("%.1f", snapshot.player.travelSpeedPerHour)
 						+ "/h  ETA " + campaignEtaText(snapshot.player.travelEtaMinutes), x + 10, y + 92);
-			} else {
+			} else if (snapshot.player.atSettlement) {
 				g2.drawString("At " + settlementName(snapshot, snapshot.player.settlementId),
 						x + 10, y + 76);
 				g2.drawString("TAB enters the local settlement", x + 10, y + 92);
+			} else {
+				g2.drawString("In the field near " + (snapshot.player.nearestSettlementName == null
+						? "the nearest settlement" : snapshot.player.nearestSettlementName),
+						x + 10, y + 76);
+				g2.drawString("Ride onto a settlement to enter it", x + 10, y + 92);
 			}
 			g2.setColor(new Color(190, 200, 205));
 			g2.drawString(armyWithParty

@@ -314,6 +314,7 @@ public final class CheatService {
             }
         }
         world.player.clearTravel();
+        world.player.atSettlement = true;
         world.player.currentSettlementId = settlement.id;
         party.state = WorldParty.PartyState.AT_SETTLEMENT;
         party.currentSettlementId = settlement.id;

@@ -21,8 +21,9 @@ import world.military.Regiment;
 import world.save.CampaignSaveCodec;
 
 /**
- * Continuous Bannerlord-style travel on the campaign map: the party is a token
- * on the road network while simulated time runs, rather than a teleport.
+ * Continuous Bannerlord-style travel on the campaign map: the player's party
+ * is a token moving cross-country while simulated time runs, rather than a
+ * teleport or a token constrained to the AI road network.
  */
 class CampaignMapTravelTest {
 
@@ -61,7 +62,7 @@ class CampaignMapTravelTest {
     }
 
     @Test
-    void partyRidesAlongRoadsInsteadOfTeleporting() {
+    void partyRidesCrossCountryInsteadOfTeleporting() {
         CampaignSession session = new CampaignSession(12345L);
         WorldState world = session.getWorld();
         PlayerCampaignState player = session.getPlayerState();
@@ -76,6 +77,12 @@ class CampaignMapTravelTest {
         assertTrue(started.accepted, started.message);
         assertEquals("TRAVEL_STARTED", started.reasonCode);
         assertTrue(player.isTraveling());
+        assertEquals(PlayerCampaignState.TravelMode.CROSS_COUNTRY, player.travelMode);
+        assertTrue(player.travelRouteSettlementIds.isEmpty(),
+                "the player's own movement must not install a road route");
+        assertEquals(destination.position.x, player.travelDestinationX, 0.001);
+        assertEquals(destination.position.y, player.travelDestinationY, 0.001);
+        assertFalse(player.atSettlement);
         assertEquals(originId, player.currentSettlementId,
                 "the last settled location stays canonical until final arrival");
         assertEquals(WorldParty.PartyState.TRAVELING, party.state);
@@ -99,6 +106,7 @@ class CampaignMapTravelTest {
 
         advanceWorldMinutes(session, 15L * WorldConfig.MINUTES_PER_DAY);
         assertFalse(player.isTraveling());
+        assertTrue(player.atSettlement);
         assertEquals(destination.id, player.currentSettlementId);
         assertEquals(WorldParty.PartyState.AT_SETTLEMENT, party.state);
         assertEquals(destination.id, party.currentSettlementId.longValue());
@@ -112,34 +120,155 @@ class CampaignMapTravelTest {
     }
 
     @Test
-    void journeyCanTurnBackAndBeRetargetedMidRoad() {
+    void journeyCanStopInFieldAndBeRetargetedCrossCountry() {
         CampaignSession session = new CampaignSession(777L);
         WorldState world = session.getWorld();
         PlayerCampaignState player = session.getPlayerState();
         long originId = player.currentSettlementId;
+        Settlement origin = world.geography.getSettlement(originId);
         Settlement first = reachableDestination(session, originId);
         Settlement second = reachableDestination(session, originId, first.id);
+        WorldParty party = world.parties.get(player.partyId);
+        assertNotNull(origin);
+        assertNotNull(party);
 
         assertTrue(session.beginTravelTo(first.id).accepted);
         advanceWorldMinutes(session, 2L * WorldConfig.MINUTES_PER_HOUR);
         assertTrue(player.isTraveling());
 
-        CommandResult cancelled = session.cancelTravel();
-        assertTrue(cancelled.accepted, cancelled.message);
-        assertEquals(originId, player.travelDestinationSettlementId.longValue());
-        advanceWorldMinutes(session, 4L * WorldConfig.MINUTES_PER_HOUR);
+        CommandResult stopped = session.cancelTravel();
+        assertTrue(stopped.accepted, stopped.message);
+        assertEquals("TRAVEL_STOPPED", stopped.reasonCode);
         assertFalse(player.isTraveling());
-        assertEquals(originId, player.currentSettlementId);
+        assertFalse(player.atSettlement);
+        assertEquals(originId, player.currentSettlementId,
+                "the last entered settlement remains only an administrative anchor");
+        assertEquals(WorldParty.PartyState.IN_FIELD, party.state);
+        assertTrue(distanceFrom(party, origin) > 1.0,
+                "stopping must leave the token where it stopped, not turn it around");
+
+        CommandResult shopping = session.buyFromSettlement(originId, GoodType.GRAIN, 1);
+        assertFalse(shopping.accepted);
+        assertEquals("NOT_AT_SETTLEMENT", shopping.reasonCode);
 
         assertTrue(session.beginTravelTo(first.id).accepted);
         advanceWorldMinutes(session, WorldConfig.MINUTES_PER_HOUR);
         CommandResult retargeted = session.beginTravelTo(second.id);
         assertTrue(retargeted.accepted, retargeted.message);
         assertEquals(second.id, player.travelDestinationSettlementId.longValue());
+        assertEquals(PlayerCampaignState.TravelMode.CROSS_COUNTRY, player.travelMode);
 
         advanceWorldMinutes(session, 15L * WorldConfig.MINUTES_PER_DAY);
         assertFalse(player.isTraveling());
+        assertTrue(player.atSettlement);
         assertEquals(second.id, player.currentSettlementId);
+    }
+
+    @Test
+    void partyCanRideToArbitraryMapPointAndCampInField() {
+        CampaignSession session = new CampaignSession(31415L);
+        WorldState world = session.getWorld();
+        PlayerCampaignState player = session.getPlayerState();
+        WorldParty party = world.parties.get(player.partyId);
+        Settlement origin = world.geography.getSettlement(player.currentSettlementId);
+        assertNotNull(party);
+        assertNotNull(origin);
+        double targetX = origin.position.x + 35.0;
+        double targetY = origin.position.y + 20.0;
+
+        CommandResult started = session.beginMoveTo(targetX, targetY);
+        assertTrue(started.accepted, started.message);
+        assertEquals("TRAVEL_STARTED", started.reasonCode);
+        assertTrue(player.isTraveling());
+        assertEquals(PlayerCampaignState.TravelMode.CROSS_COUNTRY, player.travelMode);
+        assertEquals(null, player.travelDestinationSettlementId);
+        assertEquals(targetX, player.travelDestinationX, 0.001);
+        assertEquals(targetY, player.travelDestinationY, 0.001);
+
+        CampaignSnapshot enRoute = session.getSnapshot();
+        assertEquals("the countryside", enRoute.player.travelDestinationName);
+        assertEquals(targetX, enRoute.player.travelDestinationWorldX, 0.001);
+        assertEquals(targetY, enRoute.player.travelDestinationWorldY, 0.001);
+        assertFalse(enRoute.player.atSettlement);
+        assertTrue(enRoute.player.travelEtaMinutes > 0L);
+
+        advanceWorldMinutes(session, WorldConfig.MINUTES_PER_HOUR);
+        assertTrue(player.isTraveling());
+        assertTrue(distanceFrom(party, origin) > 1.0);
+
+        advanceWorldMinutes(session, WorldConfig.MINUTES_PER_DAY);
+        assertFalse(player.isTraveling());
+        assertFalse(player.atSettlement);
+        assertEquals(WorldParty.PartyState.IN_FIELD, party.state);
+        assertEquals(targetX, party.position.x, 0.001);
+        assertEquals(targetY, party.position.y, 0.001);
+        assertEquals(origin.id, player.currentSettlementId);
+        assertFalse(session.getSnapshot().player.atSettlement);
+
+        assertTrue(session.beginTravelTo(origin.id).accepted);
+        advanceWorldMinutes(session, WorldConfig.MINUTES_PER_DAY);
+        assertFalse(player.isTraveling());
+        assertTrue(player.atSettlement);
+        assertEquals(WorldParty.PartyState.AT_SETTLEMENT, party.state);
+        assertTrue(distanceFrom(party, origin) < 0.001);
+    }
+
+    @Test
+    void accompanyingArmyRidesCrossCountryWithPartyAndHoldsInField() {
+        CampaignSession session = new CampaignSession(60606L);
+        WorldState world = session.getWorld();
+        PlayerCampaignState player = session.getPlayerState();
+        WorldParty party = world.parties.get(player.partyId);
+        Settlement home = world.geography.getSettlement(player.currentSettlementId);
+        assertNotNull(party);
+        assertNotNull(home);
+        home.publicStockpile.add(GoodType.WEAPONS, 20);
+        party.money.add(5000L);
+        assertTrue(session.raiseCompany(5, Regiment.RegimentType.LEVY_INFANTRY).accepted);
+        Army mine = world.armies.get(player.commandedArmyId);
+        assertNotNull(mine);
+
+        double targetX = home.position.x + 30.0;
+        double targetY = home.position.y + 15.0;
+        assertTrue(session.beginMoveTo(targetX, targetY).accepted);
+        advanceWorldMinutes(session, WorldConfig.MINUTES_PER_HOUR);
+        assertTrue(player.isTraveling());
+        assertEquals(Army.ArmyState.TRAVELING, mine.state);
+        assertEquals(null, mine.destinationSettlementId);
+        assertTrue(mine.routeRoadIds.isEmpty());
+        assertEquals(party.position.x, mine.position.x, 0.001);
+        assertEquals(party.position.y, mine.position.y, 0.001);
+
+        advanceWorldMinutes(session, WorldConfig.MINUTES_PER_DAY);
+        assertFalse(player.isTraveling());
+        assertFalse(player.atSettlement);
+        assertEquals(Army.ArmyOrder.MUSTER, mine.order);
+        assertEquals(Army.ArmyState.MUSTERED, mine.state);
+        assertEquals(targetX, mine.position.x, 0.001);
+        assertEquals(targetY, mine.position.y, 0.001);
+    }
+
+    @Test
+    void arbitraryMovementIsClampedToCampaignLandmassAndSnapsIntoSettlements() {
+        CampaignSession session = new CampaignSession(27182L);
+        WorldState world = session.getWorld();
+        PlayerCampaignState player = session.getPlayerState();
+        double minX = sortedSettlements(world).stream()
+                .mapToDouble(settlement -> settlement.position.x).min().orElseThrow();
+        double minY = sortedSettlements(world).stream()
+                .mapToDouble(settlement -> settlement.position.y).min().orElseThrow();
+
+        assertTrue(session.beginMoveTo(-10_000.0, -10_000.0).accepted);
+        assertEquals(minX - 110.0, player.travelDestinationX, 0.001);
+        assertEquals(minY - 110.0, player.travelDestinationY, 0.001);
+        assertTrue(session.cancelTravel().accepted);
+
+        Settlement destination = reachableDestination(session, player.currentSettlementId);
+        assertTrue(session.beginMoveTo(destination.position.x + 3.0,
+                destination.position.y - 2.0).accepted);
+        assertEquals(destination.id, player.travelDestinationSettlementId.longValue());
+        assertEquals(destination.position.x, player.travelDestinationX, 0.001);
+        assertEquals(destination.position.y, player.travelDestinationY, 0.001);
     }
 
     @Test
@@ -161,7 +290,11 @@ class CampaignMapTravelTest {
         WorldParty loadedParty = loaded.getWorld().parties.get(loadedPlayer.partyId);
 
         assertTrue(loadedPlayer.isTraveling());
+        assertFalse(loadedPlayer.atSettlement);
+        assertEquals(PlayerCampaignState.TravelMode.CROSS_COUNTRY, loadedPlayer.travelMode);
         assertEquals(destination.id, loadedPlayer.travelDestinationSettlementId.longValue());
+        assertEquals(destination.position.x, loadedPlayer.travelDestinationX, 0.000001);
+        assertEquals(destination.position.y, loadedPlayer.travelDestinationY, 0.000001);
         assertEquals(routeIndex, loadedPlayer.travelRouteIndex);
         assertEquals(segmentProgress, loadedPlayer.travelSegmentProgress, 0.000001);
         assertEquals(WorldParty.PartyState.TRAVELING, loadedParty.state);
@@ -171,7 +304,38 @@ class CampaignMapTravelTest {
 
         advanceWorldMinutes(loaded, 15L * WorldConfig.MINUTES_PER_DAY);
         assertFalse(loadedPlayer.isTraveling());
+        assertTrue(loadedPlayer.atSettlement);
         assertEquals(destination.id, loadedPlayer.currentSettlementId);
+    }
+
+    @Test
+    void campedFieldPositionSurvivesSaveLoad(@TempDir Path directory) throws Exception {
+        CampaignSession session = new CampaignSession(16180L);
+        PlayerCampaignState player = session.getPlayerState();
+        WorldParty party = session.getWorld().parties.get(player.partyId);
+        Settlement origin = session.getWorld().geography.getSettlement(player.currentSettlementId);
+        assertNotNull(party);
+        assertNotNull(origin);
+        double targetX = origin.position.x + 28.0;
+        double targetY = origin.position.y + 16.0;
+        assertTrue(session.beginMoveTo(targetX, targetY).accepted);
+        advanceWorldMinutes(session, WorldConfig.MINUTES_PER_DAY);
+        assertFalse(player.isTraveling());
+        assertFalse(player.atSettlement);
+
+        Path save = directory.resolve("field-camp.ccq5");
+        CampaignSaveCodec.save(session, save);
+        CampaignSession loaded = CampaignSaveCodec.load(save);
+        PlayerCampaignState loadedPlayer = loaded.getPlayerState();
+        WorldParty loadedParty = loaded.getWorld().parties.get(loadedPlayer.partyId);
+
+        assertFalse(loadedPlayer.isTraveling());
+        assertFalse(loadedPlayer.atSettlement);
+        assertEquals(origin.id, loadedPlayer.currentSettlementId);
+        assertEquals(WorldParty.PartyState.IN_FIELD, loadedParty.state);
+        assertEquals(targetX, loadedParty.position.x, 0.000001);
+        assertEquals(targetY, loadedParty.position.y, 0.000001);
+        assertFalse(loaded.getSnapshot().player.atSettlement);
     }
 
     @Test
@@ -218,6 +382,9 @@ class CampaignMapTravelTest {
         assertEquals(start.position.x, snapshot.player.worldX, 0.001);
         assertEquals(start.position.y, snapshot.player.worldY, 0.001);
         assertFalse(snapshot.player.traveling);
+        assertTrue(snapshot.player.atSettlement);
+        assertTrue(Double.isNaN(snapshot.player.travelDestinationWorldX));
+        assertTrue(Double.isNaN(snapshot.player.travelDestinationWorldY));
     }
 
     @Test

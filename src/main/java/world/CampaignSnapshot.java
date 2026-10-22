@@ -342,6 +342,38 @@ public final class CampaignSnapshot {
                     ? world.player.travelDestinationSettlementId : null;
             Settlement travelDestination = travelDestinationId == null
                     ? null : world.geography.getSettlement(travelDestinationId);
+            double travelDestinationX = Double.NaN;
+            double travelDestinationY = Double.NaN;
+            if (world.player.isTraveling()) {
+                if (world.player.travelMode == PlayerCampaignState.TravelMode.CROSS_COUNTRY) {
+                    travelDestinationX = world.player.travelDestinationX;
+                    travelDestinationY = world.player.travelDestinationY;
+                } else if (travelDestination != null && travelDestination.position != null) {
+                    travelDestinationX = travelDestination.position.x;
+                    travelDestinationY = travelDestination.position.y;
+                }
+            }
+            String travelDestinationName = travelDestination != null ? travelDestination.name
+                    : world.player.isTraveling() ? "the countryside" : null;
+            Settlement nearestSettlement = null;
+            double nearestSettlementDistance = Double.POSITIVE_INFINITY;
+            for (Settlement settlement : world.geography.getSettlements().values()) {
+                if (settlement.position == null) continue;
+                double distance = Math.hypot(settlement.position.x - playerWorldX,
+                        settlement.position.y - playerWorldY);
+                if (distance < nearestSettlementDistance
+                        || distance == nearestSettlementDistance && nearestSettlement != null
+                                && settlement.id < nearestSettlement.id) {
+                    nearestSettlement = settlement;
+                    nearestSettlementDistance = distance;
+                }
+            }
+            double travelSpeedDisplay = world.player.travelSpeedPerHour;
+            if (world.player.isTraveling()
+                    && world.player.travelMode == PlayerCampaignState.TravelMode.CROSS_COUNTRY) {
+                travelSpeedDisplay *= CampaignSession.crossCountryTerrainSpeedFactor(
+                        world, playerWorldX, playerWorldY);
+            }
             Person playerPerson = world.people.get(world.player.personId);
             boolean playerHasHealthToFight = playerPerson != null && playerPerson.alive
                     && playerPerson.health != null && playerPerson.health.healthLevel > 0.0;
@@ -363,8 +395,10 @@ public final class CampaignSnapshot {
                     affiliatedRealmId == null ? 0
                             : world.player.realmReputation.getOrDefault(affiliatedRealmId, 0),
                     playerWorldX, playerWorldY, world.player.isTraveling(), travelDestinationId,
-                    travelDestination == null ? null : travelDestination.name,
-                    world.player.travelSpeedPerHour, playerTravelEtaMinutes(world),
+                    travelDestinationName, travelDestinationX, travelDestinationY,
+                    world.player.atSettlement && !world.player.isTraveling(),
+                    nearestSettlement == null ? null : nearestSettlement.name,
+                    travelSpeedDisplay, playerTravelEtaMinutes(world),
                     playerHealthPercent, playerHasHealthToFight, playerWounded);
         }
 
@@ -588,13 +622,41 @@ public final class CampaignSnapshot {
     }
 
     private static boolean playerAt(WorldState world, long settlementId) {
-        return world.player != null && world.player.currentSettlementId == settlementId;
+        return world.player != null && world.player.atSettlement
+                && !world.player.isTraveling()
+                && world.player.currentSettlementId == settlementId;
     }
 
-    /** Remaining road time for the continuously moving player party, in world minutes. */
+    /** Remaining travel time for the continuously moving player party, in world minutes. */
     private static long playerTravelEtaMinutes(WorldState world) {
         if (world.player == null || !world.player.isTraveling()
                 || world.player.travelSpeedPerHour <= 0.0) return 0L;
+        if (world.player.travelMode == PlayerCampaignState.TravelMode.CROSS_COUNTRY) {
+            WorldParty party = world.parties.get(world.player.partyId);
+            Settlement anchor = world.geography.getSettlement(world.player.currentSettlementId);
+            double startX = party != null && party.position != null ? party.position.x
+                    : anchor == null || anchor.position == null ? world.player.travelDestinationX
+                            : anchor.position.x;
+            double startY = party != null && party.position != null ? party.position.y
+                    : anchor == null || anchor.position == null ? world.player.travelDestinationY
+                            : anchor.position.y;
+            double distance = Math.hypot(world.player.travelDestinationX - startX,
+                    world.player.travelDestinationY - startY);
+            if (!(distance > 0.0)) return 0L;
+            int samples = Math.max(1, (int) Math.ceil(distance / 5.0));
+            double plainsEquivalentDistance = 0.0;
+            double segmentDistance = distance / samples;
+            for (int i = 0; i < samples; i++) {
+                double midpoint = (i + 0.5) / samples;
+                double sampleX = startX + (world.player.travelDestinationX - startX) * midpoint;
+                double sampleY = startY + (world.player.travelDestinationY - startY) * midpoint;
+                double factor = Math.max(0.1,
+                        CampaignSession.crossCountryTerrainSpeedFactor(world, sampleX, sampleY));
+                plainsEquivalentDistance += segmentDistance / factor;
+            }
+            return Math.max(0L, Math.round(
+                    plainsEquivalentDistance / world.player.travelSpeedPerHour * 60.0));
+        }
         double remainingDistance = 0.0;
         java.util.List<Long> route = world.player.travelRouteSettlementIds;
         for (int i = Math.max(1, world.player.travelRouteIndex); i < route.size(); i++) {
@@ -784,12 +846,18 @@ public final class CampaignSnapshot {
         /** Army the adventurer personally commands, if any. */
         public final Long commandedArmyId;
         public final int realmReputation;
-        /** Live campaign-map position and continuous road-travel state. */
+        /** Live campaign-map position and continuous travel state. */
         public final double worldX;
         public final double worldY;
         public final boolean traveling;
         public final Long travelDestinationSettlementId;
         public final String travelDestinationName;
+        /** Marked map destination; NaN when the party is not travelling. */
+        public final double travelDestinationWorldX;
+        public final double travelDestinationWorldY;
+        /** True only when physically inside {@link #settlementId}, not merely anchored to it. */
+        public final boolean atSettlement;
+        public final String nearestSettlementName;
         public final double travelSpeedPerHour;
         public final long travelEtaMinutes;
         /** Strategic health; wounded players may fight at any value above zero. */
@@ -812,7 +880,9 @@ public final class CampaignSnapshot {
                 int captiveDaysRemaining, long ransomCoins, String captorRealmName,
                 Long commandedArmyId, int realmReputation,
                 double worldX, double worldY, boolean traveling, Long travelDestinationSettlementId,
-                String travelDestinationName, double travelSpeedPerHour, long travelEtaMinutes,
+                String travelDestinationName, double travelDestinationWorldX,
+                double travelDestinationWorldY, boolean atSettlement, String nearestSettlementName,
+                double travelSpeedPerHour, long travelEtaMinutes,
                 int healthPercent, boolean hasHealthToFight, boolean wounded) {
             this.settlementId = settlementId;
             this.coins = coins;
@@ -838,6 +908,10 @@ public final class CampaignSnapshot {
             this.traveling = traveling;
             this.travelDestinationSettlementId = travelDestinationSettlementId;
             this.travelDestinationName = travelDestinationName;
+            this.travelDestinationWorldX = travelDestinationWorldX;
+            this.travelDestinationWorldY = travelDestinationWorldY;
+            this.atSettlement = atSettlement;
+            this.nearestSettlementName = nearestSettlementName;
             this.travelSpeedPerHour = travelSpeedPerHour;
             this.travelEtaMinutes = travelEtaMinutes;
             this.healthPercent = healthPercent;
