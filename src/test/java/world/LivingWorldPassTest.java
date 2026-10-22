@@ -223,7 +223,7 @@ class LivingWorldPassTest {
         claimed.controllerRealmId = defender.id;
         claimed.security = 1.0;
         attacker.capitalSettlementId = capital.id;
-        defender.capitalSettlementId = near.id;
+        defender.capitalSettlementId = claimed.id;
         world.geography.addSettlement(capital);
         world.geography.addSettlement(near);
         world.geography.addSettlement(claimed);
