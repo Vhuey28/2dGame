@@ -44,6 +44,21 @@ public final class Person {
     public HealthState health = new HealthState();
     public WealthState wealth = new WealthState();
 
+    /** Current medium-term plan, refreshed from needs, work, family and local conditions. */
+    public Goal currentGoal = Goal.WORK;
+    public String goalReason = "No plan assessed yet";
+    public int goalUrgency = 25;
+    public long goalUpdatedMinute = Long.MIN_VALUE;
+
+    /** Individual memory of the adventurer; ordinary settlement reputation stays aggregate. */
+    public int opinionOfPlayer = 0;
+    public String lastPlayerMemory = "";
+    public long lastPlayerMemoryMinute = Long.MIN_VALUE;
+
+    /** Most recent consequential non-player event in this person's life. */
+    public String lastLifeEvent = "";
+    public long lastLifeEventMinute = Long.MIN_VALUE;
+
     /** WorldPosition when traveling on strategic map */
     public WorldPosition position;
 
@@ -85,6 +100,19 @@ public final class Person {
         return getAge(currentMinute) >= 65;
     }
 
+    /** Records a player interaction and moves this person's individual opinion. */
+    public void rememberPlayerInteraction(int opinionDelta, String memory, long minute) {
+        opinionOfPlayer = Math.max(-100, Math.min(100, opinionOfPlayer + opinionDelta));
+        lastPlayerMemory = memory == null ? "" : memory;
+        lastPlayerMemoryMinute = minute;
+    }
+
+    /** Records a consequential event such as migration, victimisation or taking work. */
+    public void rememberLifeEvent(String event, long minute) {
+        lastLifeEvent = event == null ? "" : event;
+        lastLifeEventMinute = minute;
+    }
+
     /** Mark this person as dead and record the death minute. */
     public void die(long deathMinute, DeathCause cause) {
         this.alive = false;
@@ -103,6 +131,12 @@ public final class Person {
 
     /** Enums for person categorization */
     public enum PersonType { CITIZEN, MERCHANT, SOLDIER, NOBLE, SERVANT, CHILD }
+
+    /** Medium-term aims used by employment, migration, crime and recruitment decisions. */
+    public enum Goal {
+        RECOVER, FIND_FOOD, FIND_WORK, SUPPORT_FAMILY, SERVE_REALM,
+        SEEK_OFFICE, BUILD_WEALTH, SEEK_SAFER_HOME, SOCIALIZE, GROW_UP, WORK
+    }
 
     /** Enums for sex */
     public enum Sex { MALE, FEMALE }

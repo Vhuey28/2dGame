@@ -41,7 +41,7 @@ public final class CampaignSession {
         this.world = new WorldState();
         this.clock = new WorldClock(0L);
         this.simulation = new WorldSimulation(clock, world);
-        this.contractSystem = new ContractSystem(simulation.getContext());
+        this.contractSystem = simulation.getContractSystem();
         this.cheatService = new CheatService(simulation);
         configureRandomStreams(seed);
 
@@ -49,7 +49,6 @@ public final class CampaignSession {
         generator.generateVerticalSlice();
         this.playerState = createPlayerAdventurer();
         simulation.initializeGeneratedWorld();
-        contractSystem.generateInitialOffers(clock.getWorldMinute());
 
         // Campaign testing starts at one world hour per real second. Players can
         // select 1x, 60x, or 1440x from the campaign map.
@@ -814,6 +813,11 @@ public final class CampaignSession {
         if (companion.type == Person.PersonType.NOBLE) {
             return CommandResult.rejected("NOBLE_DUTY", "This noble will not abandon their obligations");
         }
+        if (companion.opinionOfPlayer <= -60) {
+            return CommandResult.rejected("DISTRUSTS_PLAYER",
+                    companion.givenName + " distrusts you (" + companion.opinionOfPlayer + ")"
+                            + (companion.lastPlayerMemory.isBlank() ? "" : ": " + companion.lastPlayerMemory));
+        }
         if (companion.employerId != null) {
             world.economy.Workplace workplace = world.workplaces.get(companion.employerId);
             if (workplace != null) workplace.removeWorker(companion.id);
@@ -822,6 +826,12 @@ public final class CampaignSession {
         party.memberPersonIds.add(personId);
         companion.travelingPartyId = party.id;
         companion.currentActivity = PersonActivity.IDLE;
+        companion.rememberPlayerInteraction(10, "You recruited them into your party", minute);
+        companion.rememberLifeEvent("Joined an adventuring party", minute);
+        companion.currentGoal = Person.Goal.BUILD_WEALTH;
+        companion.goalReason = "Joined your party for pay, protection and opportunity";
+        companion.goalUrgency = 45;
+        companion.goalUpdatedMinute = minute;
         world.indexes.rebuild(world, clock.getWorldMinute());
         refreshSnapshot();
         return new CommandResult(true, "RECRUITED",
@@ -834,15 +844,33 @@ public final class CampaignSession {
         if (!isPersonPresent(person)) {
             return CommandResult.rejected("NOT_PRESENT", "That person is no longer nearby");
         }
+        long minute = clock.getWorldMinute();
+        if (person.goalUpdatedMinute == Long.MIN_VALUE
+                || minute - person.goalUpdatedMinute >= WorldConfig.MINUTES_PER_DAY) {
+            simulation.getPersonGoalSystem().refresh(person, minute);
+        }
         String concern = mostPressingConcern(person);
-        String manner = person.personality.sociability >= 65.0 ? "warmly"
+        String manner = person.opinionOfPlayer <= -25 ? "warily"
+                : person.personality.sociability >= 65.0 ? "warmly"
                 : person.personality.patience < 35.0 ? "briefly" : "carefully";
         String activity = person.currentActivity.toString().toLowerCase().replace('_', ' ');
         person.needs.socialBelonging = Math.min(1.0, person.needs.socialBelonging + 0.01);
+        if (person.lastPlayerMemoryMinute == Long.MIN_VALUE
+                || minute - person.lastPlayerMemoryMinute >= WorldConfig.MINUTES_PER_DAY) {
+            person.rememberPlayerInteraction(1, "You stopped to talk with them", minute);
+        }
+        Settlement settlement = world.geography.getSettlement(playerState.currentSettlementId);
+        SettlementPressure pressure = settlement == null
+                ? null : SettlementPressure.evaluate(world, settlement, minute);
+        String local = pressure == null ? "" : " Locally: " + pressure.summary + ".";
+        String memory = person.lastPlayerMemory.isBlank() ? ""
+                : " They remember: " + person.lastPlayerMemory + " (opinion "
+                        + person.opinionOfPlayer + ").";
         refreshSnapshot();
         return new CommandResult(true, "CONVERSATION",
                 person.givenName + " speaks " + manner + " about " + concern
-                        + " before returning to " + activity + ".");
+                        + ". Goal: " + readableGoal(person.currentGoal) + " — " + person.goalReason
+                        + "." + local + memory + " They return to " + activity + ".");
     }
 
     /** Transfers one unit of player grain to a nearby person's household. */
@@ -855,13 +883,22 @@ public final class CampaignSession {
             return CommandResult.rejected("NO_GRAIN", "You have no grain in your cargo");
         }
         Household household = person.householdId == null ? null : world.households.get(person.householdId);
-        if (household != null) household.inventory.add(GoodType.GRAIN, 1);
+        if (household != null) {
+            household.inventory.add(GoodType.GRAIN, 1);
+            household.foodSecurity = SettlementPressure.clamp01(household.foodSecurity + 0.04);
+        }
+        boolean hungry = person.needs.foodSecurity < 0.5 || household != null && household.foodSecurity < 0.5;
         person.needs.foodSecurity = Math.min(1.0, person.needs.foodSecurity + 0.15);
         person.needs.socialBelonging = Math.min(1.0, person.needs.socialBelonging + 0.05);
+        long minute = clock.getWorldMinute();
+        person.rememberPlayerInteraction(hungry ? 8 : 4, "You gave their household food", minute);
+        person.rememberLifeEvent("Received food from a traveller", minute);
+        simulation.getPersonGoalSystem().refresh(person, minute);
         playerState.changeSettlementReputation(playerState.currentSettlementId, 1);
         refreshSnapshot();
         return new CommandResult(true, "GIFT_ACCEPTED",
-                person.givenName + " accepts the food. Local reputation increased.");
+                person.givenName + " accepts the food and remembers your help (opinion "
+                        + person.opinionOfPlayer + "). Local reputation increased.");
     }
 
     private boolean isPersonPresent(Person person) {
@@ -871,13 +908,23 @@ public final class CampaignSession {
     }
 
     private String mostPressingConcern(Person person) {
-        double lowest = person.needs.foodSecurity;
-        String concern = "the price of food";
-        if (person.needs.safety < lowest) { lowest = person.needs.safety; concern = "safety on the roads"; }
-        if (person.needs.health < lowest) { lowest = person.needs.health; concern = "their health"; }
-        if (person.needs.wealthSecurity < lowest) { lowest = person.needs.wealthSecurity; concern = "finding steady work"; }
-        if (person.needs.politicalSatisfaction < lowest) concern = "the local rulers";
-        return concern;
+        return switch (person.currentGoal) {
+            case RECOVER -> "recovering their health";
+            case FIND_FOOD -> "feeding their household";
+            case FIND_WORK -> "finding steady work";
+            case SUPPORT_FAMILY -> "keeping their household fed and housed";
+            case SERVE_REALM -> "their military duty";
+            case SEEK_OFFICE -> "rank, office and the court";
+            case BUILD_WEALTH -> "saving coin and finding opportunity";
+            case SEEK_SAFER_HOME -> "leaving for a safer home";
+            case SOCIALIZE -> "neighbours, feast days and local talk";
+            case GROW_UP -> "growing up in a hard town";
+            case WORK -> "daily work and the price of food";
+        };
+    }
+
+    private static String readableGoal(Person.Goal goal) {
+        return goal == null ? "Work" : goal.name().replace('_', ' ').toLowerCase();
     }
 
     /** Gives supplies to an army only when it is physically at the player's settlement. */
@@ -896,7 +943,13 @@ public final class CampaignSession {
         }
         playerState.cargo.remove(GoodType.GRAIN, grain);
         army.supplies.add(GoodType.GRAIN, grain);
+        army.morale = Math.max(0.0, Math.min(100.0, army.morale + Math.min(3.0, grain / 5.0)));
         if (!army.playerCommanded) playerState.realmReputation.merge(army.realmId, 1, Integer::sum);
+        Person commander = army.commanderPersonId <= 0 ? null : world.people.get(army.commanderPersonId);
+        if (commander != null && commander.id != playerState.personId) {
+            commander.rememberPlayerInteraction(5,
+                    "You supplied their army with " + grain + " grain", clock.getWorldMinute());
+        }
         refreshSnapshot();
         return new CommandResult(true, "ARMY_SUPPLIED", army.playerCommanded
                 ? "Your quartermaster takes " + grain + " grain. The company is fed."
@@ -2487,6 +2540,7 @@ public final class CampaignSession {
 
     /** Called by the versioned loader after canonical registries have been restored. */
     public void rebuildDerivedStateAfterLoad() {
+        simulation.refreshLivingWorldPlans(clock.getWorldMinute(), false);
         world.indexes.rebuild(world, clock.getWorldMinute());
         world.geography.getSpatialIndex().rebuildSettlements(world.geography.getSettlements().values());
         world.geography.getSpatialIndex().rebuildDynamic(world);

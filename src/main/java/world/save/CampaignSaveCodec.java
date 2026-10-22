@@ -8,10 +8,14 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 
 import world.CampaignSession;
 import world.Contract;
+import world.Person;
 import world.PlayerCampaignState;
 import world.WorldParty;
 import world.WorldState;
@@ -24,7 +28,8 @@ import world.politics.Government;
 /** Versioned Phase 4 campaign checkpoint. Derived caches are rebuilt rather than serialized. */
 public final class CampaignSaveCodec {
     private static final int MAGIC = 0x43435134; // CCQ4
-    private static final int VERSION = 5;
+    private static final int VERSION = 6;
+    private static final int CROSS_COUNTRY_VERSION = 5;
     private static final int ROAD_TRAVEL_VERSION = 4;
     private static final int LEGACY_VERSION = 3;
 
@@ -133,6 +138,8 @@ public final class CampaignSaveCodec {
             out.writeLong(contract.takerPartyId == null ? -1L : contract.takerPartyId);
             out.writeLong(contract.resolvedMinute);
             out.writeLong(contract.escrowCoins);
+            out.writeUTF(contract.issueReason == null ? "" : contract.issueReason);
+            out.writeInt(Math.max(0, Math.min(100, contract.urgency)));
         }
 
         // Version 5 appends continuous player travel plus field presence after
@@ -156,6 +163,22 @@ public final class CampaignSaveCodec {
         out.writeBoolean(player.atSettlement);
         out.writeDouble(party.position == null ? Double.NaN : party.position.x);
         out.writeDouble(party.position == null ? Double.NaN : party.position.y);
+
+        // Version 6 appends only people who actually remember the adventurer.
+        // Goals, pressure and court strategy are derived and rebuilt after load.
+        List<Person> remembered = new ArrayList<>();
+        for (Person person : world.people.values()) {
+            if (person.opinionOfPlayer != 0 || person.lastPlayerMemory != null
+                    && !person.lastPlayerMemory.isBlank()) remembered.add(person);
+        }
+        remembered.sort(Comparator.comparingLong(person -> person.id));
+        out.writeInt(remembered.size());
+        for (Person person : remembered) {
+            out.writeLong(person.id);
+            out.writeInt(Math.max(-100, Math.min(100, person.opinionOfPlayer)));
+            out.writeUTF(person.lastPlayerMemory == null ? "" : person.lastPlayerMemory);
+            out.writeLong(person.lastPlayerMemoryMinute);
+        }
     }
 
     private static void restoreWorld(CampaignSession session, DataInputStream in, int version)
@@ -251,6 +274,10 @@ public final class CampaignSaveCodec {
             contract.takerPartyId = taker < 0 ? null : taker;
             contract.resolvedMinute = in.readLong();
             contract.escrowCoins = in.readLong();
+            if (version >= VERSION) {
+                contract.issueReason = in.readUTF();
+                contract.urgency = Math.max(0, Math.min(100, in.readInt()));
+            }
             world.contracts.put(id, contract);
             if (contract.status == Contract.ContractStatus.ACTIVE && contract.takerPartyId != null
                     && contract.takerPartyId == player.partyId) player.acceptedContractIds.add(id);
@@ -260,7 +287,7 @@ public final class CampaignSaveCodec {
         player.atSettlement = true;
         if (version == ROAD_TRAVEL_VERSION && in.readBoolean()) {
             restoreTravel(session, in);
-        } else if (version >= 5) {
+        } else if (version >= CROSS_COUNTRY_VERSION) {
             boolean traveling = in.readBoolean();
             if (traveling) restoreTravelV5(session, in);
             boolean atSettlement = in.readBoolean();
@@ -281,6 +308,23 @@ public final class CampaignSaveCodec {
                     restoredParty.currentSettlementId = null;
                     restoredParty.destinationSettlementId = null;
                 }
+            }
+        }
+
+        if (version >= VERSION) {
+            int rememberedCount = in.readInt();
+            if (rememberedCount < 0 || rememberedCount > world.people.size()) {
+                throw new IOException("Invalid saved player-memory count " + rememberedCount);
+            }
+            for (int i = 0; i < rememberedCount; i++) {
+                long rememberedId = in.readLong();
+                Person remembered = world.people.get(rememberedId);
+                if (remembered == null) {
+                    throw new IOException("Save references unknown remembered person " + rememberedId);
+                }
+                remembered.opinionOfPlayer = Math.max(-100, Math.min(100, in.readInt()));
+                remembered.lastPlayerMemory = in.readUTF();
+                remembered.lastPlayerMemoryMinute = in.readLong();
             }
         }
     }
@@ -454,7 +498,8 @@ public final class CampaignSaveCodec {
     private static int validateHeader(DataInputStream in) throws IOException {
         if (in.readInt() != MAGIC) throw new IOException("Not a Chronicle Conquest campaign save");
         int version = in.readInt();
-        if (version != VERSION && version != ROAD_TRAVEL_VERSION && version != LEGACY_VERSION) {
+        if (version != VERSION && version != CROSS_COUNTRY_VERSION
+                && version != ROAD_TRAVEL_VERSION && version != LEGACY_VERSION) {
             throw new IOException("Unsupported campaign save version " + version);
         }
         return version;

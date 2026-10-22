@@ -13,6 +13,7 @@ import world.economy.HouseholdTradeSystem;
 import world.economy.Inventory;
 import world.economy.MoneyAccount;
 import world.trade.TradeSystem;
+import world.politics.KingdomStrategySystem;
 import world.politics.PoliticsSystem;
 import world.diplomacy.DiplomacySystem;
 import world.military.MilitarySystem;
@@ -47,6 +48,10 @@ public class WorldSimulation {
     private final WarSystem warSystem;
     private final ScheduleSystem scheduleSystem;
     private final CrimeSystem crimeSystem;
+    private final SettlementPressureSystem settlementPressureSystem;
+    private final PersonGoalSystem personGoalSystem;
+    private final KingdomStrategySystem kingdomStrategySystem;
+    private final ContractSystem contractSystem;
 
     public WorldSimulation(WorldClock clock, WorldState world) {
         this.clock = clock;
@@ -69,6 +74,10 @@ public class WorldSimulation {
         this.warSystem = new WarSystem(context, militarySystem);
         this.scheduleSystem = new ScheduleSystem(world);
         this.crimeSystem = new CrimeSystem(context);
+        this.settlementPressureSystem = new SettlementPressureSystem(context);
+        this.personGoalSystem = new PersonGoalSystem(context);
+        this.kingdomStrategySystem = new KingdomStrategySystem(context);
+        this.contractSystem = new ContractSystem(context);
     }
 
     public WorldClock getClock() {
@@ -101,6 +110,29 @@ public class WorldSimulation {
 
     public WarSystem getWarSystem() {
         return warSystem;
+    }
+
+    public SettlementPressureSystem getSettlementPressureSystem() {
+        return settlementPressureSystem;
+    }
+
+    public PersonGoalSystem getPersonGoalSystem() {
+        return personGoalSystem;
+    }
+
+    public KingdomStrategySystem getKingdomStrategySystem() {
+        return kingdomStrategySystem;
+    }
+
+    public ContractSystem getContractSystem() {
+        return contractSystem;
+    }
+
+    /** Rebuilds derived pressure, personal goals and court plans after generation or load overlays. */
+    public void refreshLivingWorldPlans(long minute, boolean publishStrategyChanges) {
+        settlementPressureSystem.processWeek(minute, false);
+        personGoalSystem.processMonth(minute);
+        kingdomStrategySystem.processMonth(minute, publishStrategyChanges);
     }
 
     public SimulationProfile getProfile() {
@@ -164,8 +196,12 @@ public class WorldSimulation {
     /** Prepare systems after a generated or loaded world has populated registries. */
     public void initializeGeneratedWorld() {
         long minute = clock.getWorldMinute();
+        settlementPressureSystem.initialize(minute);
+        personGoalSystem.processMonth(minute);
         employmentSystem.processWeek(minute);
         tradeSystem.processWeek(minute);
+        kingdomStrategySystem.initialize(minute);
+        contractSystem.generateInitialOffers(minute);
         scheduleSystem.processHour(minute);
         world.indexes.rebuild(world, minute);
     }
@@ -185,6 +221,9 @@ public class WorldSimulation {
         if (day % 7 == 0) {
             employmentSystem.processWeek(currentMinute);
             tradeSystem.processWeek(currentMinute);
+            settlementPressureSystem.processWeek(currentMinute);
+            contractSystem.processDeadlines(world.player, currentMinute);
+            contractSystem.generateDynamicOffers(currentMinute);
         }
 
         // Clear markets at end of day using current inventories and accounts
@@ -203,8 +242,11 @@ public class WorldSimulation {
         taxSystem.processMonth(world.geography.getSettlements(), world.households, world.people, currentMinute);
         famineSystem.processMonth(currentMinute);
         demographicSystem.processMonth();
+        settlementPressureSystem.processMonth(currentMinute);
+        personGoalSystem.processMonth(currentMinute);
         politicsSystem.processMonth(currentMinute);
         diplomacySystem.processMonth(currentMinute);
+        kingdomStrategySystem.processMonth(currentMinute);
         warSystem.processMonth(currentMinute);
     }
 

@@ -14,6 +14,8 @@ public final class PoliticalFaction {
     public double organization = 20.0;
     public double militancy;
     public boolean active = true;
+    /** Plain-language metrics behind the current support value. */
+    public String pressureReason = "No pressure assessed yet";
 
     public PoliticalFaction(long id, long realmId, FactionGoal goal) {
         this.id = id;

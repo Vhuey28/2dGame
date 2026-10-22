@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import world.economy.GoodType;
@@ -44,6 +45,8 @@ public final class CampaignSnapshot {
     public final List<CrimeView> crimes;
     public final PlayerView player;
     public final List<EventView> recentEvents;
+    /** Durable historical events for the world chronicle, newest entries retained at the end. */
+    public final List<EventView> chronicleEvents;
     /** Active and recent wars, so the UI can explain who is fighting whom and why. */
     public final List<WarView> wars;
     /** Every siege, active first, with its breach/resolve/food/civilian progress. */
@@ -58,7 +61,7 @@ public final class CampaignSnapshot {
             List<RealmView> realms, List<SettlementView> settlements,
             List<RoadView> roads, List<CaravanView> caravans, List<ArmyView> armies,
             List<ContractView> contracts, List<PersonView> people, List<CrimeView> crimes,
-            PlayerView player, List<EventView> recentEvents,
+            PlayerView player, List<EventView> recentEvents, List<EventView> chronicleEvents,
             List<WarView> wars, List<SiegeView> sieges, List<TitleView> titles) {
         this.worldMinute = worldMinute;
         this.speed = speed;
@@ -81,6 +84,7 @@ public final class CampaignSnapshot {
         this.crimes = Collections.unmodifiableList(crimes);
         this.player = player;
         this.recentEvents = Collections.unmodifiableList(recentEvents);
+        this.chronicleEvents = Collections.unmodifiableList(chronicleEvents);
         this.wars = Collections.unmodifiableList(wars);
         this.sieges = Collections.unmodifiableList(sieges);
         this.titles = Collections.unmodifiableList(titles);
@@ -90,6 +94,7 @@ public final class CampaignSnapshot {
         WorldState world = simulation.getWorld();
         long minute = simulation.getClock().getWorldMinute();
         world.indexes.ensureBuilt(world, minute);
+        Map<Long, SettlementPressure> pressures = SettlementPressure.evaluateAll(world, minute);
 
         int living = 0;
         for (Person person : world.people.values()) {
@@ -119,6 +124,7 @@ public final class CampaignSnapshot {
             Person ruler = realm.rulerPersonId == null ? null : world.people.get(realm.rulerPersonId);
             Government government = world.governments.get(realm.governmentId);
             String strongestFaction = "None";
+            String strongestFactionReason = "No organized faction pressure";
             double strongestSupport = 0.0;
             int factionCount = 0;
             for (PoliticalFaction faction : world.politicalFactions.values()) {
@@ -127,8 +133,26 @@ public final class CampaignSnapshot {
                 if (faction.support >= strongestSupport) {
                     strongestSupport = faction.support;
                     strongestFaction = faction.goal.toString();
+                    strongestFactionReason = faction.pressureReason;
                 }
             }
+            double loyaltyTotal = 0.0;
+            int loyaltyCount = 0;
+            String worstSettlementName = "None";
+            double worstPressureValue = 0.0;
+            for (Settlement settlement : world.geography.getSettlements().values()) {
+                if (settlement.controllerRealmId == null || settlement.controllerRealmId != realm.id) continue;
+                SettlementPressure pressure = pressures.get(settlement.id);
+                if (pressure == null) continue;
+                loyaltyTotal += pressure.loyalty;
+                loyaltyCount++;
+                if (pressure.overallPressure >= worstPressureValue) {
+                    worstPressureValue = pressure.overallPressure;
+                    worstSettlementName = settlement.name;
+                }
+            }
+            Settlement strategyTarget = realm.strategyTargetSettlementId == null
+                    ? null : world.geography.getSettlement(realm.strategyTargetSettlementId);
             int treatyCount = 0;
             String diplomacySummary = "No foreign relations";
             for (Treaty treaty : world.treaties.values()) {
@@ -149,7 +173,10 @@ public final class CampaignSnapshot {
                     government == null ? "Unknown" : government.type.toString(),
                     government == null ? "Unknown" : government.successionLaw.toString(),
                     factionCount, strongestFaction, strongestSupport, treatyCount, diplomacySummary,
-                    snapshotLaws(government)));
+                    snapshotLaws(government), realm.strategy.toString(), realm.strategyTargetSettlementId,
+                    strategyTarget == null ? "No target" : strategyTarget.name, realm.strategyReason,
+                    loyaltyCount == 0 ? 0.5 : loyaltyTotal / loyaltyCount, worstSettlementName,
+                    worstPressureValue, strongestFactionReason));
         }
         realmViews.sort(Comparator.comparing(view -> view.name));
 
@@ -175,6 +202,7 @@ public final class CampaignSnapshot {
                 }
             }
             double food = households == 0 ? 0.0 : settlementFood / households;
+            SettlementPressure pressure = pressures.get(settlement.id);
             world.geography.Province province = world.geography.getProvince(settlement.provinceId);
             settlementViews.add(new SettlementView(settlement.id, settlement.name,
                     settlement.controllerRealmId, settlement.occupyingRealmId,
@@ -187,7 +215,19 @@ public final class CampaignSnapshot {
                     province == null ? "Unknown province" : province.name,
                     province == null || province.terrain == null
                             ? "PLAINS" : province.terrain.toString(),
-                    capitalSettlementIds.contains(settlement.id)));
+                    capitalSettlementIds.contains(settlement.id),
+                    SettlementPressure.clamp01(settlement.prosperity),
+                    SettlementPressure.clamp01(settlement.sanitation),
+                    pressure == null ? 0.5 : pressure.loyalty,
+                    pressure == null ? 0.0 : pressure.foodReserveDays,
+                    pressure == null ? 0.0 : pressure.unemploymentRate,
+                    pressure == null ? 0.0 : pressure.taxBurdenRate,
+                    pressure == null ? 0 : pressure.crimeIncidents30Days,
+                    pressure == null ? 0.0 : pressure.overallPressure,
+                    pressure == null ? "STABLE" : pressure.outlook.toString(),
+                    pressure == null ? "Balanced" : pressure.mainPressure,
+                    pressure == null ? "No pressure assessment" : pressure.summary,
+                    pressure == null ? "No pressure assessment" : pressure.reason));
         }
         settlementViews.sort(Comparator.comparing(view -> view.name));
 
@@ -289,24 +329,34 @@ public final class CampaignSnapshot {
                     contract.deadlineMinute, Math.max(0L, contract.deadlineMinute - minute),
                     contract.rewardCoins, contract.penaltyCoins, contract.requiredGood == null
                             ? "None" : contract.requiredGood.toString(), contract.requiredQuantity,
-                    objective, progress, contract.status.toString()));
+                    objective, progress, contract.status.toString(), contract.issueReason, contract.urgency));
         }
         contractViews.sort(Comparator.comparingLong(view -> view.id));
 
         List<PersonView> personViews = new ArrayList<>();
         for (Person person : world.people.values()) {
             if (!person.alive) continue;
+            Household personHousehold = person.householdId == null
+                    ? null : world.households.get(person.householdId);
             personViews.add(new PersonView(person.id, person.givenName + " " + person.familyName,
                     person.currentSettlementId, person.type.toString(), person.currentActivity.toString(),
-                    person.employerId, person.travelingPartyId));
+                    person.employerId, person.travelingPartyId, person.currentGoal.toString(),
+                    person.goalReason, person.goalUrgency, person.opinionOfPlayer,
+                    person.lastPlayerMemory, person.lastLifeEvent,
+                    personHousehold == null ? SettlementPressure.clamp01(person.needs.foodSecurity)
+                            : SettlementPressure.clamp01(personHousehold.foodSecurity)));
         }
         personViews.sort(Comparator.comparingLong(view -> view.id));
 
         List<CrimeView> crimeViews = new ArrayList<>();
         for (CrimeIncident incident : world.crimeIncidents.values()) {
+            Settlement crimeSettlement = world.geography.getSettlement(incident.settlementId);
             crimeViews.add(new CrimeView(incident.id, incident.settlementId, incident.offenderPersonId,
                     incident.victimPersonId, incident.type.toString(), incident.minute,
-                    incident.discovered, incident.severity));
+                    incident.discovered, incident.severity,
+                    crimeSettlement == null ? "Unknown settlement" : crimeSettlement.name,
+                    incident.discovered ? personName(world, incident.offenderPersonId) : "Unknown offender",
+                    personName(world, incident.victimPersonId)));
         }
         crimeViews.sort(Comparator.comparingLong(view -> view.minute));
 
@@ -404,10 +454,17 @@ public final class CampaignSnapshot {
 
         List<EventView> eventViews = new ArrayList<>();
         List<WorldEvent> events = simulation.getContext().eventHistory.getRecent();
-        int first = Math.max(0, events.size() - 6);
+        int first = Math.max(0, events.size() - 12);
         for (int i = first; i < events.size(); i++) {
             WorldEvent event = events.get(i);
             eventViews.add(new EventView(event.eventId, event.worldMinute, event.type, event.detail));
+        }
+        List<EventView> chronicleViews = new ArrayList<>();
+        List<WorldEvent> historical = simulation.getContext().eventHistory.getHistorical();
+        int chronicleFirst = Math.max(0, historical.size() - 40);
+        for (int i = chronicleFirst; i < historical.size(); i++) {
+            WorldEvent event = historical.get(i);
+            chronicleViews.add(new EventView(event.eventId, event.worldMinute, event.type, event.detail));
         }
 
         int activeTreaties = 0;
@@ -428,7 +485,8 @@ public final class CampaignSnapshot {
                     provinceName(world, war.targetProvinceId), titleName(world, war.targetTitleId),
                     contributions(world, war.contributionByRealm), war.startMinute,
                     daysSince(war.startMinute, minute), war.declarationReason,
-                    involvesPlayerRealm(world, war)));
+                    involvesPlayerRealm(world, war), warPhase(world, war),
+                    warMomentum(world, war), warObjectiveName(world, war)));
         }
         warViews.sort((a, b) -> {
             boolean firstActive = "ACTIVE".equals(a.state);
@@ -528,12 +586,87 @@ public final class CampaignSnapshot {
                 simulation.getClock().isPaused(), living, world.households.size(),
                 armyViews.size(), world.caravans.size(), activeWars, activeTreaties, activeSieges, averageFood,
                 realmViews, settlementViews, roadViews, caravanViews, armyViews,
-                contractViews, personViews, crimeViews, playerView, eventViews,
+                contractViews, personViews, crimeViews, playerView, eventViews, chronicleViews,
                 warViews, siegeViews, titleViews);
     }
 
     private static long daysSince(long startMinute, long currentMinute) {
         return Math.max(0L, (currentMinute - startMinute) / WorldConfig.MINUTES_PER_DAY);
+    }
+
+    private static String personName(WorldState world, Long personId) {
+        if (personId == null) return "No victim";
+        Person person = world.people.get(personId);
+        return person == null ? "Person #" + personId
+                : ((person.givenName == null ? "" : person.givenName) + " "
+                        + (person.familyName == null ? "" : person.familyName)).trim();
+    }
+
+    private static String warPhase(WorldState world, War war) {
+        if (war.state != War.WarState.ACTIVE) return war.state.toString();
+        Siege critical = null;
+        for (Siege siege : world.sieges.values()) {
+            if (siege.warId != war.id || siege.state != Siege.SiegeState.ACTIVE) continue;
+            if (critical == null || siege.breachProgress > critical.breachProgress) critical = siege;
+        }
+        if (critical != null) {
+            Settlement settlement = world.geography.getSettlement(critical.settlementId);
+            return "Siege of " + (settlement == null ? "a settlement" : settlement.name)
+                    + " at " + Math.round(critical.breachProgress) + "% breach";
+        }
+        if (Math.max(war.attackerExhaustion, war.defenderExhaustion) >= 72.0) {
+            return "Exhaustion and peace pressure";
+        }
+        double edge = war.attackerScore - war.defenderScore;
+        if (edge >= 25.0) return "Attackers pressing";
+        if (edge <= -25.0) return "Defenders holding";
+        return "Armies manoeuvring";
+    }
+
+    private static String warMomentum(WorldState world, War war) {
+        double edge = war.attackerScore - war.defenderScore;
+        String leader = Math.abs(edge) < 10.0 ? "neither side has a clear score edge"
+                : edge > 0 ? "attackers lead by " + Math.round(edge)
+                        : "defenders lead by " + Math.round(-edge);
+        int sieges = 0;
+        for (Siege siege : world.sieges.values()) {
+            if (siege.warId == war.id && siege.state == Siege.SiegeState.ACTIVE) sieges++;
+        }
+        return leader + "; exhaustion A/D " + Math.round(war.attackerExhaustion)
+                + "/" + Math.round(war.defenderExhaustion) + "; active sieges " + sieges;
+    }
+
+    private static String warObjectiveName(WorldState world, War war) {
+        if (war.targetProvinceId != null) {
+            world.geography.Province province = world.geography.getProvince(war.targetProvinceId);
+            if (province != null) {
+                Settlement best = null;
+                int bestPopulation = -1;
+                for (Long settlementId : province.settlementIds) {
+                    Settlement settlement = world.geography.getSettlement(settlementId);
+                    if (settlement == null || settlement.controllerRealmId == null
+                            || !war.defenderRealmIds.contains(settlement.controllerRealmId)) continue;
+                    int population = countPopulation(world, settlement.id);
+                    if (population > bestPopulation) {
+                        best = settlement;
+                        bestPopulation = population;
+                    }
+                }
+                if (best != null) return best.name;
+            }
+        }
+        if (war.targetTitleId != null) {
+            world.politics.Title title = world.titles.get(war.targetTitleId);
+            if (title != null && title.settlementId != null) {
+                Settlement settlement = world.geography.getSettlement(title.settlementId);
+                if (settlement != null) return settlement.name;
+            }
+        }
+        Long defenderId = war.defenderRealmIds.isEmpty() ? null : war.defenderRealmIds.iterator().next();
+        Realm defender = defenderId == null ? null : world.realms.get(defenderId);
+        Settlement capital = defender == null || defender.capitalSettlementId == null
+                ? null : world.geography.getSettlement(defender.capitalSettlementId);
+        return capital == null ? "No fixed objective" : capital.name;
     }
 
     private static String realmName(WorldState world, Long realmId) {
@@ -727,13 +860,23 @@ public final class CampaignSnapshot {
         public final int treatyCount;
         public final String diplomacySummary;
         public final java.util.Map<String, Integer> laws;
+        public final String strategy;
+        public final Long strategyTargetSettlementId;
+        public final String strategyTargetName;
+        public final String strategyReason;
+        public final double averageLoyalty;
+        public final String worstSettlementName;
+        public final double worstPressure;
+        public final String strongestFactionReason;
 
         RealmView(long id, String name, long treasury, int population,
                 int settlementCount, double stability, double legitimacy,
                 double warExhaustion, String rulerName, String governmentType,
                 String successionLaw, int factionCount, String strongestFaction,
                 double strongestFactionSupport, int treatyCount, String diplomacySummary,
-                java.util.Map<String, Integer> laws) {
+                java.util.Map<String, Integer> laws, String strategy, Long strategyTargetSettlementId,
+                String strategyTargetName, String strategyReason, double averageLoyalty,
+                String worstSettlementName, double worstPressure, String strongestFactionReason) {
             this.id = id;
             this.name = name;
             this.treasury = treasury;
@@ -751,6 +894,14 @@ public final class CampaignSnapshot {
             this.treatyCount = treatyCount;
             this.diplomacySummary = diplomacySummary;
             this.laws = laws;
+            this.strategy = strategy;
+            this.strategyTargetSettlementId = strategyTargetSettlementId;
+            this.strategyTargetName = strategyTargetName;
+            this.strategyReason = strategyReason;
+            this.averageLoyalty = averageLoyalty;
+            this.worstSettlementName = worstSettlementName;
+            this.worstPressure = worstPressure;
+            this.strongestFactionReason = strongestFactionReason;
         }
     }
 
@@ -776,12 +927,28 @@ public final class CampaignSnapshot {
         public final String provinceName;
         public final String terrain;
         public final boolean capital;
+        public final double prosperity;
+        public final double sanitation;
+        public final double loyalty;
+        public final double foodReserveDays;
+        public final double unemploymentRate;
+        public final double taxBurdenRate;
+        public final int crimeIncidents30Days;
+        public final double overallPressure;
+        public final String outlook;
+        public final String mainPressure;
+        public final String pressureSummary;
+        public final String pressureReason;
 
         SettlementView(long id, String name, Long realmId, Long occupyingRealmId,
                 double worldX, double worldY, int population, int households, long treasury,
                 int grain, int vegetables, long grainPrice, long vegetablePrice,
                 double foodSecurity, double security, double unrest,
-                String type, String provinceName, String terrain, boolean capital) {
+                String type, String provinceName, String terrain, boolean capital,
+                double prosperity, double sanitation, double loyalty, double foodReserveDays,
+                double unemploymentRate, double taxBurdenRate, int crimeIncidents30Days,
+                double overallPressure, String outlook, String mainPressure,
+                String pressureSummary, String pressureReason) {
             this.id = id;
             this.name = name;
             this.realmId = realmId;
@@ -802,6 +969,18 @@ public final class CampaignSnapshot {
             this.provinceName = provinceName;
             this.terrain = terrain;
             this.capital = capital;
+            this.prosperity = prosperity;
+            this.sanitation = sanitation;
+            this.loyalty = loyalty;
+            this.foodReserveDays = foodReserveDays;
+            this.unemploymentRate = unemploymentRate;
+            this.taxBurdenRate = taxBurdenRate;
+            this.crimeIncidents30Days = crimeIncidents30Days;
+            this.overallPressure = overallPressure;
+            this.outlook = outlook;
+            this.mainPressure = mainPressure;
+            this.pressureSummary = pressureSummary;
+            this.pressureReason = pressureReason;
         }
     }
 
@@ -928,9 +1107,18 @@ public final class CampaignSnapshot {
         public final String activity;
         public final Long employerId;
         public final Long partyId;
+        public final String goal;
+        public final String goalReason;
+        public final int goalUrgency;
+        public final int opinionOfPlayer;
+        public final String lastPlayerMemory;
+        public final String lastLifeEvent;
+        public final double householdFoodSecurity;
 
         PersonView(long id, String name, Long settlementId, String type, String activity,
-                Long employerId, Long partyId) {
+                Long employerId, Long partyId, String goal, String goalReason, int goalUrgency,
+                int opinionOfPlayer, String lastPlayerMemory, String lastLifeEvent,
+                double householdFoodSecurity) {
             this.id = id;
             this.name = name;
             this.settlementId = settlementId;
@@ -938,6 +1126,13 @@ public final class CampaignSnapshot {
             this.activity = activity;
             this.employerId = employerId;
             this.partyId = partyId;
+            this.goal = goal;
+            this.goalReason = goalReason;
+            this.goalUrgency = goalUrgency;
+            this.opinionOfPlayer = opinionOfPlayer;
+            this.lastPlayerMemory = lastPlayerMemory;
+            this.lastLifeEvent = lastLifeEvent;
+            this.householdFoodSecurity = householdFoodSecurity;
         }
     }
 
@@ -950,9 +1145,13 @@ public final class CampaignSnapshot {
         public final long minute;
         public final boolean discovered;
         public final int severity;
+        public final String settlementName;
+        public final String offenderName;
+        public final String victimName;
 
         CrimeView(long id, long settlementId, long offenderPersonId, Long victimPersonId,
-                String type, long minute, boolean discovered, int severity) {
+                String type, long minute, boolean discovered, int severity,
+                String settlementName, String offenderName, String victimName) {
             this.id = id;
             this.settlementId = settlementId;
             this.offenderPersonId = offenderPersonId;
@@ -961,6 +1160,9 @@ public final class CampaignSnapshot {
             this.minute = minute;
             this.discovered = discovered;
             this.severity = severity;
+            this.settlementName = settlementName;
+            this.offenderName = offenderName;
+            this.victimName = victimName;
         }
     }
 
@@ -980,11 +1182,14 @@ public final class CampaignSnapshot {
         public final String objective;
         public final String progress;
         public final String status;
+        public final String issueReason;
+        public final int urgency;
 
         ContractView(long id, String type, long issuerSettlementId, String issuerName,
                 long destinationSettlementId, String destinationName, long deadlineMinute,
                 long remainingMinutes, long rewardCoins, long penaltyCoins, String requiredGood,
-                int requiredQuantity, String objective, String progress, String status) {
+                int requiredQuantity, String objective, String progress, String status,
+                String issueReason, int urgency) {
             this.id = id;
             this.type = type;
             this.issuerSettlementId = issuerSettlementId;
@@ -1000,6 +1205,8 @@ public final class CampaignSnapshot {
             this.objective = objective;
             this.progress = progress;
             this.status = status;
+            this.issueReason = issueReason;
+            this.urgency = urgency;
         }
 
         public long remainingDays() {
@@ -1119,12 +1326,16 @@ public final class CampaignSnapshot {
         public final long daysRunning;
         public final String declarationReason;
         public final boolean involvesPlayerRealm;
+        public final String phase;
+        public final String momentumExplanation;
+        public final String objectiveSettlementName;
 
         WarView(long id, String goal, String state, List<String> attackerNames, List<String> defenderNames,
                 double attackerScore, double defenderScore, double attackerExhaustion,
                 double defenderExhaustion, String targetProvinceName, String targetTitleName,
                 List<String> contributions, long startMinute, long daysRunning, String declarationReason,
-                boolean involvesPlayerRealm) {
+                boolean involvesPlayerRealm, String phase, String momentumExplanation,
+                String objectiveSettlementName) {
             this.id = id;
             this.goal = goal;
             this.state = state;
@@ -1141,6 +1352,9 @@ public final class CampaignSnapshot {
             this.daysRunning = daysRunning;
             this.declarationReason = declarationReason;
             this.involvesPlayerRealm = involvesPlayerRealm;
+            this.phase = phase;
+            this.momentumExplanation = momentumExplanation;
+            this.objectiveSettlementName = objectiveSettlementName;
         }
 
         public boolean isActive() {

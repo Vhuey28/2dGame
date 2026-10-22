@@ -15,7 +15,9 @@ import world.War;
 import world.WorldConfig;
 import world.WorldState;
 import world.command.CommandResult;
+import world.SettlementPressure;
 import world.diplomacy.DiplomaticState;
+import world.diplomacy.Grievance;
 import world.diplomacy.Treaty;
 import world.economy.GoodType;
 import world.economy.Workplace;
@@ -65,11 +67,11 @@ public final class WarSystem {
         war.targetProvinceId = targetProvinceId;
         war.targetTitleId = targetTitleId;
         war.claimantPersonId = attacker.rulerPersonId;
-        war.declarationReason = goal + " validated against persistent legal and political state";
         addDefensiveAllies(war, defenderRealmId, currentMinute);
         world.wars.put(war.id, war);
 
         Settlement objective = objectiveSettlement(war, defenderRealmId);
+        war.declarationReason = declarationReason(attacker, defender, war, objective, currentMinute);
         if (objective != null) {
             if (attackingArmy != null) {
                 military.issueMoveOrder(attackingArmy.id, objective.id, Army.ArmyOrder.BESIEGE, currentMinute);
@@ -81,7 +83,8 @@ public final class WarSystem {
         attacker.stability = Math.max(0.0, attacker.stability - 2.0);
         context.eventBus.publish(new WorldEvent(world.idGenerator.next(), currentMinute, "WAR_DECLARED",
                 attacker.name + " declares war on " + defender.name + " "
-                        + goalLabel(goal, targetProvinceId, targetTitleId)));
+                        + goalLabel(goal, targetProvinceId, targetTitleId)
+                        + ": " + war.declarationReason));
         return CommandResult.accepted();
     }
 
@@ -477,7 +480,7 @@ public final class WarSystem {
                 siege.foodConsumed += vegetables;
             } else {
                 siege.defenderResolve = Math.max(0.0, siege.defenderResolve - 4.0);
-                settlement.unrest = Math.min(100.0, settlement.unrest + 2.0);
+                settlement.unrest = Math.min(1.0, Math.max(0.0, settlement.unrest) + 0.08);
                 reduceHouseholdFoodSecurity(settlement.id);
                 long days = Math.max(1L, (minute - siege.startMinute) / WorldConfig.MINUTES_PER_DAY);
                 if (days % 3L == 0L && killCivilian(settlement.id, minute)) siege.civilianDeaths++;
@@ -628,6 +631,70 @@ public final class WarSystem {
         };
     }
 
+    private String declarationReason(Realm attacker, Realm defender, War war,
+            Settlement objective, long currentMinute) {
+        DiplomaticState relation = null;
+        for (DiplomaticState candidate : world.diplomaticStates.values()) {
+            if (candidate.connects(attacker.id, defender.id)) relation = candidate;
+        }
+        String relations = relation == null ? "relations are unrecorded"
+                : "relations " + relation.relationshipScore() + " (opinion " + relation.opinion
+                        + ", trust " + relation.trust + ", rivalry " + relation.rivalry
+                        + ", border tension " + relation.borderTension + ")";
+        String target = objective == null ? "the enemy heartland" : objective.name;
+        Grievance grievance = strongestGrievance(attacker.id, defender.id, currentMinute);
+        String grievanceText = grievance == null ? "no active grievance is recorded"
+                : "strongest grievance is " + grievance.type.name().replace('_', ' ').toLowerCase()
+                        + " severity " + grievance.severity;
+        return switch (war.goal) {
+            case CONQUER_PROVINCE -> {
+                Province province = war.targetProvinceId == null
+                        ? null : world.geography.getProvince(war.targetProvinceId);
+                yield "Conquest of " + (province == null ? "the target province" : province.name)
+                        + "; first objective " + target + "; " + relations + "; " + grievanceText;
+            }
+            case CLAIM_TITLE -> {
+                Title title = war.targetTitleId == null ? null : world.titles.get(war.targetTitleId);
+                Claim claim = strongestClaim(attacker, war.targetTitleId, currentMinute);
+                yield "Claim to " + (title == null ? "the disputed title" : title.name)
+                        + (claim == null ? "" : " by " + claim.source.name().replace('_', ' ').toLowerCase()
+                                + " strength " + Math.round(claim.strength))
+                        + "; first objective " + target + "; " + relations;
+            }
+            case INDEPENDENCE -> {
+                PoliticalFaction faction = world.politicalFactions.values().stream()
+                        .filter(candidate -> candidate.realmId == attacker.id && candidate.active
+                                && candidate.goal == PoliticalFaction.FactionGoal.INDEPENDENCE)
+                        .max(Comparator.comparingDouble(candidate -> candidate.support)).orElse(null);
+                yield "Independence from " + defender.name
+                        + (faction == null ? " under an existing vassal relationship"
+                                : "; independence faction support " + Math.round(faction.support)
+                                        + ", organization " + Math.round(faction.organization)
+                                        + " (" + faction.pressureReason + ")")
+                        + "; " + relations;
+            }
+            case VASSALIZE -> "Demand vassalage backed by legitimacy " + Math.round(attacker.legitimacy)
+                    + "; first objective " + target + "; " + relations;
+            case PUNITIVE -> "Punitive response: " + grievanceText + "; first objective " + target
+                    + "; " + relations;
+        };
+    }
+
+    private Claim strongestClaim(Realm attacker, Long titleId, long currentMinute) {
+        if (attacker.rulerPersonId == null || titleId == null) return null;
+        return world.claims.values().stream().filter(claim -> claim.titleId == titleId.longValue()
+                        && claim.claimantPersonId == attacker.rulerPersonId.longValue()
+                        && (claim.expiryMinute == null || claim.expiryMinute > currentMinute))
+                .max(Comparator.comparingDouble(claim -> claim.strength)).orElse(null);
+    }
+
+    private Grievance strongestGrievance(long offended, long offender, long currentMinute) {
+        return world.grievances.values().stream().filter(grievance -> !grievance.resolved
+                        && grievance.offendedRealmId == offended && grievance.offenderRealmId == offender
+                        && (grievance.expiryMinute == null || grievance.expiryMinute > currentMinute))
+                .max(Comparator.comparingInt(grievance -> grievance.severity)).orElse(null);
+    }
+
     /** Player-readable realm name for event details. */
     private String realmName(Long realmId) {
         Realm realm = realmId == null ? null : world.realms.get(realmId);
@@ -697,12 +764,22 @@ public final class WarSystem {
                 return province.settlementIds.stream().map(world.geography::getSettlement)
                         .filter(settlement -> settlement != null && settlement.controllerRealmId != null
                                 && settlement.controllerRealmId == defenderRealmId)
-                        .max(Comparator.comparingInt(this::settlementPopulation)).orElse(null);
+                        .max(Comparator.comparingDouble(this::objectiveValue)).orElse(null);
             }
         }
         Realm defender = world.realms.get(defenderRealmId);
         return defender == null || defender.capitalSettlementId == null ? null
                 : world.geography.getSettlement(defender.capitalSettlementId);
+    }
+
+    private double objectiveValue(Settlement settlement) {
+        Realm controller = settlement.controllerRealmId == null
+                ? null : world.realms.get(settlement.controllerRealmId);
+        return settlementPopulation(settlement)
+                + (controller != null && controller.capitalSettlementId != null
+                        && controller.capitalSettlementId.longValue() == settlement.id ? 100.0 : 0.0)
+                - SettlementPressure.clamp01(settlement.security) * 40.0
+                + SettlementPressure.clamp01(settlement.unrest) * 25.0;
     }
 
     private int settlementPopulation(Settlement settlement) { return settlementPopulation(settlement.id); }

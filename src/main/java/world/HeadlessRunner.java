@@ -39,12 +39,14 @@ public class HeadlessRunner {
         SimulationContext context = sim.getContext();
 
         // Initialize seeded random streams for this seed
+        context.randomStreams.put("DEFAULT", new SeededRandom(seed));
         context.randomStreams.put("DEMOGRAPHICS", new SeededRandom(seed + 1));
         context.randomStreams.put("ECONOMY", new SeededRandom(seed + 2));
         context.randomStreams.put("POLITICS", new SeededRandom(seed + 3));
         context.randomStreams.put("MILITARY", new SeededRandom(seed + 4));
         context.randomStreams.put("GENERATION", new SeededRandom(seed + 5));
         context.randomStreams.put("DIPLOMACY", new SeededRandom(seed + 6));
+        context.randomStreams.put("CRIME", new SeededRandom(seed + 7));
 
         // Generate world
         WorldGenerator generator = new WorldGenerator(context);
@@ -103,7 +105,8 @@ public class HeadlessRunner {
             Person ruler = realm.rulerPersonId == null ? null : state.people.get(realm.rulerPersonId);
             System.out.println("  " + realm.name + " ruler: "
                     + (ruler == null ? "VACANT" : ruler.givenName + " " + ruler.familyName)
-                    + ", legitimacy=" + String.format("%.1f", realm.legitimacy));
+                    + ", legitimacy=" + String.format("%.1f", realm.legitimacy)
+                    + ", strategy=" + realm.strategy + " (" + realm.strategyReason + ")");
         }
 
         // Report on food economy
@@ -139,6 +142,7 @@ public class HeadlessRunner {
         SimulationProfile profile = sim.getProfile();
         System.out.println("Scale diagnostics:");
         System.out.println("  Invariants: " + invariants);
+        System.out.println("  Living-world metrics: " + SoakRunner.Metrics.capture(sim));
         System.out.println("  Average tick ms: " + String.format("%.3f", profile.getAverageTickMillis()));
         System.out.println("  Slowest tick ms: " + String.format("%.3f", profile.getSlowestTickMillis()));
         System.out.println("  Heap used MiB: " + String.format("%.1f", profile.getHeapUsedBytes() / 1048576.0));

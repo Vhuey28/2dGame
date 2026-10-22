@@ -23,6 +23,16 @@ public final class Realm {
     public double stability = 50.0;
     public double warExhaustion = 0.0;
 
+    /** Current court plan; armies and the UI read the same target and reason. */
+    public Strategy strategy = Strategy.DEVELOP;
+    public Long strategyTargetSettlementId;
+    public String strategyReason = "No plan assessed yet";
+    public long strategyUpdatedMinute = Long.MIN_VALUE;
+
+    public enum Strategy {
+        DEVELOP, CONSOLIDATE, DEFEND, RELIEVE_SIEGE, CONQUER, REBUILD, SEEK_PEACE
+    }
+
     public Realm() {
         this.treasury = new MoneyAccount(0L);
     }

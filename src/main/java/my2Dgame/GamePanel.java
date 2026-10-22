@@ -1450,9 +1450,29 @@ public class GamePanel extends JPanel implements Runnable{
 			}
 		}
 
+		/** Draws a short local-scene label inside the canvas and away from labels already placed. */
+		private void drawClampedLocalLabel(Graphics2D g2, String text, int anchorX, int baselineY,
+				int maxWidth, java.util.List<Rectangle> occupied) {
+			if (text == null || text.isBlank()) return;
+			String fitted = fitCampaignText(g2, text, Math.max(0, maxWidth));
+			if (fitted.isEmpty()) return;
+			int width = g2.getFontMetrics().stringWidth(fitted) + 8;
+			int height = 13;
+			java.util.List<Rectangle> candidates = java.util.List.of(
+					new Rectangle(anchorX - width / 2, baselineY - 10, width, height),
+					new Rectangle(anchorX - width / 2, baselineY + 3, width, height),
+					new Rectangle(anchorX - width / 2, baselineY - 23, width, height),
+					new Rectangle(anchorX - width / 2, baselineY + 16, width, height));
+			Rectangle bounds = new Rectangle(4, 4, screenWidth - 8, screenHeight - 60);
+			Rectangle placed = CampaignTextLayout.chooseLeastOverlapping(candidates, occupied, bounds);
+			occupied.add(placed);
+			g2.drawString(fitted, placed.x + 4, placed.y + 10);
+		}
+
 		private void drawCampaignLocalActors(Graphics2D g2) {
 			if (gameMode != GameMode.CAMPAIGN || currentLayer != GameLayer.OVERWORLD
 					|| campaignSession == null) return;
+			java.util.List<Rectangle> occupiedLocalLabels = new java.util.ArrayList<>();
 			for (world.local.LocalActor actor : campaignSession.getLocalActors()) {
 				int x = (int) actor.x - (int) cameraX;
 				int y = (int) actor.y - (int) cameraY;
@@ -1473,7 +1493,8 @@ public class GamePanel extends JPanel implements Runnable{
 				if (Math.hypot(player.x - actor.x, player.y - actor.y) < tileSize * 3.0) {
 					g2.setColor(Color.WHITE);
 					g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
-					g2.drawString("[F] " + actor.label + " · " + actor.activity, x - 24, y - 16);
+					drawClampedLocalLabel(g2, "[F] " + actor.label + " · " + actor.activity,
+							x, y - 16, 190, occupiedLocalLabels);
 				}
 			}
 		}
@@ -1490,6 +1511,7 @@ public class GamePanel extends JPanel implements Runnable{
 
 		private void drawCampaignLocalPlaceholders(Graphics2D g2) {
 			if (gameMode != GameMode.CAMPAIGN || currentLayer != GameLayer.OVERWORLD) return;
+			java.util.List<Rectangle> occupiedLocalLabels = new java.util.ArrayList<>();
 			for (LocalPlaceholder placeholder : campaignLocalPlaceholders) {
 				int x = placeholder.worldX - (int) cameraX;
 				int y = placeholder.worldY - (int) cameraY;
@@ -1501,16 +1523,18 @@ public class GamePanel extends JPanel implements Runnable{
 				g2.drawOval(x - 3, y - 8, 3, 3);
 				g2.setColor(Color.WHITE);
 				g2.setFont(new Font("SansSerif", Font.BOLD, 10));
-				g2.drawString(placeholder.label, x - 18, y - 20);
+				drawClampedLocalLabel(g2, placeholder.label, x, y - 20, 150, occupiedLocalLabels);
 				if (Math.hypot(player.x - placeholder.worldX, player.y - placeholder.worldY) < tileSize * 3.0) {
 					g2.setColor(Color.YELLOW);
-					g2.drawString("[F] interact", x - 22, y + 28);
+					drawClampedLocalLabel(g2, "[F] interact", x, y + 28, 120, occupiedLocalLabels);
 				}
 			}
 			g2.setColor(new Color(0, 0, 0, 180));
 			g2.fillRoundRect(14, screenHeight - 48, screenWidth - 28, 32, 8, 8);
 			g2.setColor(Color.WHITE);
-			g2.drawString("TAB: world map | " + localInteractionMessage, 24, screenHeight - 27);
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
+			drawFittedString(g2, "TAB: world map | " + localInteractionMessage,
+					24, screenHeight - 27, screenWidth - 48);
 		}
 
 	private void startCampaignTacticalBattle() {
@@ -3391,7 +3415,7 @@ System.nanoTime();
 					+ "  |  Enemy standing " + campaignBattleEnemyStanding()
 					+ ", routed " + campaignBattleEnemyRoutedAlive()
 					+ "  |  Your kills " + campaignBattlePersonalKills();
-			g2.drawString(battleCounts, 132, 29);
+			drawFittedString(g2, battleCounts, 132, 29, 504);
 			g2.setFont(new Font("SansSerif", Font.PLAIN, 11));
 			g2.setColor(Color.WHITE);
 			String phase = campaignBattlePhaseMessage == null || campaignBattlePhaseMessage.isBlank()
@@ -3399,7 +3423,7 @@ System.nanoTime();
 					: campaignBattlePhaseMessage;
 			String command = campaignBattlePursuingRout ? "  R: call off pursuit."
 					: "  R: withdraw your force.";
-			g2.drawString(phase + command, 132, 48);
+			drawFittedString(g2, phase + command, 132, 48, 504);
 		}
 		if (currentLayer == GameLayer.DEPLOYMENT) {
 			drawDeploymentScreen(g2);
@@ -3420,7 +3444,7 @@ System.nanoTime();
 			g2.setColor(new Color(220, 170, 255));
 			g2.setFont(new Font("SansSerif", Font.BOLD, 14));
 			String portalPrompt = "Click the world to place the portal destination";
-			g2.drawString(portalPrompt, (screenWidth - g2.getFontMetrics().stringWidth(portalPrompt)) / 2, 77);
+			drawCenteredFittedString(g2, portalPrompt, screenWidth / 2 - 178, 77, 356);
 		}
 		if (gameCrashed) {
 			drawCrashMenu(g2);
@@ -3466,7 +3490,7 @@ System.nanoTime();
 		g2.setFont(new Font("Serif", Font.BOLD, 20));
 		g2.setColor(new Color(240, 228, 200));
 		String title = "Battle";
-		g2.drawString(title, screenWidth / 2 - g2.getFontMetrics().stringWidth(title) / 2, 24);
+		drawCenteredFittedString(g2, title, screenWidth / 2 - 90, 24, 180);
 		g2.setStroke(new BasicStroke(2f));
 		g2.drawLine(screenWidth / 2 - 8, 34, screenWidth / 2 + 8, 52);
 		g2.drawLine(screenWidth / 2 - 8, 52, screenWidth / 2 + 8, 34);
@@ -3495,8 +3519,8 @@ System.nanoTime();
 		g2.drawRect(leftShieldX, 12, 34, 30);
 		g2.setFont(new Font("SansSerif", Font.BOLD, 10));
 		g2.setColor(new Color(150, 230, 160));
-		String yourLabel = armyInReach ? "Your Army" : "Your Party";
-		g2.drawString(yourLabel, leftShieldX - 48, 32);
+		String yourLabel = fitCampaignText(g2, armyInReach ? "Your Army" : "Your Party", 86);
+		g2.drawString(yourLabel, leftShieldX - 8 - g2.getFontMetrics().stringWidth(yourLabel), 32);
 
 		int rightShieldX = screenWidth / 2 + 142;
 		g2.setColor(enemy == null ? Color.GRAY : colorForRealm(enemy.realmId));
@@ -3508,10 +3532,11 @@ System.nanoTime();
 		g2.setColor(new Color(255, 140, 120));
 		String enemyLabel = enemy == null ? "Gone"
 				: campaignRealmName(campaignSnapshot, enemy.realmId) + " Army";
-		g2.drawString(enemyLabel, rightShieldX + 42, 32);
+		drawFittedString(g2, enemyLabel, rightShieldX + 42, 32,
+				Math.max(0, screenWidth - (rightShieldX + 42) - 8));
 
 		// Choice panel.
-		int x = 10, y = 68, w = 226, h = 318;
+		int x = 10, y = 68, w = 226, h = 354;
 		g2.setColor(new Color(18, 42, 62, 242));
 		g2.fillRoundRect(x, y, w, h, 8, 8);
 		g2.setColor(new Color(205, 178, 112));
@@ -3523,50 +3548,45 @@ System.nanoTime();
 				? "That army is no longer here."
 				: "You encountered the " + campaignRealmName(campaignSnapshot, enemy.realmId)
 						+ " army.";
-		for (String line : wrapCampaignText(g2, encounterText, w - 20, 3)) {
-			g2.drawString(line, x + 10, textY);
-			textY += 15;
-		}
+		textY = drawWrappedCampaignText(g2, encounterText, x + 10, textY, w - 20, 3, 15);
 		textY += 4;
 		g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
 		g2.setColor(new Color(205, 215, 225));
 		if (enemy != null) {
-			g2.drawString("Commander:", x + 10, textY); textY += 13;
-			for (String line : wrapCampaignText(g2, enemy.commanderName, w - 28, 2)) {
-				g2.drawString("  " + line, x + 10, textY);
+			drawFittedString(g2, "Commander:", x + 10, textY, w - 20); textY += 13;
+			for (String line : wrapCampaignText(g2, enemy.commanderName, w - 34, 2)) {
+				drawFittedString(g2, "  " + line, x + 10, textY, w - 20);
 				textY += 13;
 			}
-			g2.drawString("Troops " + enemy.strength + "  morale " + Math.round(enemy.morale) + "%",
-					x + 10, textY); textY += 13;
-			g2.drawString(enemy.order + " -> " + settlementName(campaignSnapshot,
-					enemy.destinationSettlementId), x + 10, textY); textY += 18;
+			drawFittedString(g2, "Troops " + enemy.strength + "  morale " + Math.round(enemy.morale) + "%",
+					x + 10, textY, w - 20); textY += 13;
+			drawFittedString(g2, enemy.order + " -> " + settlementName(campaignSnapshot,
+					enemy.destinationSettlementId), x + 10, textY, w - 20); textY += 18;
 		}
 		if (armyInReach) {
 			g2.setColor(new Color(255, 224, 145));
-			g2.drawString("Yours: " + mine.strength + " troops, morale "
-					+ Math.round(mine.morale) + "%", x + 10, textY);
+			drawFittedString(g2, "Yours: " + mine.strength + " troops, morale "
+					+ Math.round(mine.morale) + "%", x + 10, textY, w - 20);
 			textY += 15;
-			g2.drawString("Health " + campaignSnapshot.player.healthPercent + "%"
+			drawFittedString(g2, "Health " + campaignSnapshot.player.healthPercent + "%"
 					+ (campaignSnapshot.player.wounded ? " (wounded)" : "")
 					+ " | Grain " + mine.grain + (mine.daysWithoutFood > 0
-					? " (" + mine.daysWithoutFood + "d unfed)" : ""), x + 10, textY);
+					? " (" + mine.daysWithoutFood + "d unfed)" : ""), x + 10, textY, w - 20);
 			textY += 18;
 		} else {
 			g2.setColor(new Color(255, 190, 140));
 			String soloText = mine == null
 					? "You command no army. Attack! fights personally with your party and companions."
 					: "Your commanded army is not in reach. Attack! fights personally with your party.";
-			for (String line : wrapCampaignText(g2, soloText, w - 20, 3)) {
-				g2.drawString(line, x + 10, textY);
-				textY += 13;
-			}
-			g2.drawString("Party " + yourStrength + " | Health "
-					+ campaignSnapshot.player.healthPercent + "%", x + 10, textY);
+			textY = drawWrappedCampaignText(g2, soloText, x + 10, textY, w - 20, 3, 13);
+			drawFittedString(g2, "Party " + yourStrength + " | Health "
+					+ campaignSnapshot.player.healthPercent + "%", x + 10, textY, w - 20);
 			textY += 18;
 		}
-		addContextButton(g2, "ENCOUNTER_ATTACK", armyInReach ? "Attack!" : "Attack personally!", x + 12, y + 176, w - 24, 34);
-		addContextButton(g2, "ENCOUNTER_SEND", armyInReach ? "Send in your troops." : "No troops in reach to send", x + 12, y + 216, w - 24, 34);
-		addContextButton(g2, "ENCOUNTER_LEAVE", "Leave...", x + 12, y + 256, w - 24, 34);
+		int buttonY = Math.max(y + 176, Math.min(y + 204, textY + 4));
+		addContextButton(g2, "ENCOUNTER_ATTACK", armyInReach ? "Attack!" : "Attack personally!", x + 12, buttonY, w - 24, 34);
+		addContextButton(g2, "ENCOUNTER_SEND", armyInReach ? "Send in your troops." : "No troops in reach to send", x + 12, buttonY + 40, w - 24, 34);
+		addContextButton(g2, "ENCOUNTER_LEAVE", "Leave...", x + 12, buttonY + 80, w - 24, 34);
 		if (campaignContextMessage != null && !campaignContextMessage.isBlank()) {
 			g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
 			g2.setColor(new Color(255, 205, 160));
@@ -3578,13 +3598,15 @@ System.nanoTime();
 			}
 		}
 
-		g2.setFont(new Font("SansSerif", Font.BOLD, 16));
+		g2.setFont(new Font("SansSerif", Font.BOLD, 13));
 		String paused = "PAUSED";
-		int pausedX = screenWidth / 2 - g2.getFontMetrics().stringWidth(paused) / 2;
+		String fittedPaused = fitCampaignText(g2, paused, 100);
+		int pausedX = screenWidth - 110
+				+ Math.max(0, (100 - g2.getFontMetrics().stringWidth(fittedPaused)) / 2);
 		g2.setColor(Color.BLACK);
-		g2.drawString(paused, pausedX + 1, screenHeight - 45);
+		g2.drawString(fittedPaused, pausedX + 1, 52);
 		g2.setColor(Color.WHITE);
-		g2.drawString(paused, pausedX, screenHeight - 46);
+		g2.drawString(fittedPaused, pausedX, 51);
 	}
 
 	/** Post-rout order: pursue for more salvage, show mercy for reputation, or demand prisoners. */
@@ -3599,7 +3621,7 @@ System.nanoTime();
 		g2.drawRoundRect(x, y, w, h, 14, 14);
 		g2.setFont(new Font("Serif", Font.BOLD, 23));
 		g2.setColor(new Color(235, 205, 130));
-		g2.drawString("THE ENEMY BREAKS!", x + 22, y + 36);
+		drawFittedString(g2, "THE ENEMY BREAKS!", x + 22, y + 36, w - 44);
 		g2.setFont(new Font("SansSerif", Font.PLAIN, 12));
 		g2.setColor(Color.WHITE);
 		int routed = campaignBattleEnemyRoutedAlive();
@@ -3610,16 +3632,17 @@ System.nanoTime();
 						activeCampaignBattle.defender.startingMorale,
 						campaignBattleEnemyCommanderDown(), campaignBattlePersonalKills(),
 						campaignBattleOpposingStanding());
-		g2.drawString(killed + " enemy dead, " + routed + " running. "
-				+ (campaignBattleEnemyCommanderDown() ? "Their commander is down." : "Their formation has collapsed."), x + 22, y + 62);
-		g2.drawString("Victory is yours. Choose what your soldiers do next:", x + 22, y + 82);
+		drawFittedString(g2, killed + " enemy dead, " + routed + " running. "
+				+ (campaignBattleEnemyCommanderDown() ? "Their commander is down." : "Their formation has collapsed."),
+				x + 22, y + 62, w - 44);
+		drawFittedString(g2, "Victory is yours. Choose what your soldiers do next:", x + 22, y + 82, w - 44);
 		addContextButton(g2, "BATTLE_PURSUE", "1  Pursue them — more cuts and salvage (20s)", x + 22, y + 104, w - 44, 42);
 		addContextButton(g2, "BATTLE_LET_GO", "2  Let them go — end cleanly, gain mercy reputation", x + 22, y + 156, w - 44, 42);
 		addContextButton(g2, "BATTLE_DEMAND_SURRENDER",
 				"3  Demand surrender — " + (surrenderLikely ? "likely prisoners" : "they may refuse"), x + 22, y + 208, w - 44, 42);
 		g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
 		g2.setColor(new Color(190, 205, 215));
-		g2.drawString("ESC also chooses pursuit.", x + 22, y + h - 12);
+		drawFittedString(g2, "ESC also chooses pursuit.", x + 22, y + h - 12, w - 44);
 	}
 
 	private void drawCampaignContextMenu(Graphics2D g2) {
@@ -3651,26 +3674,41 @@ System.nanoTime();
 			case CARAVAN -> "MERCHANT CARAVAN";
 			default -> "SETTLEMENT";
 		};
-		g2.drawString(title, x + 20, y + 30);
+		drawFittedString(g2, title, x + 20, y + 30, w - 40);
 		g2.setFont(new Font("Monospaced", Font.PLAIN, 11)); g2.setColor(Color.WHITE);
 		if (settlement != null && (campaignContextMenu == CampaignContextMenu.SETTLEMENT
 				|| campaignContextMenu == CampaignContextMenu.MARKET
 				|| campaignContextMenu == CampaignContextMenu.NOTICE_BOARD)) {
-			g2.drawString(settlement.name, x + 20, y + 50);
+			drawFittedString(g2, settlement.name, x + 20, y + 50, w - 40);
 		}
 		if (campaignContextMenu == CampaignContextMenu.SETTLEMENT && settlement != null) {
 			boolean playerHere = campaignSnapshot.player != null && campaignSnapshot.player.atSettlement
 					&& !campaignSnapshot.player.traveling
 					&& campaignSnapshot.player.settlementId == settlement.id;
-			g2.drawString("Population " + settlement.population + " | Households " + settlement.households, x + 20, y + 72);
+			drawFittedString(g2, "Population " + settlement.population + " | Households "
+					+ settlement.households, x + 20, y + 69, w - 40);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
-			g2.drawString("Owner: " + campaignRealmName(campaignSnapshot, settlement.realmId)
+			drawFittedString(g2, "Owner: " + campaignRealmName(campaignSnapshot, settlement.realmId)
 					+ (settlement.occupyingRealmId == null ? ""
-							: " | Occupied by " + campaignRealmName(campaignSnapshot, settlement.occupyingRealmId)), x + 20, y + 90);
+							: " | Occupied by " + campaignRealmName(campaignSnapshot, settlement.occupyingRealmId)),
+					x + 20, y + 85, w - 40);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
-			g2.drawString("Treasury " + settlement.treasury + "c | Food security " + Math.round(settlement.foodSecurity * 100) + "%", x + 20, y + 108);
-			g2.drawString("Security " + Math.round(settlement.security * 100) + "% | Unrest " + Math.round(settlement.unrest * 100) + "%"
-					+ (playerHere ? " | You are here" : " | Selected"), x + 20, y + 126);
+			drawFittedString(g2, "Treasury " + settlement.treasury + "c | Food "
+					+ Math.round(settlement.foodSecurity * 100) + "% (" + String.format("%.1f", settlement.foodReserveDays)
+					+ "d) | Loyalty " + Math.round(settlement.loyalty * 100) + "%", x + 20, y + 101, w - 40);
+			drawFittedString(g2, "Security " + Math.round(settlement.security * 100) + "% | Unrest "
+					+ Math.round(settlement.unrest * 100) + "% | Prosperity "
+					+ Math.round(settlement.prosperity * 100) + "% | Sanitation "
+					+ Math.round(settlement.sanitation * 100) + "%"
+					+ (playerHere ? " | You are here" : " | Selected"), x + 20, y + 117, w - 40);
+			g2.setColor("CRISIS".equals(settlement.outlook) ? new Color(255, 150, 110)
+					: "STRAINED".equals(settlement.outlook) ? new Color(255, 205, 130)
+					: new Color(170, 225, 175));
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
+			drawFittedString(g2, settlement.outlook + " · " + settlement.pressureSummary,
+					x + 20, y + 132, w - 40);
+			g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+			g2.setColor(Color.WHITE);
 
 			CampaignSnapshot.SiegeView siegeHere = campaignSnapshot.findActiveSiegeAt(settlement.id);
 			CampaignSnapshot.ArmyView commanded = findCommandedArmy(campaignSnapshot);
@@ -3706,7 +3744,7 @@ System.nanoTime();
 				}
 				g2.setColor(new Color(255, 205, 150));
 				g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
-				g2.drawString(siegeStatus, x + 28, y + 296);
+				drawFittedString(g2, siegeStatus, x + 28, y + 296, w - 56);
 				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 				g2.setColor(Color.WHITE);
 				addContextButton(g2, siegeButtonId, siegeButtonLabel, x + 28, y + 304, 200, 34);
@@ -3717,8 +3755,8 @@ System.nanoTime();
 						: garrisoned.publicStockpile.getQuantity(GoodType.WEAPONS);
 				g2.setColor(new Color(190, 200, 210));
 				g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
-				g2.drawString("Raise your own company: 35c and one weapon per volunteer."
-						+ "  Weapons here: " + weaponsHere, x + 28, y + 356);
+				drawFittedString(g2, "Raise your own company: 35c and one weapon per volunteer."
+						+ "  Weapons here: " + weaponsHere, x + 28, y + 356, w - 56);
 				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 				g2.setColor(Color.WHITE);
 				addContextButton(g2, "RAISE_INFANTRY", "Raise 10 infantry", x + 28, y + 364, 140, 32);
@@ -3727,30 +3765,36 @@ System.nanoTime();
 			} else {
 				g2.setColor(new Color(205, 215, 225));
 				g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
-				g2.drawString("You are not here. Market, contracts, joining, and recruiting need your presence.", x + 28, y + 148);
+				drawFittedString(g2, "You are not here. Market, contracts, joining, and recruiting need your presence.",
+						x + 28, y + 148, w - 56);
 				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 				g2.setColor(Color.WHITE);
 				addContextButton(g2, "SETTLEMENT_TRAVEL", "Travel here", x + 28, y + 162, 200, 42);
 				addContextButton(g2, "OPEN_INFO", "Open encyclopedia", x + 250, y + 162, 200, 42);
 				g2.setColor(new Color(255, 205, 150));
 				g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
-				g2.drawString(siegeStatus, x + 28, y + 228);
+				drawFittedString(g2, siegeStatus, x + 28, y + 228, w - 56);
 				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 				g2.setColor(Color.WHITE);
 				addContextButton(g2, siegeButtonId, siegeButtonLabel, x + 28, y + 238, 200, 38);
 				g2.setColor(new Color(190, 200, 210));
 				g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
-				g2.drawString("Start/Join orders your commanded army here; it contributes on arrival.", x + 28, y + 292);
+				drawFittedString(g2, "Start/Join orders your commanded army here; it contributes on arrival.",
+						x + 28, y + 292, w - 56);
 			}
 		} else if (campaignContextMenu == CampaignContextMenu.MARKET && settlement != null) {
 			GoodType good = GoodType.values()[Math.floorMod(marketGoodIndex, GoodType.values().length)];
 			int stock = campaignSession.getWorld().geography.getSettlement(settlement.id).publicStockpile.getQuantity(good);
 			int cargo = campaignSession.getPlayerState().cargo.getQuantity(good);
 			long price = campaignSession.getWorld().geography.getSettlement(settlement.id).market.getLastPrice(good);
-			g2.setFont(new Font("SansSerif", Font.BOLD, 20)); g2.drawString(good.toString(), x + 20, y + 90);
+			g2.setFont(new Font("SansSerif", Font.BOLD, 20));
+			drawFittedString(g2, good.toString(), x + 20, y + 90, w - 40);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 12));
-			g2.drawString("Price " + Math.max(1, price) + "c | Market stock " + stock + " | Your cargo " + cargo, x + 20, y + 116);
-			g2.drawString("Coins " + campaignSnapshot.player.coins + " | Capacity " + campaignSnapshot.player.cargoUsed + "/" + campaignSnapshot.player.cargoCapacity, x + 20, y + 136);
+			drawFittedString(g2, "Price " + Math.max(1, price) + "c | Market stock " + stock
+					+ " | Your cargo " + cargo, x + 20, y + 116, w - 40);
+			drawFittedString(g2, "Coins " + campaignSnapshot.player.coins + " | Capacity "
+					+ campaignSnapshot.player.cargoUsed + "/" + campaignSnapshot.player.cargoCapacity,
+					x + 20, y + 136, w - 40);
 			addContextButton(g2, "PREV_GOOD", "Previous good", x + 20, y + 165, 135, 42);
 			addContextButton(g2, "NEXT_GOOD", "Next good", x + 165, y + 165, 135, 42);
 			addContextButton(g2, "BUY_1", "Buy 1", x + 20, y + 225, 100, 42);
@@ -3759,35 +3803,74 @@ System.nanoTime();
 			addContextButton(g2, "SELL_5", "Sell 5", x + 360, y + 225, 90, 42);
 		} else if (campaignContextMenu == CampaignContextMenu.NOTICE_BOARD) {
 			int row = 0;
+			int textWidth = 278;
 			for (CampaignSnapshot.ContractView contract : campaignSnapshot.contracts) {
 				if (!"OPEN".equals(contract.status) || contract.issuerSettlementId != campaignSnapshot.player.settlementId) continue;
 				int cy = y + 72 + row * 82;
-				g2.setColor(Color.WHITE); g2.drawString(contract.objective, x + 20, cy);
-				g2.setColor(Color.LIGHT_GRAY); g2.drawString("To " + contract.destinationName + " | " + contract.rewardCoins + "c | " + contract.remainingDays() + " days", x + 20, cy + 17);
-				addContextButton(g2, "ACCEPT_" + contract.id, "Accept contract", x + 310, cy + 27, 140, 34);
+				g2.setColor(Color.WHITE);
+				g2.setFont(new Font("SansSerif", Font.BOLD, 11));
+				int detailY = drawWrappedCampaignText(g2, contract.objective,
+						x + 20, cy, textWidth, 2, 13);
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+				g2.setColor(Color.LIGHT_GRAY);
+				drawFittedString(g2, "To " + contract.destinationName + " | " + contract.rewardCoins
+						+ "c | " + contract.remainingDays() + "d | urgency "
+						+ contract.urgency + "%",
+						x + 20, detailY + 2, textWidth);
+				g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+				g2.setColor(new Color(205, 215, 220));
+				drawWrappedCampaignText(g2, "Why: " + contract.issueReason,
+						x + 20, detailY + 14, textWidth, 2, 11);
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+				addContextButton(g2, "ACCEPT_" + contract.id, "Accept contract", x + 310, cy + 17, 140, 34);
 				if (++row >= 3) break;
 			}
-			if (row == 0) g2.drawString("No new contracts are posted here.", x + 20, y + 85);
+			if (row == 0) drawFittedString(g2, "No new contracts are posted here.", x + 20, y + 85, w - 40);
 		} else if (campaignContextMenu == CampaignContextMenu.PERSON) {
 			world.Person person = selectedCampaignActorId == null ? null
 					: campaignSession.getWorld().people.get(selectedCampaignActorId);
 			if (person == null) {
-				g2.drawString("This person is no longer present.", x + 20, y + 82);
+				drawFittedString(g2, "This person is no longer present.", x + 20, y + 82, w - 40);
 			} else {
 				long minute = campaignSnapshot.worldMinute;
 				g2.setFont(new Font("Serif", Font.BOLD, 20));
-				g2.drawString(person.givenName + " " + person.familyName, x + 20, y + 78);
+				drawFittedString(g2, person.givenName + " " + person.familyName, x + 20, y + 74, w - 40);
 				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
-				g2.drawString("Age " + person.getAge(minute) + " | " + person.type + " | " + person.currentActivity, x + 20, y + 102);
+				drawFittedString(g2, "Age " + person.getAge(minute) + " | " + person.type
+						+ " | " + person.currentActivity, x + 20, y + 96, w - 40);
 				String work = person.employerId == null ? "No current employer" : "Workplace #" + person.employerId;
-				g2.drawString(work + " | Wealth " + Math.round(person.wealth.netWorth) + "c", x + 20, y + 121);
-				g2.drawString("Needs: food " + percent(person.needs.foodSecurity) + "  safety " + percent(person.needs.safety)
-						+ "  social " + percent(person.needs.socialBelonging), x + 20, y + 140);
-				g2.drawString("Traits: " + describePersonality(person), x + 20, y + 159);
+				drawFittedString(g2, work + " | Wealth " + Math.round(person.wealth.netWorth) + "c",
+						x + 20, y + 113, w - 40);
+				drawFittedString(g2, "Needs: food " + percent(person.needs.foodSecurity)
+						+ "  safety " + percent(person.needs.safety)
+						+ "  social " + percent(person.needs.socialBelonging), x + 20, y + 130, w - 40);
+				drawFittedString(g2, "Traits: " + describePersonality(person), x + 20, y + 147, w - 40);
+				g2.setColor(new Color(255, 215, 140));
+				drawFittedString(g2, "Goal: " + person.currentGoal.name().replace('_', ' ')
+						+ " (" + person.goalUrgency + ") · opinion of you " + person.opinionOfPlayer,
+						x + 20, y + 166, w - 40);
+				g2.setColor(new Color(205, 215, 220));
+				g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+				int lifeY = drawWrappedCampaignText(g2, "Why: " + person.goalReason,
+						x + 20, y + 178, w - 40, 1, 11) + 2;
+				java.util.List<String> lifeLines = new java.util.ArrayList<>();
 				if (person.spouseId != null) {
 					world.Person spouse = campaignSession.getWorld().people.get(person.spouseId);
-					if (spouse != null) g2.drawString("Family: spouse " + spouse.givenName + " " + spouse.familyName, x + 20, y + 178);
+					if (spouse != null) lifeLines.add("Family: spouse " + spouse.givenName + " " + spouse.familyName);
 				}
+				if (person.lastPlayerMemory != null && !person.lastPlayerMemory.isBlank()) {
+					lifeLines.add("Remembers you: " + person.lastPlayerMemory);
+				}
+				if (person.lastLifeEvent != null && !person.lastLifeEvent.isBlank()) {
+					lifeLines.add("Recent: " + person.lastLifeEvent);
+				}
+				for (String line : lifeLines) {
+					if (lifeY > y + 207) break;
+					drawFittedString(g2, line, x + 20, lifeY, w - 40);
+					lifeY += 12;
+				}
+				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+				g2.setColor(Color.WHITE);
 				addContextButton(g2, "TALK_PERSON", "Talk", x + 24, y + 218, 128, 44);
 				addContextButton(g2, "GIFT_GRAIN", "Give 1 grain", x + 174, y + 218, 128, 44);
 				addContextButton(g2, "RECRUIT_PERSON", "Invite to party", x + 324, y + 218, 128, 44);
@@ -3796,7 +3879,7 @@ System.nanoTime();
 			world.Army army = selectedCampaignActorId == null ? null
 					: campaignSession.getWorld().armies.get(selectedCampaignActorId);
 			if (army == null) {
-				g2.drawString("This army is no longer active.", x + 20, y + 82);
+				drawFittedString(g2, "This army is no longer active.", x + 20, y + 82, w - 40);
 			} else {
 				world.Person commander = campaignSession.getWorld().people.get(army.commanderPersonId);
 				CampaignSnapshot.RealmView realm = campaignSnapshot.findRealm(army.realmId);
@@ -3805,28 +3888,34 @@ System.nanoTime();
 						? null : campaignSnapshot.player.commandedArmyId;
 				boolean isYourArmy = commandedArmyId != null && commandedArmyId == army.id;
 				g2.setFont(new Font("Serif", Font.BOLD, 20));
-				g2.drawString(isYourArmy ? "YOUR ARMY #" + army.id
-						: (realm == null ? "Stateless" : realm.name) + " Army #" + army.id, x + 20, y + 78);
+				drawFittedString(g2, isYourArmy ? "YOUR ARMY #" + army.id
+						: (realm == null ? "Stateless" : realm.name) + " Army #" + army.id,
+						x + 20, y + 78, w - 40);
 				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
-				g2.drawString((isYourArmy ? "You command. " : "")
-						+ "Commander: " + personName(commander) + " | Strength " + strength, x + 20, y + 103);
-				g2.drawString("Order " + army.order + " | State " + army.state + " | Regiments " + army.regimentIds.size(), x + 20, y + 122);
-				g2.drawString("Morale " + Math.round(army.morale) + "% | Fatigue " + Math.round(army.fatigue)
-						+ "% | Days unfed " + army.daysWithoutFood, x + 20, y + 141);
-				g2.drawString("Supplies: grain " + army.supplies.getQuantity(GoodType.GRAIN)
-						+ " | vegetables " + army.supplies.getQuantity(GoodType.VEGETABLES), x + 20, y + 160);
-				g2.drawString("Destination: " + (army.destinationSettlementId == null ? "none"
+				drawFittedString(g2, (isYourArmy ? "You command. " : "")
+						+ "Commander: " + personName(commander) + " | Strength " + strength,
+						x + 20, y + 103, w - 40);
+				drawFittedString(g2, "Order " + army.order + " | State " + army.state
+						+ " | Regiments " + army.regimentIds.size(), x + 20, y + 122, w - 40);
+				drawFittedString(g2, "Morale " + Math.round(army.morale) + "% | Fatigue "
+						+ Math.round(army.fatigue) + "% | Days unfed " + army.daysWithoutFood,
+						x + 20, y + 141, w - 40);
+				drawFittedString(g2, "Supplies: grain " + army.supplies.getQuantity(GoodType.GRAIN)
+						+ " | vegetables " + army.supplies.getQuantity(GoodType.VEGETABLES),
+						x + 20, y + 160, w - 40);
+				drawFittedString(g2, "Destination: " + (army.destinationSettlementId == null ? "none"
 						: settlementName(campaignSnapshot, army.destinationSettlementId))
-						+ (army.routeRoadIds.isEmpty() ? "" : "   |   road leg " + (army.routeIndex + 1)
+						+ (army.routeRoadIds.isEmpty() ? "" : " | road leg " + (army.routeIndex + 1)
 								+ " of " + army.routeRoadIds.size())
-						+ "   |   at " + settlementName(campaignSnapshot, army.currentSettlementId), x + 20, y + 179);
+						+ " | at " + settlementName(campaignSnapshot, army.currentSettlementId),
+						x + 20, y + 179, w - 40);
 				if (isYourArmy) {
 					if (campaignSnapshot.player != null) {
 						g2.setColor(campaignSnapshot.player.canFight()
 								? new Color(170, 230, 175) : new Color(255, 150, 130));
-						g2.drawString("Your health " + campaignSnapshot.player.healthPercent + "%"
+						drawFittedString(g2, "Your health " + campaignSnapshot.player.healthPercent + "%"
 								+ (campaignSnapshot.player.wounded ? " (wounded)" : "")
-								+ " - any health above 0% can fight", x + 20, y + 197);
+								+ " - any health above 0% can fight", x + 20, y + 197, w - 40);
 						g2.setColor(Color.WHITE);
 					}
 					addContextButton(g2, "SUPPLY_ARMY", "Feed 5 grain", x + 173, y + 210, 132, 44);
@@ -3835,9 +3924,9 @@ System.nanoTime();
 							? null : campaignSnapshot.findSettlement(selectedCampaignSettlementId);
 					g2.setColor(new Color(255, 215, 110));
 					g2.setFont(new Font("SansSerif", Font.BOLD, 11));
-					g2.drawString("YOUR ARMY  -  orders go to: "
+					drawFittedString(g2, "YOUR ARMY - orders go to: "
 							+ (orderTarget == null ? "nothing selected (click a settlement first)"
-									: orderTarget.name), x + 20, y + 266);
+									: orderTarget.name), x + 20, y + 266, w - 40);
 					g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 					addContextButton(g2, "ORDER_MOVE", "Move", x + 20, y + 274, 104, 32);
 					addContextButton(g2, "ORDER_DEFEND", "Defend", x + 132, y + 274, 104, 32);
@@ -3887,10 +3976,10 @@ System.nanoTime();
 					addContextButton(g2, "ENGAGE_ARMY", "Attack this army", buttonX, y + 274, 152, 40);
 					g2.setColor(Color.LIGHT_GRAY);
 					g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
-					g2.drawString(youRule
+					drawFittedString(g2, youRule
 							? "Attack within 12: your army joins if in reach, otherwise your party fights alone."
 							: "You can attack personally within 12, or raise a company for a larger force.",
-							x + 20, y + 332);
+							x + 20, y + 332, w - 40);
 					g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 				}
 			}
@@ -3898,22 +3987,26 @@ System.nanoTime();
 			world.Caravan caravan = selectedCampaignActorId == null ? null
 					: campaignSession.getWorld().caravans.get(selectedCampaignActorId);
 			if (caravan == null) {
-				g2.drawString("This caravan has moved on.", x + 20, y + 82);
+				drawFittedString(g2, "This caravan has moved on.", x + 20, y + 82, w - 40);
 			} else {
 				world.Person leader = campaignSession.getWorld().people.get(caravan.leaderPersonId);
 				g2.setFont(new Font("Serif", Font.BOLD, 20));
-				g2.drawString("Caravan led by " + personName(leader), x + 20, y + 78);
+				drawFittedString(g2, "Caravan led by " + personName(leader), x + 20, y + 78, w - 40);
 				g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
-				g2.drawString("State " + caravan.state + " | Guards " + caravan.guardPersonIds.size(), x + 20, y + 103);
-				g2.drawString("Cargo " + caravan.cargoQuantity() + "/" + caravan.carryingCapacity
-						+ " | Primary " + (caravan.primaryCargo() == null ? "none" : caravan.primaryCargo()), x + 20, y + 122);
-				g2.drawString("Cash " + caravan.cash.copperCoins + "c | Lifetime profit " + caravan.lifetimeProfit
-						+ "c | Trips " + caravan.completedTrips, x + 20, y + 141);
+				drawFittedString(g2, "State " + caravan.state + " | Guards "
+						+ caravan.guardPersonIds.size(), x + 20, y + 103, w - 40);
+				drawFittedString(g2, "Cargo " + caravan.cargoQuantity() + "/" + caravan.carryingCapacity
+						+ " | Primary " + (caravan.primaryCargo() == null ? "none" : caravan.primaryCargo()),
+						x + 20, y + 122, w - 40);
+				drawFittedString(g2, "Cash " + caravan.cash.copperCoins + "c | Lifetime profit "
+						+ caravan.lifetimeProfit + "c | Trips " + caravan.completedTrips,
+						x + 20, y + 141, w - 40);
 				addContextButton(g2, "SPEAK_MERCHANT", "Ask about trade", x + 24, y + 200, 200, 44);
 				addContextButton(g2, "OPEN_MARKET", "Open local market", x + 246, y + 200, 206, 44);
 			}
 		}
-		g2.setColor(new Color(170, 220, 170)); g2.drawString(campaignContextMessage, x + 20, y + h - 42);
+		g2.setColor(new Color(170, 220, 170));
+		drawFittedString(g2, campaignContextMessage, x + 20, y + h - 42, w - 40);
 		addContextButton(g2, "CLOSE", "Close", x + w - 105, y + h - 34, 85, 26);
 	}
 
@@ -3942,7 +4035,7 @@ System.nanoTime();
 		g2.setColor(new Color(58, 76, 91)); g2.fillRoundRect(x, y, w, h, 8, 8);
 		g2.setColor(new Color(135, 165, 184)); g2.drawRoundRect(x, y, w, h, 8, 8);
 		g2.setColor(Color.WHITE); g2.setFont(new Font("SansSerif", Font.BOLD, 11));
-		g2.drawString(label, x + (w - g2.getFontMetrics().stringWidth(label)) / 2, y + h / 2 + 4);
+		drawCenteredFittedString(g2, label, x + 5, y + h / 2 + 4, Math.max(0, w - 10));
 	}
 
 	private void handleCampaignContextClick(java.awt.Point point) {
@@ -4150,7 +4243,7 @@ System.nanoTime();
 		g2.setColor(new Color(230, 178, 65));
 		g2.drawRoundRect(x, y, width, height, 16, 16);
 		g2.setFont(new Font("Serif", Font.BOLD, 24));
-		g2.drawString("CHEAT & TEST MENU", x + 18, y + 30);
+		drawFittedString(g2, "CHEAT & TEST MENU", x + 18, y + 30, width - 36);
 		g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
 		g2.setColor(Color.WHITE);
 		java.util.List<world.geography.Settlement> settlements = cheatSettlements();
@@ -4170,28 +4263,33 @@ System.nanoTime();
 		int armyIndex = armies.isEmpty() ? -1 : Math.floorMod(cheatArmyIndex, armies.size());
 		String settlementOwner = settlement == null || settlement.controllerRealmId == null ? "independent"
 				: campaignRealmName(campaignSnapshot, settlement.controllerRealmId);
-		g2.drawString("Settlement [" + (settlementIndex + 1) + "/" + settlements.size() + "]: "
-				+ (settlement == null ? "none" : "#" + settlement.id + " " + settlement.name + " (" + settlementOwner + ")"), x + 18, y + 48);
-		g2.drawString("Realm [" + (realmIndex + 1) + "/" + realms.size() + "]: "
-				+ (realm == null ? "none" : "#" + realm.id + " " + realm.name)
-				+ "   Person [" + (personIndex + 1) + "/" + people.size() + "]: "
-				+ (person == null ? "none at settlement" : "#" + person.id + " " + person.givenName + " " + person.familyName
-						+ ", " + person.type), x + 18, y + 63);
+		drawFittedString(g2, "Settlement [" + (settlementIndex + 1) + "/" + settlements.size() + "]: "
+				+ (settlement == null ? "none" : "#" + settlement.id + " " + settlement.name
+				+ " (" + settlementOwner + ")"), x + 18, y + 48, width - 36);
+		drawFittedString(g2, "Realm [" + (realmIndex + 1) + "/" + realms.size() + "]: "
+				+ (realm == null ? "none" : "#" + realm.id + " " + realm.name),
+				x + 18, y + 63, 310);
+		drawFittedString(g2, "Person [" + (personIndex + 1) + "/" + people.size() + "]: "
+				+ (person == null ? "none at settlement" : "#" + person.id + " "
+				+ person.givenName + " " + person.familyName + ", " + person.type),
+				x + 354, y + 63, width - 372);
 		if (army == null) {
-			g2.drawString("Army [0/0]: none active", x + 18, y + 78);
+			drawFittedString(g2, "Army [0/0]: none active", x + 18, y + 78, width - 36);
 		} else {
 			int strength = campaignSession.getSimulation().getMilitarySystem().strength(army);
-			g2.drawString("Army [" + (armyIndex + 1) + "/" + armies.size() + "]: #" + army.id + " "
+			drawFittedString(g2, "Army [" + (armyIndex + 1) + "/" + armies.size() + "]: #" + army.id + " "
 					+ campaignRealmName(campaignSnapshot, army.realmId) + " | " + strength + " troops | "
 					+ army.state + "/" + army.order + " | at "
-					+ settlementName(campaignSnapshot, army.currentSettlementId), x + 18, y + 78);
+					+ settlementName(campaignSnapshot, army.currentSettlementId),
+					x + 18, y + 78, width - 36);
 		}
-		g2.drawString("Amount [" + (Math.floorMod(cheatAmountIndex, CHEAT_AMOUNTS.length) + 1) + "/"
+		drawFittedString(g2, "Amount [" + (Math.floorMod(cheatAmountIndex, CHEAT_AMOUNTS.length) + 1) + "/"
 				+ CHEAT_AMOUNTS.length + "]: " + cheatAmount() + " (spawn/add troops; food +" + (cheatAmount() * 25)
 				+ ") | Player health " + campaignSnapshot.player.healthPercent + "% | Commanded: "
-				+ (campaignSnapshot.player.commandedArmyId == null ? "none" : "#" + campaignSnapshot.player.commandedArmyId), x + 18, y + 93);
+				+ (campaignSnapshot.player.commandedArmyId == null ? "none" : "#" + campaignSnapshot.player.commandedArmyId),
+				x + 18, y + 93, width - 36);
 		g2.setColor(new Color(170, 220, 170));
-		g2.drawString(trimCheatText(cheatStatus, 108), x + 18, y + 108);
+		drawFittedString(g2, cheatStatus, x + 18, y + 108, width - 36);
 
 		CheatAction[] actions = CheatAction.values();
 		cheatButtonHitboxes.clear();
@@ -4208,11 +4306,12 @@ System.nanoTime();
 			g2.setColor(Color.WHITE);
 			g2.setFont(new Font("SansSerif", Font.BOLD, 10));
 			String label = cheatLabel(actions[i]);
-			g2.drawString(label, rect.x + (rect.width - g2.getFontMetrics().stringWidth(label)) / 2, rect.y + 21);
+			drawCenteredFittedString(g2, label, rect.x + 5, rect.y + 21, rect.width - 10);
 		}
 		g2.setColor(Color.LIGHT_GRAY);
 		g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
-		g2.drawString("Gold buttons change the selections above. F1 closes. Changes bypass normal costs and laws.", x + 18, y + height - 12);
+		drawFittedString(g2, "Gold buttons change the selections above. F1 closes. Changes bypass normal costs and laws.",
+				x + 18, y + height - 12, width - 36);
 	}
 
 	private String cheatLabel(CheatAction action) {
@@ -4270,11 +4369,6 @@ System.nanoTime();
 
 	private int cheatAmount() {
 		return CHEAT_AMOUNTS[Math.floorMod(cheatAmountIndex, CHEAT_AMOUNTS.length)];
-	}
-
-	private String trimCheatText(String text, int maxLength) {
-		if (text == null) return "";
-		return text.length() <= maxLength ? text : text.substring(0, Math.max(0, maxLength - 3)) + "...";
 	}
 
 	private void handleCheatMenuClick(java.awt.Point point) {
@@ -4849,7 +4943,8 @@ System.nanoTime();
 			// means "ride to this exact map position" rather than a road node.
 			if (!rightClick && campaignSession != null && campaignCameraInitialized) {
 				int panelHeight = activeCampaignTab == CampaignTab.WAR
-						|| activeCampaignTab == CampaignTab.FIEFS ? 212 : 166;
+						|| activeCampaignTab == CampaignTab.FIEFS
+						|| activeCampaignTab == CampaignTab.CRIME ? 212 : 166;
 				int mapBottom = activeCampaignTab == CampaignTab.OVERVIEW
 						? screenHeight - 32 : screenHeight - 39 - panelHeight;
 				Rectangle legend = new Rectangle(screenWidth - 276, screenHeight - 102, 268, 62);
@@ -4893,27 +4988,52 @@ System.nanoTime();
 
 		/** Word-wraps campaign text to a pixel width. Shared by notices, tooltips, and event feed. */
 		private java.util.List<String> wrapCampaignText(Graphics2D g2, String text, int maxWidth, int maxLines) {
-			java.util.List<String> lines = new java.util.ArrayList<>();
-			if (text == null || text.isEmpty()) return lines;
-			java.awt.FontMetrics fm = g2.getFontMetrics();
-			StringBuilder line = new StringBuilder();
-			for (String word : text.split("\\s+")) {
-				if (word.isEmpty()) continue;
-				if (line.length() == 0) {
-					line.append(word);
-					continue;
-				}
-				if (fm.stringWidth(line + " " + word) <= maxWidth) {
-					line.append(' ').append(word);
-				} else {
-					lines.add(line.toString());
-					if (lines.size() >= maxLines) return lines;
-					line.setLength(0);
-					line.append(word);
-				}
+			return CampaignTextLayout.wrap(g2.getFontMetrics(), text, maxWidth, maxLines);
+		}
+
+		/** Ellipsizes one line to an exact pixel width using the currently selected font. */
+		private String fitCampaignText(Graphics2D g2, String text, int maxWidth) {
+			return CampaignTextLayout.fit(g2.getFontMetrics(), text, maxWidth);
+		}
+
+		/** Draws one line guaranteed not to extend beyond its allotted width. */
+		private void drawFittedString(Graphics2D g2, String text, int x, int y, int maxWidth) {
+			g2.drawString(fitCampaignText(g2, text, maxWidth), x, y);
+		}
+
+		/** Draws a fitted line centred inside a fixed horizontal slot. */
+		private void drawCenteredFittedString(Graphics2D g2, String text, int x, int y, int width) {
+			String fitted = fitCampaignText(g2, text, Math.max(0, width));
+			int drawX = CampaignTextLayout.centeredX(g2.getFontMetrics(), fitted, x, width);
+			g2.drawString(fitted, drawX, y);
+		}
+
+		/** Draws wrapped text and returns the first baseline below it. */
+		private int drawWrappedCampaignText(Graphics2D g2, String text, int x, int y,
+				int maxWidth, int maxLines, int lineHeight) {
+			int nextY = y;
+			for (String line : wrapCampaignText(g2, text, maxWidth, maxLines)) {
+				g2.drawString(line, x, nextY);
+				nextY += lineHeight;
 			}
-			if (lines.size() < maxLines && line.length() > 0) lines.add(line.toString());
-			return lines;
+			return nextY;
+		}
+
+		/** Keeps hover cards on the map, away from the top HUD and bottom tab/panel area. */
+		private Rectangle campaignHoverCardRect(int width, int height) {
+			int panelTop = activeCampaignTab == CampaignTab.OVERVIEW
+					? screenHeight - 127 : screenHeight - 39
+							- (activeCampaignTab == CampaignTab.WAR || activeCampaignTab == CampaignTab.FIEFS
+									|| activeCampaignTab == CampaignTab.CRIME ? 212 : 166);
+			Rectangle bounds = new Rectangle(6, 64, screenWidth - 12,
+					Math.max(1, panelTop - 70));
+			java.util.List<Rectangle> candidates = java.util.List.of(
+					new Rectangle(campaignMousePoint.x + 14, campaignMousePoint.y + 14, width, height),
+					new Rectangle(campaignMousePoint.x - width - 14, campaignMousePoint.y + 14, width, height),
+					new Rectangle(campaignMousePoint.x + 14, campaignMousePoint.y - height - 14, width, height),
+					new Rectangle(campaignMousePoint.x - width - 14, campaignMousePoint.y - height - 14, width, height));
+			Rectangle cursor = new Rectangle(campaignMousePoint.x - 4, campaignMousePoint.y - 4, 28, 28);
+			return CampaignTextLayout.chooseLeastOverlapping(candidates, java.util.List.of(cursor), bounds);
 		}
 
 		private void drawCampaignNotice(Graphics2D g2) {
@@ -5118,7 +5238,7 @@ System.nanoTime();
 
 		/** Symbol key for the strategic map, drawn inside the map frame. */
 		private void drawCampaignMapLegend(Graphics2D g2, int mapX, int mapY, int mapW, int mapH) {
-			int boxW = 268;
+			int boxW = 292;
 			int boxH = 62;
 			int x = mapX + mapW - boxW - 8;
 			int y = mapY + mapH - boxH - 8;
@@ -5128,14 +5248,14 @@ System.nanoTime();
 			g2.drawRoundRect(x, y, boxW, boxH, 8, 8);
 			g2.setFont(new Font("SansSerif", Font.BOLD, 9));
 			g2.setColor(new Color(222, 204, 155));
-			g2.drawString("MAP KEY", x + 8, y + 12);
+			drawFittedString(g2, "MAP KEY", x + 8, y + 12, boxW - 16);
 			g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
 
 			int row1 = y + 26;
 			int row2 = y + 42;
 			int row3 = y + 56;
 			int col1 = x + 8;
-			int col2 = x + 140;
+			int col2 = x + 148;
 
 			// Settlement: house/keep with a banner tag in the owner realm's colour.
 			g2.setColor(new Color(190, 158, 110));
@@ -5144,7 +5264,8 @@ System.nanoTime();
 			g2.fillPolygon(new int[] {col1, col1 + 10, col1 + 5},
 					new int[] {row1 - 2, row1 - 2, row1 - 8}, 3);
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("Settlement (banner = owner)", col1 + 14, row1 + 2);
+			drawFittedString(g2, "Settlement (banner = owner)", col1 + 14, row1 + 2,
+					Math.max(0, col2 - (col1 + 14) - 4));
 
 			// Army: token ringed by realm colour, number is troops. Gold = yours.
 			g2.setColor(new Color(25, 28, 28));
@@ -5157,14 +5278,16 @@ System.nanoTime();
 			g2.drawLine(col1 + 3, row2 - 4, col1 + 8, row2 + 1);
 			g2.drawLine(col1 + 3, row2 + 1, col1 + 8, row2 - 4);
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("Army (number = troops)", col1 + 15, row2 + 2);
+			drawFittedString(g2, "Army (number = troops)", col1 + 15, row2 + 2,
+					Math.max(0, col2 - (col1 + 15) - 4));
 
 			// Caravan: yellow diamond.
 			g2.setColor(new Color(245, 196, 65));
 			g2.fillPolygon(new int[] {col1 + 4, col1 + 9, col1 + 4, col1 - 1},
 					new int[] {row3 - 7, row3 - 2, row3 + 3, row3 - 2}, 4);
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("Merchant caravan", col1 + 13, row3 + 2);
+			drawFittedString(g2, "Merchant caravan", col1 + 13, row3 + 2,
+					Math.max(0, col2 - (col1 + 13) - 4));
 
 			// You are here: gold-rimmed portrait token (number = party size).
 			g2.setColor(new Color(30, 88, 98));
@@ -5176,7 +5299,8 @@ System.nanoTime();
 			g2.setColor(new Color(238, 205, 165));
 			g2.fillOval(col2 + 4, row1 - 4, 4, 4);
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("Your party", col2 + 17, row1 + 2);
+			drawFittedString(g2, "Your party", col2 + 17, row1 + 2,
+					Math.max(0, x + boxW - 8 - (col2 + 17)));
 
 			// Contract destination: gold ring.
 			g2.setColor(new Color(255, 190, 45));
@@ -5184,7 +5308,8 @@ System.nanoTime();
 			g2.drawOval(col2, row2 - 7, 11, 11);
 			g2.setStroke(new BasicStroke(1f));
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("Contract destination", col2 + 16, row2 + 2);
+			drawFittedString(g2, "Contract destination", col2 + 16, row2 + 2,
+					Math.max(0, x + boxW - 8 - (col2 + 16)));
 
 			// Occupation + siege.
 			g2.setColor(new Color(255, 92, 62));
@@ -5193,7 +5318,8 @@ System.nanoTime();
 			g2.drawLine(col2, row3 + 4, col2 + 10, row3 - 6);
 			g2.setStroke(new BasicStroke(1f));
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("Under siege", col2 + 16, row3 + 2);
+			drawFittedString(g2, "Under siege", col2 + 16, row3 + 2,
+					Math.max(0, x + boxW - 8 - (col2 + 16)));
 		}
 
 		/** Full-screen campaign reference: every control plus how the simulation fits together. */
@@ -5208,8 +5334,8 @@ System.nanoTime();
 			g2.drawRoundRect(x, y, w, h, 14, 14);
 			g2.setFont(new Font("Serif", Font.BOLD, 21));
 			g2.setColor(new Color(235, 205, 130));
-			g2.drawString("CAMPAIGN - CONTROLS AND HOW THE WORLD WORKS", x + 18, y + 28);
-			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+			drawFittedString(g2, "CAMPAIGN - CONTROLS AND HOW THE WORLD WORKS", x + 18, y + 28, w - 36);
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
 
 			String[] left = {
 				"WORLD MAP",
@@ -5244,20 +5370,20 @@ System.nanoTime();
 				"TABS (bottom bar)",
 				"  OVERVIEW   world status and news",
 				"  INVENTORY  your coins and cargo",
-				"  PARTY      companions you have recruited",
-				"  CONTRACTS  work you have accepted",
-				"  REALM      your kingdom, role and laws",
-				"  WAR        every war and siege, with progress",
+				"  PARTY      companions, goals and opinions of you",
+				"  CONTRACTS  accepted work, urgency and why it exists",
+				"  REALM      kingdom role, laws, loyalty and strategy",
+				"  WAR        war aims, objectives, momentum and sieges",
 				"  FIEFS      titles you hold and every crown",
-				"  WORLD      the world encyclopedia",
-				"  CRIME      recent incidents",
+				"  WORLD      realm strategies and settlement pressure",
+				"  CHRONICLE  durable history, pressure and named crime",
 			};
 			String[] right = {
 				"HOW THE WORLD WORKS",
-				"  Every person is simulated: they work, earn, eat, marry,",
-				"  age, migrate and die. Markets set real prices.",
-				"  Realms raise armies, pay and feed them, march them along",
-				"  roads, and fight over claims, provinces and grievances.",
+				"  People form goals from hunger, work, family, safety and",
+				"  ambition, and remember major acts - including yours.",
+				"  Settlement pressure links food, jobs, tax, crime, unrest",
+				"  and sanitation to loyalty, migration and new contracts.",
 				"  A siege eats a settlement's grain, breaks defender",
 				"  resolve, starves civilians and ends in occupation at",
 				"  100% breach. Occupation is not ownership: legal title",
@@ -5290,8 +5416,8 @@ System.nanoTime();
 				"  6. Win a siege or battle yourself, then claim the",
 				"     occupied land as your holding on the FIEFS tab. It",
 				"     pays you daily - and its old owner gets a claim.",
-				"  7. As ruler, change the laws of the realm and declare",
-				"     wars from the WAR tab.",
+				"  7. Courts follow living strategies. As ruler, change laws",
+				"     and declare wars from the WAR tab.",
 				"",
 				"  Losing a battle costs you: wounds, coin, cargo, capture",
 				"  for ransom, or a rout that destroys your army and can",
@@ -5300,24 +5426,29 @@ System.nanoTime();
 			};
 			int colY = y + 48;
 			int leftX = x + 18;
-			int rightX = x + 300;
+			int rightX = x + 360;
+			int columnWidth = 326;
+			int textBottom = y + h - 25;
 			for (String line : left) {
-				g2.setColor(line.isEmpty() ? Color.WHITE
-						: Character.isSpaceChar(line.charAt(0)) || line.startsWith("  ")
-								? new Color(215, 220, 225) : new Color(245, 196, 65));
-				g2.drawString(line, leftX, colY);
-				colY += 13;
+				if (colY > textBottom) break;
+				boolean heading = !line.isEmpty() && !line.startsWith("  ");
+				g2.setFont(new Font("SansSerif", heading ? Font.BOLD : Font.PLAIN, heading ? 10 : 9));
+				g2.setColor(heading ? new Color(245, 196, 65) : new Color(215, 220, 225));
+				drawFittedString(g2, line, leftX, colY, columnWidth);
+				colY += line.isEmpty() ? 6 : 11;
 			}
 			colY = y + 48;
 			for (String line : right) {
-				g2.setColor(line.isEmpty() ? Color.WHITE
-						: line.startsWith("  ") ? new Color(215, 220, 225) : new Color(245, 196, 65));
-				g2.drawString(line, rightX, colY);
-				colY += 13;
+				if (colY > textBottom) break;
+				boolean heading = !line.isEmpty() && !line.startsWith("  ");
+				g2.setFont(new Font("SansSerif", heading ? Font.BOLD : Font.PLAIN, heading ? 10 : 9));
+				g2.setColor(heading ? new Color(245, 196, 65) : new Color(215, 220, 225));
+				drawFittedString(g2, line, rightX, colY, columnWidth);
+				colY += line.isEmpty() ? 5 : 10;
 			}
 			g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
 			g2.setColor(Color.LIGHT_GRAY);
-			g2.drawString("Press H or ESC, or click anywhere, to close.", x + 18, y + h - 12);
+			drawFittedString(g2, "Press H or ESC, or click anywhere, to close.", x + 18, y + h - 12, w - 36);
 		}
 
 		/**
@@ -5429,6 +5560,11 @@ System.nanoTime();
 							tokenGroupCounts, nextTokenSlots);
 
 			java.util.List<Rectangle> occupiedLabels = new java.util.ArrayList<>();
+			int bottomPanelHeight = activeCampaignTab == CampaignTab.OVERVIEW ? 91
+				: activeCampaignTab == CampaignTab.WAR || activeCampaignTab == CampaignTab.FIEFS
+						|| activeCampaignTab == CampaignTab.CRIME ? 212 : 166;
+			int labelBottom = activeCampaignTab == CampaignTab.OVERVIEW
+				? screenHeight - 127 : screenHeight - 43 - bottomPanelHeight;
 			campaignSettlementHitboxes.clear();
 			for (CampaignSnapshot.SettlementView settlement : snapshot.settlements) {
 				java.awt.Point point = settlementPoints.get(settlement.id);
@@ -5486,9 +5622,9 @@ System.nanoTime();
 
 				String labelText = settlement.name + (underSiege ? "  SIEGE" : "");
 				g2.setFont(new Font("SansSerif", Font.BOLD, 10));
-				int labelWidth = g2.getFontMetrics().stringWidth(labelText) + 31;
+				int labelWidth = Math.min(220, g2.getFontMetrics().stringWidth(labelText) + 31);
 				Rectangle label = placeCampaignLabel(x, y, labelWidth, 17,
-						4, 50, screenWidth - 4, screenHeight - 36, occupiedLabels);
+						4, 50, screenWidth - 4, labelBottom, occupiedLabels);
 				occupiedLabels.add(label);
 				drawCampaignBannerTag(g2, label, x, y, labelText,
 						colorForRealm(settlement.realmId), underSiege);
@@ -5512,12 +5648,19 @@ System.nanoTime();
 				g2.drawPolygon(xs, ys, 4);
 				g2.setColor(new Color(255, 226, 130));
 				g2.fillOval(x - 2, y - 2, 5, 5);
-				if (caravan.cargoQuantity > 0) {
+				if (caravan.cargoQuantity > 0 && x >= 0 && x <= screenWidth
+						&& y >= 60 && y <= labelBottom) {
 					g2.setFont(new Font("SansSerif", Font.BOLD, 9));
+					String cargoText = Integer.toString(caravan.cargoQuantity);
+					int cargoWidth = g2.getFontMetrics().stringWidth(cargoText);
+					int badgeX = x + 10;
+					if (badgeX + cargoWidth > screenWidth - 4) badgeX = x - cargoWidth - 10;
+					badgeX = Math.max(4, Math.min(screenWidth - cargoWidth - 4, badgeX));
+					occupiedLabels.add(new Rectangle(badgeX, y - 7, cargoWidth, 11));
 					g2.setColor(Color.BLACK);
-					g2.drawString(Integer.toString(caravan.cargoQuantity), x + 11, y + 4);
+					g2.drawString(cargoText, badgeX + 1, y + 4);
 					g2.setColor(Color.WHITE);
-					g2.drawString(Integer.toString(caravan.cargoQuantity), x + 10, y + 3);
+					g2.drawString(cargoText, badgeX, y + 3);
 				}
 				boolean labelled = (hoveredCampaignCaravanId != null
 						&& hoveredCampaignCaravanId.longValue() == caravan.id)
@@ -5526,9 +5669,9 @@ System.nanoTime();
 				if (labelled) {
 					String text = caravan.leaderName + "  ·  " + caravan.cargoQuantity;
 					g2.setFont(new Font("SansSerif", Font.BOLD, 9));
-					int width = g2.getFontMetrics().stringWidth(text) + 14;
+					int width = Math.min(220, g2.getFontMetrics().stringWidth(text) + 14);
 					Rectangle label = placeCampaignLabel(x, y, width, 15,
-							4, 50, screenWidth - 4, screenHeight - 36, occupiedLabels);
+							4, 50, screenWidth - 4, labelBottom, occupiedLabels);
 					occupiedLabels.add(label);
 					drawCampaignNamePill(g2, label, text, new Color(112, 78, 26), Color.WHITE);
 				}
@@ -5578,10 +5721,17 @@ System.nanoTime();
 				g2.setStroke(new BasicStroke(1f));
 				g2.setFont(new Font("SansSerif", Font.BOLD, 10));
 				String strength = Integer.toString(army.strength);
-				g2.setColor(Color.BLACK);
-				g2.drawString(strength, x + radius + 4, y + 5);
-				g2.setColor(yours ? new Color(255, 228, 140) : Color.WHITE);
-				g2.drawString(strength, x + radius + 3, y + 4);
+				if (x >= 0 && x <= screenWidth && y >= 60 && y <= labelBottom) {
+					int strengthWidth = g2.getFontMetrics().stringWidth(strength);
+					int badgeX = x + radius + 3;
+					if (badgeX + strengthWidth > screenWidth - 4) badgeX = x - radius - strengthWidth - 3;
+					badgeX = Math.max(4, Math.min(screenWidth - strengthWidth - 4, badgeX));
+					occupiedLabels.add(new Rectangle(badgeX, y - 7, strengthWidth, 12));
+					g2.setColor(Color.BLACK);
+					g2.drawString(strength, badgeX + 1, y + 5);
+					g2.setColor(yours ? new Color(255, 228, 140) : Color.WHITE);
+					g2.drawString(strength, badgeX, y + 4);
+				}
 
 				boolean labelled = yours
 						|| (hoveredCampaignArmyId != null && hoveredCampaignArmyId.longValue() == army.id)
@@ -5591,9 +5741,9 @@ System.nanoTime();
 					String text = (yours ? "YOUR ARMY"
 							: campaignRealmName(snapshot, army.realmId) + " Army") + "  ·  " + army.strength;
 					g2.setFont(new Font("SansSerif", Font.BOLD, 9));
-					int width = g2.getFontMetrics().stringWidth(text) + 14;
+					int width = Math.min(220, g2.getFontMetrics().stringWidth(text) + 14);
 					Rectangle label = placeCampaignLabel(x, y, width, 15,
-							4, 50, screenWidth - 4, screenHeight - 36, occupiedLabels);
+							4, 50, screenWidth - 4, labelBottom, occupiedLabels);
 					occupiedLabels.add(label);
 					drawCampaignNamePill(g2, label, text, colorForRealm(army.realmId), Color.WHITE);
 				}
@@ -5625,17 +5775,28 @@ System.nanoTime();
 					String partySize = Integer.toString(displayedPartySize);
 					g2.setFont(new Font("SansSerif", Font.BOLD, 9));
 					int badgeW = Math.max(16, g2.getFontMetrics().stringWidth(partySize) + 7);
-					g2.setColor(new Color(10, 14, 18, 230));
-					g2.fillRoundRect(x + radius - 4, y + radius - 7, badgeW, 14, 6, 6);
-					g2.setColor(Color.WHITE);
-					g2.drawString(partySize, x + radius, y + radius + 3);
+					if (x >= 0 && x <= screenWidth && y >= 55 && y <= labelBottom) {
+						int badgeX = x + radius - 4;
+						if (badgeX + badgeW > screenWidth - 4) badgeX = x - radius - badgeW + 4;
+						badgeX = Math.max(4, Math.min(screenWidth - badgeW - 4, badgeX));
+						int badgeY = y + radius - 7;
+						if (badgeY + 14 > labelBottom) badgeY = y - radius - 7;
+						badgeY = Math.max(50, Math.min(labelBottom - 14, badgeY));
+						Rectangle partyBadge = new Rectangle(badgeX, badgeY, badgeW, 14);
+						occupiedLabels.add(partyBadge);
+						g2.setColor(new Color(10, 14, 18, 230));
+						g2.fillRoundRect(partyBadge.x, partyBadge.y, partyBadge.width, partyBadge.height, 6, 6);
+						g2.setColor(Color.WHITE);
+						drawCenteredFittedString(g2, partySize, partyBadge.x + 2,
+								partyBadge.y + 10, partyBadge.width - 4);
+					}
 					String text = armyWithParty
 							? (snapshot.player.traveling ? "Your Party + Army  ·  riding" : "YOUR PARTY + ARMY")
 							: (snapshot.player.traveling ? "Your Party  ·  riding" : "YOUR PARTY");
 					g2.setFont(new Font("SansSerif", Font.BOLD, 9));
-					int width = g2.getFontMetrics().stringWidth(text) + 14;
+					int width = Math.min(220, g2.getFontMetrics().stringWidth(text) + 14);
 					Rectangle label = placeCampaignLabel(x, y, width, 15,
-							4, 50, screenWidth - 4, screenHeight - 36, occupiedLabels);
+							4, 50, screenWidth - 4, labelBottom, occupiedLabels);
 					occupiedLabels.add(label);
 					drawCampaignNamePill(g2, label, text, new Color(20, 72, 82), Color.WHITE);
 				}
@@ -5888,7 +6049,7 @@ System.nanoTime();
 					new int[] {label.y + 2, label.y + 2, label.y + 10, label.y + 15, label.y + 10}, 5);
 			g2.setColor(urgent ? new Color(255, 210, 190) : Color.WHITE);
 			g2.setFont(new Font("SansSerif", Font.BOLD, 10));
-			g2.drawString(text, label.x + 17, label.y + 12);
+			drawFittedString(g2, text, label.x + 17, label.y + 12, Math.max(0, label.width - 22));
 		}
 
 		/** Shared dark pill for token nameplates. */
@@ -5900,27 +6061,27 @@ System.nanoTime();
 			g2.drawRoundRect(label.x, label.y, label.width, label.height, 6, 6);
 			g2.setColor(foreground);
 			g2.setFont(new Font("SansSerif", Font.BOLD, 9));
-			g2.drawString(text, label.x + 7, label.y + 11);
+			drawFittedString(g2, text, label.x + 7, label.y + 11, Math.max(0, label.width - 14));
 		}
 
 		/** Compact Bannerlord-like frame: date and speed controls, purse/party, local news. */
 		private void drawCampaignHud(Graphics2D g2, CampaignSnapshot snapshot) {
 			// Date / world summary.
 			g2.setColor(new Color(12, 16, 20, 220));
-			g2.fillRoundRect(8, 7, 238, 38, 8, 8);
+			g2.fillRoundRect(8, 7, 226, 38, 8, 8);
 			g2.setColor(new Color(205, 178, 112));
-			g2.drawRoundRect(8, 7, 238, 38, 8, 8);
+			g2.drawRoundRect(8, 7, 226, 38, 8, 8);
 			g2.setFont(new Font("Serif", Font.BOLD, 13));
 			g2.setColor(new Color(240, 224, 175));
-			g2.drawString(snapshot.getDateLabel(), 16, 23);
+			drawFittedString(g2, snapshot.getDateLabel(), 16, 23, 210);
 			g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
 			g2.setColor(new Color(205, 215, 220));
-			g2.drawString("Pop " + snapshot.livingPopulation + " · Wars " + snapshot.warCount
+			drawFittedString(g2, "Pop " + snapshot.livingPopulation + " · Wars " + snapshot.warCount
 					+ " · Sieges " + snapshot.activeSiegeCount + " · Food "
-					+ Math.round(snapshot.averageFoodSecurity * 100.0) + "%", 16, 37);
+					+ Math.round(snapshot.averageFoodSecurity * 100.0) + "%", 16, 37, 210);
 
 			// Speed controls.
-			int controlW = 214;
+			int controlW = 282;
 			int controlX = screenWidth / 2 - controlW / 2;
 			g2.setColor(new Color(12, 16, 20, 220));
 			g2.fillRoundRect(controlX, 7, controlW, 38, 8, 8);
@@ -5945,12 +6106,12 @@ System.nanoTime();
 				g2.drawRoundRect(button.x, button.y, button.width, button.height, 6, 6);
 				g2.setFont(new Font("SansSerif", Font.BOLD, 10));
 				g2.setColor(Color.WHITE);
-				int textW = g2.getFontMetrics().stringWidth(control[1]);
-				g2.drawString(control[1], button.x + (button.width - textW) / 2, button.y + 17);
+				drawCenteredFittedString(g2, control[1], button.x + 2, button.y + 17,
+						Math.max(0, button.width - 4));
 				buttonX += width + 5;
 			}
 			if (snapshot.player != null && snapshot.player.traveling) {
-				Rectangle stop = new Rectangle(controlX + controlW + 6, 13, 58, 26);
+				Rectangle stop = new Rectangle(buttonX, 13, 52, 26);
 				campaignHudHitboxes.put("STOP_TRAVEL", stop);
 				g2.setColor(new Color(110, 58, 42, 235));
 				g2.fillRoundRect(stop.x, stop.y, stop.width, stop.height, 6, 6);
@@ -5958,28 +6119,28 @@ System.nanoTime();
 				g2.drawRoundRect(stop.x, stop.y, stop.width, stop.height, 6, 6);
 				g2.setColor(Color.WHITE);
 				g2.setFont(new Font("SansSerif", Font.BOLD, 9));
-				g2.drawString("Stop", stop.x + 18, stop.y + 17);
+				drawCenteredFittedString(g2, "Stop", stop.x + 2, stop.y + 17, stop.width - 4);
 			}
 
 			// Party resources, top right.
 			if (snapshot.player != null) {
-				int x = screenWidth - 252;
+				int x = screenWidth - 240;
 				g2.setColor(new Color(12, 16, 20, 220));
-				g2.fillRoundRect(x, 7, 244, 38, 8, 8);
+				g2.fillRoundRect(x, 7, 232, 38, 8, 8);
 				g2.setColor(new Color(205, 178, 112));
-				g2.drawRoundRect(x, 7, 244, 38, 8, 8);
+				g2.drawRoundRect(x, 7, 232, 38, 8, 8);
 				g2.setColor(new Color(245, 196, 65));
 				g2.fillOval(x + 9, 17, 11, 11);
 				g2.setColor(new Color(120, 82, 20));
 				g2.drawOval(x + 9, 17, 11, 11);
 				g2.setFont(new Font("SansSerif", Font.BOLD, 10));
 				g2.setColor(Color.WHITE);
-				g2.drawString(Long.toString(snapshot.player.coins), x + 24, 26);
+				drawFittedString(g2, Long.toString(snapshot.player.coins), x + 24, 26, 48);
 				g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
 				g2.setColor(new Color(205, 215, 220));
-				g2.drawString("Party " + snapshot.player.partySize + " · Food "
+				drawFittedString(g2, "Party " + snapshot.player.partySize + " · Food "
 						+ (snapshot.player.grain + snapshot.player.vegetables) + " · Rep "
-						+ snapshot.player.reputation, x + 78, 26);
+						+ snapshot.player.reputation, x + 78, 26, 144);
 				String place = snapshot.player.traveling
 						? "Riding to " + snapshot.player.travelDestinationName
 								+ " · " + campaignEtaText(snapshot.player.travelEtaMinutes)
@@ -5988,26 +6149,18 @@ System.nanoTime();
 								: "In the field near " + (snapshot.player.nearestSettlementName == null
 										? "the nearest settlement"
 										: snapshot.player.nearestSettlementName);
-				g2.drawString(place, x + 10, 39);
+				drawFittedString(g2, place, x + 10, 39, 212);
 			}
 
-			String hint = "Left-click: ride   Right-click: inspect/select   Drag: pan   Wheel: zoom   TAB: local   H: help";
+			String hint = (snapshot.paused ? "PAUSED   ·   " : "")
+					+ "Left-click: ride   Right-click: inspect/select   Drag: pan   Wheel: zoom   TAB: local   H: help";
 			g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
-			int hintX = screenWidth / 2 - g2.getFontMetrics().stringWidth(hint) / 2;
+			String fittedHint = fitCampaignText(g2, hint, screenWidth - 16);
+			int hintX = screenWidth / 2 - g2.getFontMetrics().stringWidth(fittedHint) / 2;
 			g2.setColor(Color.BLACK);
-			g2.drawString(hint, hintX + 1, 58);
+			g2.drawString(fittedHint, hintX + 1, 58);
 			g2.setColor(new Color(240, 235, 215));
-			g2.drawString(hint, hintX, 57);
-
-			if (snapshot.paused) {
-				g2.setFont(new Font("SansSerif", Font.BOLD, 16));
-				String paused = "PAUSED";
-				int px = screenWidth / 2 - g2.getFontMetrics().stringWidth(paused) / 2;
-				g2.setColor(Color.BLACK);
-				g2.drawString(paused, px + 1, screenHeight - 47);
-				g2.setColor(Color.WHITE);
-				g2.drawString(paused, px, screenHeight - 48);
-			}
+			g2.drawString(fittedHint, hintX, 57);
 
 			if (activeCampaignTab != CampaignTab.OVERVIEW || snapshot.player == null) return;
 			java.util.List<String> eventLines = new java.util.ArrayList<>();
@@ -6038,13 +6191,13 @@ System.nanoTime();
 									+ (snapshot.player.nearestSettlementName == null
 											? "the nearest settlement"
 											: snapshot.player.nearestSettlementName);
-			g2.drawString(partyLine, panelX + 8, lineY);
+			drawFittedString(g2, partyLine, panelX + 8, lineY, panelW - 16);
 			lineY += 13;
 			if (yourArmy != null) {
 				g2.setColor(new Color(205, 220, 225));
-				g2.drawString("Your army: " + yourArmy.strength + " · morale "
+				drawFittedString(g2, "Your army: " + yourArmy.strength + " · morale "
 						+ Math.round(yourArmy.morale) + "% · " + yourArmy.grain + " grain · "
-						+ yourArmy.order, panelX + 8, lineY);
+						+ yourArmy.order, panelX + 8, lineY, panelW - 16);
 				lineY += 13;
 			}
 			if (!eventLines.isEmpty()) {
@@ -6076,10 +6229,11 @@ System.nanoTime();
 			if (hoveredCampaignArmyId == null) return;
 			CampaignSnapshot.ArmyView army = snapshot.findArmy(hoveredCampaignArmyId);
 			if (army == null) return;
-			int width = 252;
-			int height = 148;
-			int x = Math.max(6, Math.min(screenWidth - width - 6, campaignMousePoint.x + 14));
-			int y = Math.max(48, Math.min(screenHeight - height - 38, campaignMousePoint.y + 14));
+			Rectangle card = campaignHoverCardRect(252, 148);
+			int width = card.width;
+			int height = card.height;
+			int x = card.x;
+			int y = card.y;
 			g2.setColor(new Color(10, 18, 22, 238));
 			g2.fillRoundRect(x, y, width, height, 9, 9);
 			g2.setColor(colorForRealm(army.realmId));
@@ -6088,24 +6242,24 @@ System.nanoTime();
 			g2.setStroke(new BasicStroke(1f));
 			g2.setFont(new Font("Serif", Font.BOLD, 14));
 			g2.setColor(new Color(240, 224, 175));
-			g2.drawString(campaignRealmName(snapshot, army.realmId) + " Army", x + 10, y + 20);
+			drawFittedString(g2, campaignRealmName(snapshot, army.realmId) + " Army", x + 10, y + 20, width - 20);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
 			g2.setColor(army.playerCommanded ? new Color(170, 230, 170)
 					: army.hostileToPlayer ? new Color(255, 150, 125) : Color.LIGHT_GRAY);
-			g2.drawString(army.playerCommanded ? "Under your command"
-					: army.hostileToPlayer ? "Hostile to your realm" : "Neutral to you", x + 10, y + 37);
+			drawFittedString(g2, army.playerCommanded ? "Under your command"
+					: army.hostileToPlayer ? "Hostile to your realm" : "Neutral to you", x + 10, y + 37, width - 20);
 			g2.setColor(Color.WHITE);
-			g2.drawString("Commander " + army.commanderName, x + 10, y + 54);
-			g2.drawString("Troops " + army.strength + "  morale " + Math.round(army.morale)
-					+ "%  fatigue " + Math.round(army.fatigue) + "%", x + 10, y + 70);
-			g2.drawString("Order " + army.order + "  state " + army.state, x + 10, y + 86);
-			g2.drawString("At " + settlementName(snapshot, army.currentSettlementId)
-					+ " -> " + settlementName(snapshot, army.destinationSettlementId), x + 10, y + 102);
-			g2.drawString("Grain " + army.grain + (army.daysWithoutFood > 0
-					? "  (" + army.daysWithoutFood + "d unfed)" : ""), x + 10, y + 118);
+			drawFittedString(g2, "Commander " + army.commanderName, x + 10, y + 54, width - 20);
+			drawFittedString(g2, "Troops " + army.strength + "  morale " + Math.round(army.morale)
+					+ "%  fatigue " + Math.round(army.fatigue) + "%", x + 10, y + 70, width - 20);
+			drawFittedString(g2, "Order " + army.order + "  state " + army.state, x + 10, y + 86, width - 20);
+			drawFittedString(g2, "At " + settlementName(snapshot, army.currentSettlementId)
+					+ " -> " + settlementName(snapshot, army.destinationSettlementId), x + 10, y + 102, width - 20);
+			drawFittedString(g2, "Grain " + army.grain + (army.daysWithoutFood > 0
+					? "  (" + army.daysWithoutFood + "d unfed)" : ""), x + 10, y + 118, width - 20);
 			g2.setColor(new Color(190, 200, 205));
-			g2.drawString(army.playerCommanded ? "Right-click for orders"
-					: "Left-click ride to it · right-click inspect", x + 10, y + 137);
+			drawFittedString(g2, army.playerCommanded ? "Right-click for orders"
+					: "Left-click ride to it · right-click inspect", x + 10, y + 137, width - 20);
 		}
 
 		/** Hover card for a merchant caravan token. */
@@ -6113,28 +6267,29 @@ System.nanoTime();
 			if (hoveredCampaignCaravanId == null || hoveredCampaignArmyId != null) return;
 			CampaignSnapshot.CaravanView caravan = snapshot.findCaravan(hoveredCampaignCaravanId);
 			if (caravan == null) return;
-			int width = 242;
-			int height = 128;
-			int x = Math.max(6, Math.min(screenWidth - width - 6, campaignMousePoint.x + 14));
-			int y = Math.max(48, Math.min(screenHeight - height - 38, campaignMousePoint.y + 14));
+			Rectangle card = campaignHoverCardRect(242, 128);
+			int width = card.width;
+			int height = card.height;
+			int x = card.x;
+			int y = card.y;
 			g2.setColor(new Color(18, 22, 20, 238));
 			g2.fillRoundRect(x, y, width, height, 9, 9);
 			g2.setColor(new Color(238, 184, 65));
 			g2.drawRoundRect(x, y, width, height, 9, 9);
 			g2.setFont(new Font("Serif", Font.BOLD, 14));
 			g2.setColor(new Color(245, 220, 150));
-			g2.drawString("Caravan of " + caravan.leaderName, x + 10, y + 20);
+			drawFittedString(g2, "Caravan of " + caravan.leaderName, x + 10, y + 20, width - 20);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
 			g2.setColor(Color.WHITE);
-			g2.drawString("Cargo " + caravan.cargo + " x" + caravan.cargoQuantity
-					+ "  cash " + caravan.cash + "c", x + 10, y + 41);
-			g2.drawString("Guards " + caravan.guardCount + "  trips " + caravan.completedTrips,
-					x + 10, y + 57);
-			g2.drawString("State " + caravan.state, x + 10, y + 73);
-			g2.drawString(settlementName(snapshot, caravan.currentSettlementId) + " -> "
-					+ settlementName(snapshot, caravan.destinationSettlementId), x + 10, y + 89);
+			drawFittedString(g2, "Cargo " + caravan.cargo + " x" + caravan.cargoQuantity
+					+ "  cash " + caravan.cash + "c", x + 10, y + 41, width - 20);
+			drawFittedString(g2, "Guards " + caravan.guardCount + "  trips " + caravan.completedTrips,
+					x + 10, y + 57, width - 20);
+			drawFittedString(g2, "State " + caravan.state, x + 10, y + 73, width - 20);
+			drawFittedString(g2, settlementName(snapshot, caravan.currentSettlementId) + " -> "
+					+ settlementName(snapshot, caravan.destinationSettlementId), x + 10, y + 89, width - 20);
 			g2.setColor(new Color(190, 200, 205));
-			g2.drawString("Left-click follow · right-click inspect", x + 10, y + 113);
+			drawFittedString(g2, "Left-click follow · right-click inspect", x + 10, y + 113, width - 20);
 		}
 
 		/** Hover card for the player's own party token. */
@@ -6142,10 +6297,11 @@ System.nanoTime();
 			if (snapshot.player == null || campaignPlayerHitbox == null
 					|| !campaignPlayerHitbox.contains(campaignMousePoint)
 					|| hoveredCampaignArmyId != null || hoveredCampaignCaravanId != null) return;
-			int width = 238;
-			int height = 126;
-			int x = Math.max(6, Math.min(screenWidth - width - 6, campaignMousePoint.x + 14));
-			int y = Math.max(48, Math.min(screenHeight - height - 38, campaignMousePoint.y + 14));
+			Rectangle card = campaignHoverCardRect(238, 126);
+			int width = card.width;
+			int height = card.height;
+			int x = card.x;
+			int y = card.y;
 			g2.setColor(new Color(12, 22, 26, 238));
 			g2.fillRoundRect(x, y, width, height, 9, 9);
 			g2.setColor(new Color(255, 215, 90));
@@ -6154,34 +6310,34 @@ System.nanoTime();
 			boolean armyWithParty = isArmyWithPlayerParty(snapshot, accompanyingArmy);
 			g2.setFont(new Font("Serif", Font.BOLD, 14));
 			g2.setColor(new Color(245, 226, 160));
-			g2.drawString(armyWithParty ? "Your Party & Army" : "Your Party", x + 10, y + 20);
+			drawFittedString(g2, armyWithParty ? "Your Party & Army" : "Your Party", x + 10, y + 20, width - 20);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
 			g2.setColor(Color.WHITE);
-			g2.drawString((armyWithParty
+			drawFittedString(g2, (armyWithParty
 					? "Party " + snapshot.player.partySize + " + " + accompanyingArmy.strength + " troops"
 					: "Companions " + snapshot.player.partySize) + "  " + snapshot.player.coins + "c",
-					x + 10, y + 41);
-			g2.drawString("Cargo " + snapshot.player.cargoUsed + "/"
+					x + 10, y + 41, width - 20);
+			drawFittedString(g2, "Cargo " + snapshot.player.cargoUsed + "/"
 					+ snapshot.player.cargoCapacity + "  contracts "
-					+ snapshot.player.activeContracts, x + 10, y + 57);
+					+ snapshot.player.activeContracts, x + 10, y + 57, width - 20);
 			if (snapshot.player.traveling) {
-				g2.drawString("Riding to " + snapshot.player.travelDestinationName, x + 10, y + 76);
-				g2.drawString("Speed " + String.format("%.1f", snapshot.player.travelSpeedPerHour)
-						+ "/h  ETA " + campaignEtaText(snapshot.player.travelEtaMinutes), x + 10, y + 92);
+				drawFittedString(g2, "Riding to " + snapshot.player.travelDestinationName, x + 10, y + 76, width - 20);
+				drawFittedString(g2, "Speed " + String.format("%.1f", snapshot.player.travelSpeedPerHour)
+						+ "/h  ETA " + campaignEtaText(snapshot.player.travelEtaMinutes), x + 10, y + 92, width - 20);
 			} else if (snapshot.player.atSettlement) {
-				g2.drawString("At " + settlementName(snapshot, snapshot.player.settlementId),
-						x + 10, y + 76);
-				g2.drawString("TAB enters the local settlement", x + 10, y + 92);
+				drawFittedString(g2, "At " + settlementName(snapshot, snapshot.player.settlementId),
+						x + 10, y + 76, width - 20);
+				drawFittedString(g2, "TAB enters the local settlement", x + 10, y + 92, width - 20);
 			} else {
-				g2.drawString("In the field near " + (snapshot.player.nearestSettlementName == null
+				drawFittedString(g2, "In the field near " + (snapshot.player.nearestSettlementName == null
 						? "the nearest settlement" : snapshot.player.nearestSettlementName),
-						x + 10, y + 76);
-				g2.drawString("Ride onto a settlement to enter it", x + 10, y + 92);
+						x + 10, y + 76, width - 20);
+				drawFittedString(g2, "Ride onto a settlement to enter it", x + 10, y + 92, width - 20);
 			}
 			g2.setColor(new Color(190, 200, 205));
-			g2.drawString(armyWithParty
+			drawFittedString(g2, armyWithParty
 					? "Click to centre · right-click army orders"
-					: "Click token to centre · right-click party", x + 10, y + 112);
+					: "Click token to centre · right-click party", x + 10, y + 112, width - 20);
 		}
 
 		/**
@@ -6201,11 +6357,11 @@ System.nanoTime();
 			g2.setColor(new Color(255, 214, 170));
 			String captor = snapshot.player.captorRealmName == null
 					? "THE ENEMY" : snapshot.player.captorRealmName.toUpperCase();
-			g2.drawString("PRISONER OF " + captor, x + 16, y + 22);
-			g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+			drawFittedString(g2, "PRISONER OF " + captor, x + 16, y + 22, 320);
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 10));
 			g2.setColor(Color.WHITE);
-			g2.drawString(snapshot.player.captiveDaysRemaining
-					+ " day(s) left. Travel, trade, contracts and recruiting are blocked.", x + 16, y + 42);
+			drawFittedString(g2, snapshot.player.captiveDaysRemaining
+					+ " day(s) left. Travel, trade, contracts and recruiting are blocked.", x + 16, y + 42, 320);
 			Rectangle pay = new Rectangle(x + w - 172, y + 13, 156, 34);
 			kingdomManagementHitboxes.put("PAY_RANSOM", pay);
 			g2.setColor(new Color(72, 52, 34));
@@ -6215,7 +6371,7 @@ System.nanoTime();
 			g2.setColor(Color.WHITE);
 			g2.setFont(new Font("SansSerif", Font.BOLD, 11));
 			String label = "Pay ransom " + snapshot.player.ransomCoins + "c";
-			g2.drawString(label, pay.x + (pay.width - g2.getFontMetrics().stringWidth(label)) / 2, pay.y + 21);
+			drawCenteredFittedString(g2, label, pay.x + 5, pay.y + 21, pay.width - 10);
 		}
 
 		/** Short labels so nine tabs still fit the 768px tab bar. */
@@ -6229,6 +6385,8 @@ System.nanoTime();
 					return "FIEFS";
 				case ENCYCLOPEDIA:
 					return "WORLD";
+				case CRIME:
+					return "CHRONICLE";
 				default:
 					return tab.toString();
 			}
@@ -6281,19 +6439,19 @@ System.nanoTime();
 				g2.setColor(Color.WHITE);
 				g2.setFont(new Font("SansSerif", Font.BOLD, 10));
 				String label = campaignTabLabel(tab);
-				g2.drawString(label, rect.x + (rect.width - g2.getFontMetrics().stringWidth(label)) / 2, rect.y + 20);
+				drawCenteredFittedString(g2, label, rect.x + 4, rect.y + 20, rect.width - 8);
 			}
 			if (activeCampaignTab == CampaignTab.OVERVIEW) return;
 			// The war and fief panels need two-column detail, so they are allowed to be taller.
 			int panelHeight = activeCampaignTab == CampaignTab.WAR || activeCampaignTab == CampaignTab.FIEFS
-					? 212 : 166;
+					|| activeCampaignTab == CampaignTab.CRIME ? 212 : 166;
 			int panelY = screenHeight - 39 - panelHeight;
 			g2.setColor(new Color(12, 18, 25, 242));
 			g2.fillRoundRect(18, panelY, screenWidth - 36, panelHeight, 12, 12);
 			g2.setColor(new Color(205, 178, 112));
 			g2.drawRoundRect(18, panelY, screenWidth - 36, panelHeight, 12, 12);
 			g2.setFont(new Font("Serif", Font.BOLD, 17));
-			g2.drawString(campaignTabLabel(activeCampaignTab), 32, panelY + 24);
+			drawFittedString(g2, campaignTabLabel(activeCampaignTab), 32, panelY + 24, 240);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 			g2.setColor(Color.WHITE);
 			int y = panelY + 44;
@@ -6301,133 +6459,184 @@ System.nanoTime();
 			switch (activeCampaignTab) {
 				case INVENTORY -> {
 					if (snapshot.player != null) {
-						g2.drawString("Coins: " + snapshot.player.coins + "   Capacity: "
-							+ snapshot.player.cargoUsed + "/" + snapshot.player.cargoCapacity, 32, y); y += 16;
-						g2.drawString("Grain: " + snapshot.player.grain + "   Vegetables: " + snapshot.player.vegetables, 32, y);
+						drawFittedString(g2, "Coins: " + snapshot.player.coins + "   Capacity: "
+							+ snapshot.player.cargoUsed + "/" + snapshot.player.cargoCapacity, 32, y, 690); y += 16;
+						drawFittedString(g2, "Grain: " + snapshot.player.grain + "   Vegetables: "
+							+ snapshot.player.vegetables + "   Reputation: " + snapshot.player.reputation, 32, y, 690);
 					}
 				}
 				case PARTY -> {
-					if (snapshot.player != null) for (Long memberId : snapshot.player.partyMemberIds) {
-						CampaignSnapshot.PersonView person = findPerson(snapshot, memberId);
-						if (person != null) { g2.drawString(person.name + "  " + person.type + "  " + person.activity, 32, y); y += 15; }
+					if (snapshot.player != null) {
+						int shown = 0;
+						for (Long memberId : snapshot.player.partyMemberIds) {
+							CampaignSnapshot.PersonView person = findPerson(snapshot, memberId);
+							if (person == null) continue;
+							int columnX = shown % 2 == 0 ? 32 : 390;
+							int rowY = y + (shown / 2) * 15;
+							if (rowY > panelY + panelHeight - 12) break;
+							drawFittedString(g2, person.name + " · " + person.goal.replace('_', ' ')
+								+ " " + person.goalUrgency + " · opinion " + person.opinionOfPlayer,
+								columnX, rowY, 330);
+							shown++;
+						}
+						if (shown == 0) drawFittedString(g2, "Your party has no listed companions.", 32, y, 690);
 					}
 				}
 				case CONTRACTS -> {
 					int shown = 0;
 					for (CampaignSnapshot.ContractView contract : snapshot.contracts) {
 						if (!"ACTIVE".equals(contract.status)) continue;
-						g2.setColor("ACTIVE".equals(contract.status) ? new Color(255, 205, 85) : Color.WHITE);
-						g2.drawString("#" + contract.id + " [" + contract.status + "] " + contract.objective, 32, y); y += 14;
+						g2.setColor(new Color(255, 205, 85));
+						drawFittedString(g2, "#" + contract.id + " [" + contract.status + "] "
+							+ contract.objective + " · urgency " + contract.urgency, 32, y, 690); y += 14;
 						g2.setColor(Color.LIGHT_GRAY);
-						g2.drawString("From " + contract.issuerName + " -> " + contract.destinationName
-							+ " | " + contract.progress, 44, y); y += 14;
-						g2.drawString("Reward " + contract.rewardCoins + "c | Penalty " + contract.penaltyCoins
-							+ "c | " + contract.remainingDays() + " days left", 44, y); y += 18;
-						if (++shown >= 3 || y > panelY + 150) break;
+						drawFittedString(g2, "From " + contract.issuerName + " -> " + contract.destinationName
+							+ " | " + contract.progress + " | Reward " + contract.rewardCoins
+							+ "c | Penalty " + contract.penaltyCoins + "c | " + contract.remainingDays()
+							+ " days left", 44, y, 678); y += 13;
+						g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+						drawFittedString(g2, "Why: " + contract.issueReason, 44, y, 678);
+						g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+						y += 18;
+						if (++shown >= 2 || y > panelY + panelHeight - 18) break;
 					}
-					if (shown == 0) g2.drawString("No active contracts. Visit a notice board for new work.", 32, y);
+					if (shown == 0) drawFittedString(g2,
+						"No active contracts. Visit a notice board for new work.", 32, y, 690);
 				}
 				case KINGDOM -> {
 					CampaignSnapshot.PlayerView playerView = snapshot.player;
 					CampaignSnapshot.RealmView realm = playerView == null || playerView.affiliatedRealmId == null
 							? null : snapshot.findRealm(playerView.affiliatedRealmId);
 					if (realm == null) {
-						g2.drawString("You are not affiliated with a kingdom.", 32, y);
+						drawFittedString(g2, "You are not affiliated with a kingdom.", 32, y, 690);
 						break;
 					}
-					g2.drawString(realm.name + " | Your role: " + playerView.kingdomRole, 32, y); y += 15;
-					g2.drawString("Ruler " + realm.rulerName + " | Treasury " + realm.treasury + "c | Stability "
-							+ Math.round(realm.stability) + " | Legitimacy " + Math.round(realm.legitimacy), 32, y); y += 18;
-					g2.drawString(realm.governmentType + " | " + realm.successionLaw + " | Settlements "
-							+ realm.settlementCount + " | Population " + realm.population, 32, y); y += 17;
+					int leftX = 32, leftW = 330, rightX = 390, rightW = 330;
+					int leftY = y;
+					drawFittedString(g2, realm.name + " · your role " + playerView.kingdomRole, leftX, leftY, leftW); leftY += 14;
+					drawFittedString(g2, "Ruler " + realm.rulerName, leftX, leftY, leftW); leftY += 13;
+					drawFittedString(g2, "Treasury " + realm.treasury + "c · stability "
+						+ Math.round(realm.stability) + " · legitimacy " + Math.round(realm.legitimacy), leftX, leftY, leftW); leftY += 13;
+					drawFittedString(g2, realm.governmentType + " · " + realm.successionLaw, leftX, leftY, leftW); leftY += 13;
+					drawFittedString(g2, "Settlements " + realm.settlementCount + " · population " + realm.population,
+						leftX, leftY, leftW); leftY += 13;
+					drawFittedString(g2, "Loyalty " + Math.round(realm.averageLoyalty * 100.0) + "% · worst "
+						+ realm.worstSettlementName + " (" + Math.round(realm.worstPressure * 100.0) + "%)",
+						leftX, leftY, leftW); leftY += 13;
+					g2.setColor(new Color(255, 215, 110));
+					drawFittedString(g2, "Strategy: " + realm.strategy.replace('_', ' ') + " -> "
+						+ realm.strategyTargetName, leftX, leftY, leftW); leftY += 12;
+					g2.setColor(Color.LIGHT_GRAY);
+					g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+					drawWrappedCampaignText(g2, realm.strategyReason, leftX, leftY, leftW, 2, 11);
+					g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+					g2.setColor(Color.WHITE);
+
 					if (!playerView.canManageKingdom) {
 						g2.setColor(Color.LIGHT_GRAY);
-						g2.drawString("Kingdom management is reserved for the ruler.", 32, y);
+						drawWrappedCampaignText(g2, "Kingdom management is reserved for the ruler.",
+							rightX, y, rightW, 2, 13);
 						if ("LORD".equals(playerView.kingdomRole)) {
-							Rectangle throne = new Rectangle(32, y + 10, 268, 26);
+							Rectangle throne = new Rectangle(rightX, y + 28, 268, 26);
 							kingdomManagementHitboxes.put("SEIZE_THRONE", throne);
 							g2.setColor(new Color(70, 48, 34));
 							g2.fillRoundRect(throne.x, throne.y, throne.width, throne.height, 8, 8);
 							g2.setColor(new Color(225, 190, 105));
 							g2.drawRoundRect(throne.x, throne.y, throne.width, throne.height, 8, 8);
 							g2.setColor(new Color(255, 226, 160));
-							g2.drawString("Press your claim to the throne", throne.x + 14, throne.y + 17);
+							drawFittedString(g2, "Press your claim to the throne", throne.x + 10, throne.y + 17,
+								throne.width - 20);
 							g2.setColor(Color.LIGHT_GRAY);
-							g2.drawString("Needs a claim on the crown, or a kingdom in crisis (stability under 25)"
-								+ " and 25+ realm reputation (you have " + playerView.realmReputation + ")",
-								throne.x + throne.width + 14, throne.y + 17);
+							g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+							drawWrappedCampaignText(g2,
+								"Needs a claim on the crown, or a kingdom in crisis (stability under 25) and 25+ realm reputation (you have "
+									+ playerView.realmReputation + ").", rightX, throne.y + 42, rightW, 3, 11);
+							g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 						}
 						break;
 					}
 					g2.setColor(new Color(255, 215, 110));
-					g2.drawString("Manage laws (0-3):", 32, y); y += 14;
-					int lawIndex = 0;
+					drawFittedString(g2, "Manage laws (0-3):", rightX, y, rightW);
+					int lawY = y + 10;
 					for (java.util.Map.Entry<String, Integer> law : realm.laws.entrySet()) {
-						int column = lawIndex % 2;
-						int row = lawIndex / 2;
-						int lawX = 44 + column * 360;
-						int lawY = y + row * 18;
 						g2.setColor(Color.WHITE);
-						g2.drawString(law.getKey() + "  " + law.getValue(), lawX, lawY + 11);
-						Rectangle minus = new Rectangle(lawX + 250, lawY - 2, 25, 15);
-						Rectangle plus = new Rectangle(lawX + 282, lawY - 2, 25, 15);
+						drawFittedString(g2, law.getKey() + "  " + law.getValue(), rightX, lawY + 11, 205);
+						Rectangle minus = new Rectangle(rightX + 220, lawY - 2, 25, 15);
+						Rectangle plus = new Rectangle(rightX + 252, lawY - 2, 25, 15);
 						kingdomManagementHitboxes.put(law.getKey() + ":-1", minus);
 						kingdomManagementHitboxes.put(law.getKey() + ":1", plus);
-						g2.setColor(new Color(58, 76, 91)); g2.fillRect(minus.x, minus.y, minus.width, minus.height); g2.fillRect(plus.x, plus.y, plus.width, plus.height);
-						g2.setColor(Color.WHITE); g2.drawString("-", minus.x + 10, minus.y + 12); g2.drawString("+", plus.x + 8, plus.y + 12);
-						lawIndex++;
+						g2.setColor(new Color(58, 76, 91));
+						g2.fillRect(minus.x, minus.y, minus.width, minus.height);
+						g2.fillRect(plus.x, plus.y, plus.width, plus.height);
+						g2.setColor(Color.WHITE);
+						drawCenteredFittedString(g2, "-", minus.x, minus.y + 12, minus.width);
+						drawCenteredFittedString(g2, "+", plus.x, plus.y + 12, plus.width);
+						lawY += 18;
 					}
 				}
 				case WAR -> {
+					int leftX = 32, leftW = 382;
+					int activeWars = 0;
+					for (CampaignSnapshot.WarView war : snapshot.wars) if (war.isActive()) activeWars++;
 					int warsShown = 0;
 					for (CampaignSnapshot.WarView war : snapshot.wars) {
 						if (!war.isActive()) continue;
 						g2.setColor(war.involvesPlayerRealm ? new Color(255, 170, 90) : new Color(228, 218, 194));
-						g2.drawString(war.belligerents() + "  -  "
-							+ readableWarGoal(war.goal, war.targetProvinceName, war.targetTitleName), 32, y);
-						y += 14;
+						y = drawWrappedCampaignText(g2, war.belligerents() + " — "
+							+ readableWarGoal(war.goal, war.targetProvinceName, war.targetTitleName),
+							leftX, y, leftW, 2, 13);
 						g2.setColor(Color.LIGHT_GRAY);
-						g2.drawString("Day " + war.daysRunning + "  |  war score "
-							+ Math.round(war.attackerScore) + " - " + Math.round(war.defenderScore)
-							+ "  |  exhaustion " + Math.round(war.attackerExhaustion) + " - "
-							+ Math.round(war.defenderExhaustion), 44, y);
-						y += 13;
-						g2.drawString("Contribution: "
+						drawFittedString(g2, war.phase + " · objective " + war.objectiveSettlementName,
+							leftX + 12, y, leftW - 12); y += 13;
+						drawFittedString(g2, "Day " + war.daysRunning + " · score "
+							+ Math.round(war.attackerScore) + "-" + Math.round(war.defenderScore)
+							+ " · exhaustion " + Math.round(war.attackerExhaustion) + "-"
+							+ Math.round(war.defenderExhaustion), leftX + 12, y, leftW - 12); y += 13;
+						drawFittedString(g2, war.momentumExplanation, leftX + 12, y, leftW - 12); y += 12;
+						g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+						y = drawWrappedCampaignText(g2, "Why: " + war.declarationReason,
+							leftX + 12, y, leftW - 12, 2, 11);
+						g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+						drawFittedString(g2, "Contribution: "
 							+ (war.contributions.isEmpty() ? "none yet" : String.join(", ", war.contributions))
-							+ "  (contribution decides who may claim captured land)", 44, y);
-						y += 18;
-						if (++warsShown >= 2 || y > panelY + panelHeight - 46) break;
+							+ (activeWars > 1 ? " · +" + (activeWars - 1) + " more war(s)" : ""),
+							leftX + 12, y, leftW - 12);
+						y += 17;
+						warsShown++;
+						break;
 					}
 					if (warsShown == 0) {
 						g2.setColor(Color.LIGHT_GRAY);
-						g2.drawString("No active wars. Realms go to war over claims, provinces, grievances and vassalage.", 32, y);
-						y += 16;
+						y = drawWrappedCampaignText(g2,
+							"No active wars. Realms go to war over claims, provinces, grievances and vassalage.",
+							leftX, y, leftW, 2, 13) + 3;
 					}
 					g2.setColor(new Color(222, 204, 155));
 					g2.setFont(new Font("SansSerif", Font.BOLD, 12));
-					g2.drawString("SIEGES", 32, y);
+					drawFittedString(g2, "SIEGES", leftX, y, leftW);
 					g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 					y += 15;
 					int siegesShown = 0;
 					for (CampaignSnapshot.SiegeView siege : snapshot.sieges) {
 						if (!siege.isActive()) continue;
 						g2.setColor(siege.involvesPlayerRealm ? new Color(255, 170, 90) : Color.WHITE);
-						g2.drawString(siege.besiegerRealmName + " besieges " + siege.settlementName
-								+ " (held by " + siege.defenderRealmName + ")  -  " + siege.besiegerStrength
-								+ " in lines / " + siege.besiegerCount + " committed, day "
-								+ siege.daysRunning, 32, y);
-						y += 14;
+						drawFittedString(g2, siege.besiegerRealmName + " besieges " + siege.settlementName
+							+ " (" + siege.defenderRealmName + ")", leftX, y, leftW); y += 13;
 						g2.setColor(Color.LIGHT_GRAY);
-						g2.drawString("Breach " + Math.round(siege.breachProgress)
-							+ "%  |  defender resolve " + Math.round(siege.defenderResolve)
-							+ "%  |  food consumed " + siege.foodConsumed
-							+ "  |  civilian deaths " + siege.civilianDeaths, 44, y);
-						y += 17;
-						if (++siegesShown >= 2 || y > panelY + panelHeight - 14) break;
+						drawFittedString(g2, siege.besiegerStrength + " in lines / " + siege.besiegerCount
+							+ " committed · day " + siege.daysRunning + " · breach "
+							+ Math.round(siege.breachProgress) + "%", leftX + 12, y, leftW - 12); y += 13;
+						drawFittedString(g2, "Resolve " + Math.round(siege.defenderResolve)
+							+ "% · food " + siege.foodConsumed + " · civilian deaths " + siege.civilianDeaths,
+							leftX + 12, y, leftW - 12); y += 15;
+						siegesShown++;
+						break;
 					}
-					if (siegesShown == 0) {
+					if (siegesShown == 0 && y <= panelY + panelHeight - 12) {
 						g2.setColor(Color.LIGHT_GRAY);
-						g2.drawString("No active sieges. A besieging army has to reach an enemy settlement while a war is on.", 32, y);
+						drawWrappedCampaignText(g2,
+							"No active sieges. A besieging army must reach an enemy settlement during war.",
+							leftX, y, leftW, 2, 12);
 					}
 					// Rulers can open a war from here; that is what makes a BESIEGE order legal.
 					java.util.List<Long> warTargets = campaignSession == null
@@ -6435,16 +6644,18 @@ System.nanoTime();
 					if (!warTargets.isEmpty()) {
 						g2.setColor(new Color(222, 204, 155));
 						g2.setFont(new Font("SansSerif", Font.BOLD, 12));
-						g2.drawString("AS RULER: DECLARE A WAR OF CONQUEST", 430, panelY + 40);
-						g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+						drawFittedString(g2, "DECLARE WAR", 430, panelY + 40, 148);
+						g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
 						g2.setColor(Color.LIGHT_GRAY);
-						g2.drawString("War is what lets an army besiege and take land.", 430, panelY + 56);
-						int by = panelY + 64;
+						drawWrappedCampaignText(g2, "War lets an army besiege and take land.",
+							430, panelY + 53, 148, 2, 11);
+						g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+						int by = panelY + 76;
 						int shown = 0;
 						for (Long targetRealmId : warTargets) {
 							CampaignSnapshot.RealmView target = snapshot.findRealm(targetRealmId);
 							if (target == null) continue;
-							Rectangle button = new Rectangle(430, by, 152, 22);
+							Rectangle button = new Rectangle(430, by, 148, 22);
 							drawCampaignTabButton(g2, button, "War: " + target.name);
 							kingdomManagementHitboxes.put("DECLARE_WAR:" + targetRealmId, button);
 							by += 26;
@@ -6454,18 +6665,15 @@ System.nanoTime();
 					if (!snapshot.sieges.isEmpty()) {
 						g2.setColor(new Color(222, 204, 155));
 						g2.setFont(new Font("SansSerif", Font.BOLD, 12));
-						g2.drawString("JOIN / STORM", 590, panelY + 40);
+						drawFittedString(g2, "JOIN / STORM", 590, panelY + 40, 140);
 						g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
 						g2.setColor(Color.LIGHT_GRAY);
-						g2.drawString(snapshot.player == null ? ""
-								: "HP " + snapshot.player.healthPercent + "% (fight > 0%)", 590, panelY + 54);
+						drawFittedString(g2, snapshot.player == null ? ""
+								: "HP " + snapshot.player.healthPercent + "% (fight > 0%)", 590, panelY + 54, 140);
 						g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 						int sy = panelY + 64;
 						for (CampaignSnapshot.SiegeView siege : snapshot.sieges) {
 							if (!siege.isActive()) continue;
-							// Only offer Join for a siege whose war actually puts
-							// your commanded army on the besieging side. Backend
-							// checks still explain health, route, and army state.
 							if (!siege.playerArmyAtSiege && !siege.playerArmyJoined
 									&& !siege.playerArmyCanJoin) continue;
 							Rectangle button = new Rectangle(590, sy, 140, 20);
@@ -6485,54 +6693,71 @@ System.nanoTime();
 					}
 				}
 				case FIEFS -> {
+					int leftX = 32, leftW = 382, rightX = 430, rightW = 300;
 					java.util.List<CampaignSnapshot.TitleView> held = snapshot.playerTitles();
 					int heldShown = 0;
 					for (CampaignSnapshot.TitleView title : held) {
 						g2.setColor(new Color(255, 215, 110));
-						g2.drawString(title.rank + "  -  " + title.name, 32, y);
-						y += 14;
+						drawFittedString(g2, title.rank + " — " + title.name, leftX, y, leftW); y += 14;
 						g2.setColor(Color.LIGHT_GRAY);
-						g2.drawString("Held under " + title.realmName + "  |  de jure "
+						drawFittedString(g2, "Held under " + title.realmName + " · de jure "
 							+ (title.deJureProvinceName == null ? "unassigned" : title.deJureProvinceName)
-							+ "  |  claims against you " + title.claimCount, 44, y);
-						y += 13;
-						g2.drawString((title.settlementName == null ? "" : title.settlementName + "  |  ")
-							+ "pays about " + title.rentPerDay + "c a day into your purse", 44, y);
-						y += 17;
+							+ " · claims " + title.claimCount, leftX + 12, y, leftW - 12); y += 13;
+						drawFittedString(g2, (title.settlementName == null ? "" : title.settlementName + " · ")
+							+ "pays about " + title.rentPerDay + "c/day", leftX + 12, y, leftW - 12); y += 13;
+						CampaignSnapshot.SettlementView holding = null;
+						for (CampaignSnapshot.SettlementView candidate : snapshot.settlements) {
+							if (title.settlementName != null && title.settlementName.equals(candidate.name)) {
+								holding = candidate;
+								break;
+							}
+						}
+						if (holding != null) {
+							drawFittedString(g2, holding.outlook + " · loyalty "
+								+ Math.round(holding.loyalty * 100.0) + "% · " + holding.pressureSummary,
+								leftX + 12, y, leftW - 12); y += 15;
+						}
 						if (!title.isCrown) {
-							Rectangle relinquish = new Rectangle(44, y - 12, 190, 20);
+							Rectangle relinquish = new Rectangle(leftX + 12, y - 12, 190, 20);
 							drawCampaignTabButton(g2, relinquish, "Relinquish this title");
 							kingdomManagementHitboxes.put("RELINQUISH_TITLE:" + title.id, relinquish);
 							y += 17;
 						}
-						if (++heldShown >= 3 || y > panelY + panelHeight - 60) break;
+						heldShown++;
+						break;
 					}
 					if (heldShown == 0) {
 						g2.setColor(Color.LIGHT_GRAY);
-						g2.drawString("You hold no land. Fiefs are won by conquest and then claimed, or granted by a ruler.", 32, y);
-						y += 16;
+						y = drawWrappedCampaignText(g2,
+							"You hold no land. Fiefs are won by conquest and then claimed, or granted by a ruler.",
+							leftX, y, leftW, 2, 13) + 3;
+					} else if (held.size() > 1) {
+						g2.setColor(Color.LIGHT_GRAY);
+						drawFittedString(g2, "+ " + (held.size() - 1) + " more recorded title(s)", leftX, y, leftW);
+						y += 15;
 					}
 					Long claimRealmId = snapshot.player == null ? null : snapshot.player.affiliatedRealmId;
 					if (claimRealmId != null && campaignSession != null) {
 						g2.setColor(new Color(222, 204, 155));
 						g2.setFont(new Font("SansSerif", Font.BOLD, 12));
-						g2.drawString("CLAIM CONQUERED LAND", 430, panelY + 40);
+						drawFittedString(g2, "CLAIM CONQUERED LAND", rightX, panelY + 40, rightW);
 						g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
 						g2.setColor(Color.LIGHT_GRAY);
-						g2.drawString("Your conquest contribution: "
+						drawFittedString(g2, "Conquest contribution: "
 							+ Math.round(campaignSession.getPlayerState().conquestContribution)
-							+ "  (25 barony, 40 county)", 430, panelY + 56);
+							+ " (25 barony, 40 county)", rightX, panelY + 56, rightW);
 						int claimY = panelY + 66;
 						if (!held.isEmpty()) {
 							g2.setColor(Color.LIGHT_GRAY);
-							g2.drawString("One title at a time: relinquish your current", 430, claimY);
-							g2.drawString("title before claiming another holding.", 430, claimY + 16);
+							drawWrappedCampaignText(g2,
+								"One title at a time: relinquish your current title before claiming another holding.",
+								rightX, claimY, rightW, 3, 13);
 						} else {
 							int claimable = 0;
 							for (CampaignSnapshot.SettlementView occupied : snapshot.settlements) {
 								if (occupied.occupyingRealmId == null
 										|| occupied.occupyingRealmId.longValue() != claimRealmId.longValue()) continue;
-								Rectangle button = new Rectangle(430, claimY, 300, 22);
+								Rectangle button = new Rectangle(rightX, claimY, rightW, 22);
 								drawCampaignTabButton(g2, button, "Claim " + occupied.name + " as your holding");
 								kingdomManagementHitboxes.put("CLAIM_HOLDING:" + occupied.id, button);
 								claimY += 26;
@@ -6540,47 +6765,131 @@ System.nanoTime();
 							}
 							if (claimable == 0) {
 								g2.setColor(Color.LIGHT_GRAY);
-								g2.drawString(campaignRealmName(snapshot, claimRealmId)
-									+ " occupies nothing. Take a settlement by siege first.", 430, claimY);
+								drawWrappedCampaignText(g2, campaignRealmName(snapshot, claimRealmId)
+									+ " occupies nothing. Take a settlement by siege first.",
+									rightX, claimY, rightW, 3, 13);
 							}
 						}
 					}
-					g2.setColor(new Color(222, 204, 155));
-					g2.setFont(new Font("SansSerif", Font.BOLD, 12));
-					g2.drawString("CROWNS", 32, y);
-					g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
-					y += 15;
-					for (CampaignSnapshot.TitleView title : snapshot.titles) {
-						if (!title.isCrown) continue;
-						g2.setColor(title.heldByPlayer ? new Color(170, 230, 170) : Color.WHITE);
-						g2.drawString(title.realmName + ": " + title.name + "  -  " + title.holderName
-							+ (title.claimCount > 0 ? "  (" + title.claimCount + " claimants)" : ""), 32, y);
-						y += 14;
-						if (y > panelY + panelHeight - 14) break;
+					if (y <= panelY + panelHeight - 28) {
+						g2.setColor(new Color(222, 204, 155));
+						g2.setFont(new Font("SansSerif", Font.BOLD, 12));
+						drawFittedString(g2, "CROWNS", leftX, y, leftW);
+						g2.setFont(new Font("Monospaced", Font.PLAIN, 11));
+						y += 15;
+						for (CampaignSnapshot.TitleView title : snapshot.titles) {
+							if (!title.isCrown) continue;
+							g2.setColor(title.heldByPlayer ? new Color(170, 230, 170) : Color.WHITE);
+							drawFittedString(g2, title.realmName + ": " + title.name + " — " + title.holderName
+								+ (title.claimCount > 0 ? " (" + title.claimCount + " claimants)" : ""),
+								leftX, y, leftW);
+							y += 14;
+							if (y > panelY + panelHeight - 12) break;
+						}
 					}
 				}
 				case ENCYCLOPEDIA -> {
+					int leftX = 32, leftW = 350, rightX = 400, rightW = 320;
 					long working = snapshot.people.stream().filter(person -> "WORKING".equals(person.activity)).count();
 					long traveling = snapshot.people.stream().filter(person -> "TRAVELING".equals(person.activity)).count();
-					g2.drawString("WORLD: " + snapshot.settlements.size() + " settlements, " + snapshot.realms.size()
-						+ " kingdoms, " + snapshot.warCount + " active wars", 32, y); y += 16;
-					g2.drawString("PEOPLE: " + snapshot.livingPopulation + " living, " + working + " working, "
-						+ traveling + " traveling", 32, y); y += 20;
+					drawFittedString(g2, "WORLD: " + snapshot.settlements.size() + " settlements · "
+						+ snapshot.realms.size() + " kingdoms · " + snapshot.warCount + " wars", leftX, y, leftW); y += 14;
+					drawFittedString(g2, "PEOPLE: " + snapshot.livingPopulation + " living · " + working
+						+ " working · " + traveling + " traveling", leftX, y, leftW); y += 17;
 					for (CampaignSnapshot.RealmView realm : snapshot.realms) {
 						g2.setColor(colorForRealm(realm.id));
-						g2.drawString(realm.name + " — ruler " + realm.rulerName + ", pop " + realm.population
-							+ ", settlements " + realm.settlementCount + ", treasury " + realm.treasury + "c", 32, y); y += 15;
+						drawFittedString(g2, realm.name + " — " + realm.rulerName + " · pop " + realm.population
+							+ " · " + realm.settlementCount + " settlements · " + realm.treasury + "c", leftX, y, leftW); y += 13;
 						g2.setColor(Color.LIGHT_GRAY);
-						g2.drawString("  " + realm.governmentType + ", " + realm.successionLaw + ", legitimacy "
-							+ Math.round(realm.legitimacy) + ", factions " + realm.factionCount, 32, y); y += 16;
-						if (y > panelY + 150) break;
+						drawFittedString(g2, realm.governmentType + " · " + realm.successionLaw
+							+ " · legitimacy " + Math.round(realm.legitimacy) + " · loyalty "
+							+ Math.round(realm.averageLoyalty * 100.0) + "%", leftX + 10, y, leftW - 10); y += 13;
+						drawFittedString(g2, "Strategy " + realm.strategy.replace('_', ' ') + " -> "
+							+ realm.strategyTargetName, leftX + 10, y, leftW - 10); y += 15;
+						if (y > panelY + panelHeight - 24) break;
+					}
+					int pressureY = panelY + 44;
+					g2.setColor(new Color(222, 204, 155));
+					g2.setFont(new Font("SansSerif", Font.BOLD, 12));
+					drawFittedString(g2, "SETTLEMENT PRESSURE", rightX, pressureY, rightW); pressureY += 15;
+					java.util.List<CampaignSnapshot.SettlementView> byPressure =
+						new java.util.ArrayList<>(snapshot.settlements);
+					byPressure.sort((first, second) -> Double.compare(second.overallPressure, first.overallPressure));
+					g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+					int pressureShown = 0;
+					for (CampaignSnapshot.SettlementView settlement : byPressure) {
+						g2.setColor(Color.WHITE);
+						drawFittedString(g2, settlement.name + " · " + settlement.outlook + " · loyalty "
+							+ Math.round(settlement.loyalty * 100.0) + "%", rightX, pressureY, rightW); pressureY += 11;
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+						drawFittedString(g2, settlement.pressureSummary, rightX + 8, pressureY, rightW - 8);
+						g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+						pressureY += 14;
+						if (++pressureShown >= 4 || pressureY > panelY + panelHeight - 12) break;
 					}
 				}
 				case CRIME -> {
-					for (int i = snapshot.crimes.size() - 1; i >= 0 && y <= panelY + 150; i--) {
+					int leftX = 32, leftW = 350, rightX = 410, rightW = 310;
+					int chronicleY = y;
+					g2.setColor(new Color(222, 204, 155));
+					g2.setFont(new Font("SansSerif", Font.BOLD, 12));
+					drawFittedString(g2, "WORLD CHRONICLE", leftX, chronicleY, leftW); chronicleY += 14;
+					java.util.List<CampaignSnapshot.EventView> history = snapshot.chronicleEvents.isEmpty()
+						? snapshot.recentEvents : snapshot.chronicleEvents;
+					g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+					int eventsShown = 0;
+					for (int i = history.size() - 1; i >= 0; i--) {
+						String line = readableEvent(history.get(i));
+						if (line == null || line.isBlank()) continue;
+						g2.setColor(eventColor(history.get(i).type));
+						chronicleY = drawWrappedCampaignText(g2, line, leftX, chronicleY, leftW, 2, 11) + 3;
+						if (++eventsShown >= 5 || chronicleY > panelY + panelHeight - 14) break;
+					}
+					if (eventsShown == 0) {
+						g2.setColor(Color.LIGHT_GRAY);
+						drawFittedString(g2, "No durable chronicle entries yet.", leftX, chronicleY, leftW);
+					}
+
+					int localY = y;
+					g2.setColor(new Color(222, 204, 155));
+					g2.setFont(new Font("SansSerif", Font.BOLD, 12));
+					drawFittedString(g2, "LOCAL PRESSURE & CRIME", rightX, localY, rightW); localY += 14;
+					java.util.List<CampaignSnapshot.SettlementView> troubled =
+						new java.util.ArrayList<>(snapshot.settlements);
+					troubled.sort((first, second) -> Double.compare(second.overallPressure, first.overallPressure));
+					g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+					int settlementsShown = 0;
+					for (CampaignSnapshot.SettlementView settlement : troubled) {
+						g2.setColor(Color.WHITE);
+						drawFittedString(g2, settlement.name + " · " + settlement.outlook + " · crime "
+							+ settlement.crimeIncidents30Days + "/30d", rightX, localY, rightW); localY += 11;
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+						drawFittedString(g2, settlement.pressureSummary, rightX + 8, localY, rightW - 8);
+						g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+						localY += 13;
+						if (++settlementsShown >= 3) break;
+					}
+					localY += 3;
+					int crimesShown = 0;
+					for (int i = snapshot.crimes.size() - 1; i >= 0; i--) {
 						CampaignSnapshot.CrimeView crime = snapshot.crimes.get(i);
-						g2.drawString(crime.type + " at settlement " + crime.settlementId + " severity "
-							+ crime.severity + (crime.discovered ? " discovered" : " hidden"), 32, y); y += 15;
+						g2.setColor(Color.WHITE);
+						drawFittedString(g2, crime.type + " · " + crime.settlementName + " · sev "
+							+ crime.severity + (crime.discovered ? " · caught" : " · hidden"),
+							rightX, localY, rightW); localY += 11;
+						g2.setColor(Color.LIGHT_GRAY);
+						g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+						drawFittedString(g2, crime.offenderName + " -> " + crime.victimName,
+							rightX + 8, localY, rightW - 8);
+						g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+						localY += 13;
+						if (++crimesShown >= 3 || localY > panelY + panelHeight - 12) break;
+					}
+					if (crimesShown == 0) {
+						g2.setColor(Color.LIGHT_GRAY);
+						drawFittedString(g2, "No recorded local crime yet.", rightX, localY, rightW);
 					}
 				}
 				default -> { }
@@ -6603,41 +6912,65 @@ System.nanoTime();
 			if (hoveredCampaignSettlementId == null) return;
 			CampaignSnapshot.SettlementView settlement = snapshot.findSettlement(hoveredCampaignSettlementId);
 			if (settlement == null) return;
-			int width = 236;
-			int height = 168;
-			int x = Math.min(screenWidth - width - 8, campaignMousePoint.x + 14);
-			int y = Math.min(screenHeight - height - 40, campaignMousePoint.y + 14);
+			CampaignSnapshot.SiegeView siege = snapshot.findActiveSiegeAt(settlement.id);
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+			java.util.List<String> summaryLines = wrapCampaignText(g2, settlement.pressureSummary, 232, 2);
+			int width = 252;
+			int height = 164 + (settlement.occupyingRealmId == null ? 0 : 13)
+					+ (siege == null ? 0 : 26) + summaryLines.size() * 11;
+			Rectangle card = campaignHoverCardRect(width, height);
+			int x = card.x;
+			int y = card.y;
+			width = card.width;
+			height = card.height;
 			g2.setColor(new Color(8, 13, 18, 235));
 			g2.fillRoundRect(x, y, width, height, 10, 10);
 			g2.setColor(new Color(225, 194, 120));
 			g2.drawRoundRect(x, y, width, height, 10, 10);
 			g2.setFont(new Font("Serif", Font.BOLD, 15));
-			g2.drawString(settlement.name, x + 10, y + 20);
+			drawFittedString(g2, settlement.name, x + 10, y + 20, width - 20);
 			g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
-			// Ownership first: it is the question the map colours only half answer.
+			int row = 38;
 			g2.setColor(colorForRealm(settlement.realmId));
-			g2.drawString("Owner: " + campaignRealmName(snapshot, settlement.realmId), x + 10, y + 38);
+			drawFittedString(g2, "Owner: " + campaignRealmName(snapshot, settlement.realmId),
+				x + 10, y + row, width - 20); row += 13;
 			if (settlement.occupyingRealmId != null) {
 				g2.setColor(new Color(255, 150, 110));
-				g2.drawString("Occupied by " + campaignRealmName(snapshot, settlement.occupyingRealmId), x + 10, y + 52);
+				drawFittedString(g2, "Occupied by " + campaignRealmName(snapshot, settlement.occupyingRealmId),
+					x + 10, y + row, width - 20); row += 13;
 			}
-			CampaignSnapshot.SiegeView siege = snapshot.findActiveSiegeAt(settlement.id);
 			if (siege != null) {
 				g2.setColor(new Color(255, 110, 90));
-				g2.drawString("UNDER SIEGE by " + siege.besiegerRealmName, x + 10, y + 66);
-				g2.drawString("  breach " + Math.round(siege.breachProgress) + "%  resolve "
-						+ Math.round(siege.defenderResolve) + "%", x + 10, y + 79);
+				drawFittedString(g2, "UNDER SIEGE by " + siege.besiegerRealmName, x + 10, y + row, width - 20); row += 13;
+				drawFittedString(g2, "Breach " + Math.round(siege.breachProgress) + "% · resolve "
+						+ Math.round(siege.defenderResolve) + "%", x + 10, y + row, width - 20); row += 15;
 			}
 			g2.setColor(Color.WHITE);
-			int row = siege != null ? 96 : 68;
-			g2.drawString("Population " + settlement.population + "  households " + settlement.households, x + 10, y + row);
-			g2.drawString("Treasury " + settlement.treasury + "c", x + 10, y + row + 15);
-			g2.drawString("Grain " + settlement.grain + " @ " + settlement.grainPrice + "c"
-					+ "   Veg " + settlement.vegetables + " @ " + settlement.vegetablePrice + "c", x + 10, y + row + 30);
-			g2.drawString(String.format("Security %.0f%%  unrest %.0f%%  food %.0f%%",
-					settlement.security * 100, settlement.unrest * 100, settlement.foodSecurity * 100), x + 10, y + row + 45);
-			long crimeCount = snapshot.crimes.stream().filter(crime -> crime.settlementId == settlement.id).count();
-			g2.drawString("Recorded crime " + crimeCount, x + 10, y + row + 60);
+			drawFittedString(g2, "Population " + settlement.population + " · households "
+				+ settlement.households + " · " + settlement.treasury + "c", x + 10, y + row, width - 20); row += 13;
+			drawFittedString(g2, "Grain " + settlement.grain + " @ " + settlement.grainPrice + "c · Veg "
+				+ settlement.vegetables + " @ " + settlement.vegetablePrice + "c", x + 10, y + row, width - 20); row += 13;
+			drawFittedString(g2, String.format("Security %.0f%% · unrest %.0f%% · food %.0f%%",
+				settlement.security * 100, settlement.unrest * 100, settlement.foodSecurity * 100),
+				x + 10, y + row, width - 20); row += 13;
+			drawFittedString(g2, String.format("Prosperity %.0f%% · sanitation %.0f%% · loyalty %.0f%%",
+				settlement.prosperity * 100, settlement.sanitation * 100, settlement.loyalty * 100),
+				x + 10, y + row, width - 20); row += 13;
+			drawFittedString(g2, String.format("Food %.1fd · jobs %.0f%% free · tax %.0f%% · crime %d/30d",
+				settlement.foodReserveDays, settlement.unemploymentRate * 100,
+				settlement.taxBurdenRate * 100, settlement.crimeIncidents30Days),
+				x + 10, y + row, width - 20); row += 14;
+			g2.setColor("CRISIS".equals(settlement.outlook) ? new Color(255, 150, 110)
+				: "STRAINED".equals(settlement.outlook) ? new Color(255, 205, 130) : new Color(170, 225, 175));
+			drawFittedString(g2, settlement.outlook + " · " + settlement.mainPressure,
+				x + 10, y + row, width - 20); row += 12;
+			g2.setColor(new Color(205, 215, 220));
+			g2.setFont(new Font("SansSerif", Font.PLAIN, 9));
+			for (String line : summaryLines) {
+				if (y + row > y + height - 6) break;
+				g2.drawString(line, x + 10, y + row);
+				row += 11;
+			}
 		}
 
 		/** Realm name lookup for hover cards and panels, tolerant of stale ids. */
@@ -6648,7 +6981,8 @@ System.nanoTime();
 			g2.setColor(new Color(205, 178, 112));
 			g2.drawRoundRect(button.x, button.y, button.width, button.height, 6, 6);
 			g2.setColor(new Color(240, 228, 200));
-			g2.drawString(label, button.x + 8, button.y + button.height - 7);
+			drawFittedString(g2, label, button.x + 8, button.y + button.height - 7,
+					Math.max(0, button.width - 16));
 		}
 
 		private CampaignSnapshot.ArmyView findCommandedArmy(CampaignSnapshot snapshot) {
@@ -6684,8 +7018,11 @@ System.nanoTime();
 
 		private Rectangle placeCampaignLabel(int x, int y, int width, int height,
 				int minX, int minY, int maxX, int maxY, java.util.List<Rectangle> occupied) {
+			width = Math.max(1, Math.min(width, Math.max(1, maxX - minX)));
+			height = Math.max(1, Math.min(height, Math.max(1, maxY - minY)));
 			int[][] offsets = {{12, -34}, {12, 10}, {-width - 12, -34}, {-width - 12, 10},
-				{-width / 2, -52}, {-width / 2, 18}};
+				{-width / 2, -52}, {-width / 2, 18}, {12, -58}, {12, 28},
+				{-width - 12, -58}, {-width - 12, 28}, {-width / 2, -76}, {-width / 2, 38}};
 			Rectangle best = null;
 			int bestOverlap = Integer.MAX_VALUE;
 			for (int[] offset : offsets) {

@@ -3,8 +3,10 @@ package world.military;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 import world.Army;
+import world.SettlementPressure;
 import world.Household;
 import world.Person;
 import world.Realm;
@@ -21,6 +23,7 @@ import world.geography.Road;
 import world.geography.Settlement;
 import world.geography.WorldPosition;
 import world.politics.Government;
+import world.politics.KingdomStrategySystem;
 
 /** Recruitment, strategic movement, supply, encounters, losses, and demobilization. */
 public final class MilitarySystem {
@@ -73,6 +76,7 @@ public final class MilitarySystem {
             person.type = Person.PersonType.SOLDIER;
             person.travelingPartyId = null;
             regiment.soldierPersonIds.add(person.id);
+            markRecruit(person, currentMinute);
         }
         Person commander = eligible.subList(0, count).stream()
                 .max(Comparator.comparingInt(person -> person.skills.leadership + person.skills.martial))
@@ -144,6 +148,7 @@ public final class MilitarySystem {
             person.type = Person.PersonType.SOLDIER;
             person.travelingPartyId = null;
             regiment.soldierPersonIds.add(person.id);
+            markRecruit(person, currentMinute);
         }
         regiment.officerPersonId = commanderPersonId;
         world.regiments.put(regiment.id, regiment);
@@ -306,6 +311,7 @@ public final class MilitarySystem {
      */
     public int musterRealmArmies(long currentMinute) {
         int created = 0;
+        Map<Long, SettlementPressure> pressures = SettlementPressure.evaluateAll(world, currentMinute);
         List<Realm> realms = new ArrayList<>(world.realms.values());
         realms.sort(Comparator.comparingLong(realm -> realm.id));
         for (Realm realm : realms) {
@@ -320,12 +326,15 @@ public final class MilitarySystem {
 
             Settlement best = null;
             int bestRecruitable = 0;
+            double bestScore = Double.NEGATIVE_INFINITY;
             List<Settlement> settlements = new ArrayList<>(world.geography.getSettlements().values());
             settlements.sort(Comparator.comparingLong(settlement -> settlement.id));
             for (Settlement settlement : settlements) {
                 if (settlement.controllerRealmId == null || settlement.controllerRealmId.longValue() != realm.id) continue;
                 if (settlement.occupyingRealmId != null
                         && settlement.occupyingRealmId.longValue() != realm.id) continue;
+                SettlementPressure pressure = pressures.get(settlement.id);
+                if (pressure != null && pressure.besieged) continue;
                 int affordable = (int) Math.max(0L, Math.min(Integer.MAX_VALUE,
                         realm.treasury.copperCoins / RECRUITMENT_COST));
                 int recruitable = Math.min(12, Math.min(
@@ -333,12 +342,19 @@ public final class MilitarySystem {
                         Math.min(settlement.publicStockpile.getQuantity(GoodType.WEAPONS), affordable)));
                 boolean capital = realm.capitalSettlementId != null
                         && realm.capitalSettlementId.longValue() == settlement.id;
-                boolean bestCapital = best != null && realm.capitalSettlementId != null
-                        && realm.capitalSettlementId.longValue() == best.id;
-                if (recruitable > bestRecruitable
-                        || recruitable == bestRecruitable && capital && !bestCapital) {
+                double score = recruitable * 10.0
+                        + Math.min(18.0, settlement.publicStockpile.getQuantity(GoodType.WEAPONS) * 0.35)
+                        + (pressure == null ? 0.0 : pressure.loyalty * 7.0
+                                + Math.min(7.0, pressure.publicFoodReserveDays) * 1.2
+                                - pressure.overallPressure * 7.0)
+                        + (capital ? 4.0 : 0.0)
+                        + (realm.strategyTargetSettlementId != null
+                                && realm.strategyTargetSettlementId.longValue() == settlement.id
+                                && realm.strategy == Realm.Strategy.REBUILD ? 5.0 : 0.0);
+                if (score > bestScore) {
                     best = settlement;
                     bestRecruitable = recruitable;
+                    bestScore = score;
                 }
             }
             if (best == null || bestRecruitable < 6) continue;
@@ -418,24 +434,46 @@ public final class MilitarySystem {
 
             War war = firstActiveWarFor(army.realmId);
             int role = independentArmyRole(army);
+            Realm realm = world.realms.get(army.realmId);
+            Settlement strategyTarget = realm == null || realm.strategyTargetSettlementId == null
+                    ? null : world.geography.getSettlement(realm.strategyTargetSettlementId);
+            boolean defensiveStrategy = realm != null && (realm.strategy == Realm.Strategy.DEFEND
+                    || realm.strategy == Realm.Strategy.RELIEVE_SIEGE);
+            boolean holdStrategy = realm != null && (realm.strategy == Realm.Strategy.CONSOLIDATE
+                    || realm.strategy == Realm.Strategy.REBUILD
+                    || realm.strategy == Realm.Strategy.SEEK_PEACE);
             if (war != null) {
                 Settlement threatened = threatenedFriendlySettlement(army, war);
-                if (threatened != null && role > 0) {
+                if (strategyTarget != null && defensiveStrategy && role != 1
+                        && strategyTarget.controllerRealmId != null
+                        && sameWarSide(war, army.realmId, strategyTarget.controllerRealmId.longValue())) {
+                    issueIndependentMove(army, strategyTarget.id, Army.ArmyOrder.DEFEND, currentMinute);
+                    continue;
+                }
+                if (threatened != null && (role > 0 || defensiveStrategy || holdStrategy)) {
                     issueIndependentMove(army, threatened.id, Army.ArmyOrder.DEFEND, currentMinute);
+                    continue;
+                }
+                if (holdStrategy && strategyTarget != null && role == 0
+                        && strategyTarget.controllerRealmId != null
+                        && sameWarSide(war, army.realmId, strategyTarget.controllerRealmId.longValue())) {
+                    issueIndependentMove(army, strategyTarget.id, Army.ArmyOrder.DEFEND, currentMinute);
                     continue;
                 }
                 Army target = nearbyWartimeEnemy(army, war);
                 if (target != null && armyStrength >= Math.max(4, strength(target) * 4 / 5)) {
                     Settlement targetSettlement = world.geography.getSettlement(target.currentSettlementId);
-                    if (targetSettlement != null) {
+                    boolean relieving = threatened != null && targetSettlement != null
+                            && targetSettlement.id == threatened.id;
+                    if (targetSettlement != null && (!holdStrategy || relieving)) {
                         army.targetArmyId = target.id;
                         issueIndependentMove(army, targetSettlement.id, Army.ArmyOrder.PURSUE, currentMinute);
                         army.targetArmyId = target.id;
                         continue;
                     }
                 }
-                Settlement objective = warObjectiveSettlement(army, war);
-                if (objective != null && role != 1) {
+                Settlement objective = warObjectiveSettlement(army, war, role);
+                if (objective != null && role != 1 && !holdStrategy && !defensiveStrategy) {
                     issueIndependentMove(army, objective.id, Army.ArmyOrder.BESIEGE, currentMinute);
                     continue;
                 }
@@ -449,6 +487,12 @@ public final class MilitarySystem {
             if (role == 1) {
                 Settlement post = friendlyResupplySettlement(army);
                 if (post != null) issueIndependentMove(army, post.id, Army.ArmyOrder.DEFEND, currentMinute);
+            } else if (strategyTarget != null && role == 0 && realm != null
+                    && (realm.strategy == Realm.Strategy.CONSOLIDATE
+                            || realm.strategy == Realm.Strategy.DEVELOP)
+                    && strategyTarget.controllerRealmId != null
+                    && strategyTarget.controllerRealmId.longValue() == army.realmId) {
+                issueIndependentMove(army, strategyTarget.id, Army.ArmyOrder.PATROL, currentMinute);
             } else {
                 Settlement patrol = patrolSettlement(army, currentMinute, role);
                 if (patrol != null) issueIndependentMove(army, patrol.id, Army.ArmyOrder.PATROL, currentMinute);
@@ -504,22 +548,35 @@ public final class MilitarySystem {
 
     private Settlement friendlyResupplySettlement(Army army) {
         Settlement best = null;
-        double bestDistance = Double.POSITIVE_INFINITY;
+        double bestScore = Double.POSITIVE_INFINITY;
         Realm realm = world.realms.get(army.realmId);
         for (Settlement settlement : world.geography.getSettlements().values()) {
             if (settlement.controllerRealmId == null || settlement.controllerRealmId.longValue() != army.realmId
                     || settlement.position == null || army.position == null) continue;
-            double distance = Math.hypot(army.position.x - settlement.position.x,
+            double score = Math.hypot(army.position.x - settlement.position.x,
                     army.position.y - settlement.position.y);
-            if (army.homeSettlementId != null && army.homeSettlementId.longValue() == settlement.id) distance -= 25.0;
+            int balancedFood = Math.min(settlement.publicStockpile.getQuantity(GoodType.GRAIN),
+                    settlement.publicStockpile.getQuantity(GoodType.VEGETABLES));
+            score -= Math.min(58.0, balancedFood / 7.0);
+            score -= SettlementPressure.clamp01(settlement.security) * 20.0;
+            score += SettlementPressure.clamp01(settlement.unrest) * 20.0;
+            if (activeSiegeAt(settlement.id)) score += 1_000.0;
+            if (army.homeSettlementId != null && army.homeSettlementId.longValue() == settlement.id) score -= 25.0;
             if (realm != null && realm.capitalSettlementId != null
-                    && realm.capitalSettlementId.longValue() == settlement.id) distance -= 10.0;
-            if (distance < bestDistance) {
+                    && realm.capitalSettlementId.longValue() == settlement.id) score -= 10.0;
+            if (score < bestScore) {
                 best = settlement;
-                bestDistance = distance;
+                bestScore = score;
             }
         }
         return best;
+    }
+
+    private boolean activeSiegeAt(long settlementId) {
+        for (Siege siege : world.sieges.values()) {
+            if (siege.settlementId == settlementId && siege.state == Siege.SiegeState.ACTIVE) return true;
+        }
+        return false;
     }
 
     private Settlement threatenedFriendlySettlement(Army army, War war) {
@@ -531,7 +588,8 @@ public final class MilitarySystem {
             if (settlement == null || settlement.controllerRealmId == null || settlement.position == null) continue;
             if (!sameWarSide(war, army.realmId, settlement.controllerRealmId.longValue())) continue;
             double distance = Math.hypot(army.position.x - settlement.position.x,
-                    army.position.y - settlement.position.y);
+                    army.position.y - settlement.position.y)
+                    - siege.breachProgress * 0.75 - (100.0 - siege.defenderResolve) * 0.30;
             if (distance < bestDistance) {
                 best = settlement;
                 bestDistance = distance;
@@ -558,29 +616,26 @@ public final class MilitarySystem {
         return best;
     }
 
-    private Settlement warObjectiveSettlement(Army army, War war) {
-        Settlement best = null;
-        double bestDistance = Double.POSITIVE_INFINITY;
-        for (Settlement settlement : world.geography.getSettlements().values()) {
-            if (settlement.controllerRealmId == null || settlement.position == null) continue;
-            long controller = settlement.controllerRealmId.longValue();
-            if (!war.opposing(army.realmId, controller)) continue;
-            if (settlement.occupyingRealmId != null
-                    && !war.opposing(army.realmId, settlement.occupyingRealmId.longValue())) continue;
-            double distance = Math.hypot(army.position.x - settlement.position.x,
-                    army.position.y - settlement.position.y);
-            if (war.targetProvinceId != null && settlement.provinceId == war.targetProvinceId.longValue()) {
-                distance -= 100.0;
+    private Settlement warObjectiveSettlement(Army army, War war, int role) {
+        Realm realm = world.realms.get(army.realmId);
+        Settlement strategyTarget = realm == null || realm.strategyTargetSettlementId == null
+                ? null : world.geography.getSettlement(realm.strategyTargetSettlementId);
+        Settlement scored = KingdomStrategySystem.chooseWarObjective(world, army, war, army.realmId, null);
+        if (strategyTarget == null || strategyTarget.controllerRealmId == null
+                || !war.opposing(army.realmId, strategyTarget.controllerRealmId.longValue())) return scored;
+        if (role == 0 || scored == null || scored.id == strategyTarget.id) return strategyTarget;
+        if (role >= 2) {
+            Siege siege = null;
+            for (Siege candidate : world.sieges.values()) {
+                if (candidate.settlementId == strategyTarget.id && candidate.warId == war.id
+                        && candidate.state == Siege.SiegeState.ACTIVE) siege = candidate;
             }
-            Realm controllerRealm = world.realms.get(controller);
-            if (controllerRealm != null && controllerRealm.capitalSettlementId != null
-                    && controllerRealm.capitalSettlementId.longValue() == settlement.id) distance -= 25.0;
-            if (distance < bestDistance) {
-                best = settlement;
-                bestDistance = distance;
-            }
+            if (siege != null) return strategyTarget;
+            Settlement secondary = KingdomStrategySystem.chooseWarObjective(
+                    world, army, war, army.realmId, strategyTarget.id);
+            return secondary == null ? strategyTarget : secondary;
         }
-        return best;
+        return scored;
     }
 
     private Settlement patrolSettlement(Army army, long currentMinute, int role) {
@@ -589,13 +644,23 @@ public final class MilitarySystem {
             if (settlement.controllerRealmId != null
                     && settlement.controllerRealmId.longValue() == army.realmId) friendly.add(settlement);
         }
-        friendly.sort(Comparator.comparingLong(settlement -> settlement.id));
         if (friendly.isEmpty()) return null;
-        long day = Math.max(0L, currentMinute / WorldConfig.MINUTES_PER_DAY);
-        int index = (int) Math.floorMod(day + army.id + role * 2L, friendly.size());
+        Map<Long, SettlementPressure> pressures = SettlementPressure.evaluateAll(world, currentMinute);
+        friendly.sort((first, second) -> {
+            SettlementPressure a = pressures.get(first.id);
+            SettlementPressure b = pressures.get(second.id);
+            int byPressure = Double.compare(b == null ? 0.0 : b.overallPressure,
+                    a == null ? 0.0 : a.overallPressure);
+            return byPressure != 0 ? byPressure : Long.compare(first.id, second.id);
+        });
+        int priorityPool = Math.min(friendly.size(), 3);
+        int index = Math.min(priorityPool - 1, Math.max(0, role));
         Settlement chosen = friendly.get(index);
-        if (chosen.id == army.currentSettlementId && friendly.size() > 1) {
-            chosen = friendly.get((index + 1) % friendly.size());
+        SettlementPressure chosenPressure = pressures.get(chosen.id);
+        if (chosen.id == army.currentSettlementId && friendly.size() > 1
+                && (chosenPressure == null || chosenPressure.overallPressure < 0.45)) {
+            long day = Math.max(0L, currentMinute / WorldConfig.MINUTES_PER_DAY);
+            chosen = friendly.get((int) Math.floorMod(day + army.id, friendly.size()));
         }
         return chosen;
     }
@@ -641,6 +706,12 @@ public final class MilitarySystem {
                 soldier.preMilitaryType = null;
                 if (home != null) soldier.currentSettlementId = home.id;
                 restoreCivilianJob(soldier);
+                soldier.currentGoal = soldier.employerId == null ? Person.Goal.FIND_WORK : Person.Goal.WORK;
+                soldier.goalReason = soldier.employerId == null
+                        ? "Demobilized and looking for civilian work" : "Returned to civilian work";
+                soldier.goalUrgency = soldier.employerId == null ? 62 : 34;
+                soldier.goalUpdatedMinute = currentMinute;
+                soldier.rememberLifeEvent("Demobilized from military service", currentMinute);
             }
         }
         if (home != null) {
@@ -693,9 +764,34 @@ public final class MilitarySystem {
             if (world.player != null && world.player.personId == person.id) continue;
             people.add(person);
         }
-        people.sort(Comparator.comparingInt((Person person) -> person.skills.martial).reversed()
+        people.sort(Comparator.comparingInt((Person person) -> recruitmentScore(person)).reversed()
                 .thenComparingLong(person -> person.id));
         return people;
+    }
+
+    private int recruitmentScore(Person person) {
+        double score = person.skills.martial * 1.15 + person.skills.leadership * 0.25
+                + person.personality.bravery * 0.28 + person.personality.loyalty * 0.12
+                + Math.min(12.0, Math.max(0.0, person.health.healthLevel - 55.0) * 0.2);
+        if (person.employerId == null && person.officeId == null) score += 14.0;
+        score += switch (person.currentGoal) {
+            case SERVE_REALM -> person.goalUrgency * 0.22;
+            case FIND_WORK -> person.goalUrgency * 0.18;
+            case FIND_FOOD -> person.goalUrgency * 0.12;
+            case BUILD_WEALTH -> person.goalUrgency * 0.08;
+            case RECOVER -> -28.0;
+            default -> 0.0;
+        };
+        if (person.personality.ambition >= 70.0) score += 5.0;
+        return (int) Math.round(score);
+    }
+
+    private void markRecruit(Person person, long currentMinute) {
+        person.currentGoal = Person.Goal.SERVE_REALM;
+        person.goalReason = "Recruited for military service; martial skill " + person.skills.martial;
+        person.goalUrgency = 78;
+        person.goalUpdatedMinute = currentMinute;
+        person.rememberLifeEvent("Recruited into a regiment", currentMinute);
     }
 
     private void removeFromCivilianJob(Person person) {

@@ -14,6 +14,9 @@ public final class Contract {
     public final long penaltyCoins;
     public final GoodType requiredGood;
     public final int requiredQuantity;
+    /** Why this work exists and how urgently it needs doing. */
+    public String issueReason = "Local notice-board request";
+    public int urgency = 50;
     public ContractStatus status = ContractStatus.OPEN;
     public Long takerPartyId;
     public long resolvedMinute = -1L;
