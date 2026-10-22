@@ -307,6 +307,37 @@ class SiegeParticipationTest {
     }
 
     @Test
+    void settlementAnchorAloneDoesNotPutDistantArmyInSiegeLines() {
+        CampaignSession session = new CampaignSession(9107L);
+        WorldState world = session.getWorld();
+        resetWarsAndSieges(world);
+        List<Realm> realms = sortedRealms(world);
+        Realm attacker = realms.get(0);
+        Realm defender = realms.get(1);
+        WarSystem wars = session.getSimulation().getWarSystem();
+        Army besieger = wars.strongestArmy(attacker.id);
+        assertNotNull(besieger);
+        Settlement target = settlementControlledBy(world, defender.id);
+        long minute = session.getSimulation().getClock().getWorldMinute();
+        War war = new War(world.idGenerator.next(), attacker.id, defender.id,
+                War.WarGoal.PUNITIVE, minute);
+        world.wars.put(war.id, war);
+        placeArmy(besieger, target, Army.ArmyOrder.BESIEGE);
+        Siege siege = wars.beginOrJoinSiege(besieger, target, war, minute);
+        assertEquals(1, wars.activeBesiegingArmies(siege, minute).size());
+
+        besieger.position = new WorldPosition(target.position.x + 100.0,
+                target.position.y + 100.0);
+        assertEquals(target.id, besieger.currentSettlementId);
+        assertTrue(wars.activeBesiegingArmies(siege, minute).isEmpty(),
+                "an army token far from the walls must not contribute merely because "
+                        + "its last settlement id names the target");
+        CommandResult storm = wars.assaultSiege(siege.id, false, minute);
+        assertFalse(storm.accepted);
+        assertEquals("SIEGE_NOT_READY", storm.reasonCode);
+    }
+
+    @Test
     void reliefVictoryOverLeadDoesNotBreakSiegeWhileSupportHoldsLines() {
         CampaignSession session = new CampaignSession(9106L);
         WorldState world = session.getWorld();

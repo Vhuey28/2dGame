@@ -2381,6 +2381,9 @@ public final class CampaignSession {
     }
 
     public LocalPlayerState enterLocalScene(int localWidth, int localHeight) {
+        // The anchor settlement is not enough: a party travelling or camped in
+        // the countryside must ride onto the settlement before entering it.
+        if (playerState.isTraveling() || !playerState.atSettlement) return null;
         WorldParty party = world.parties.get(playerState.partyId);
         if (party != null) party.state = WorldParty.PartyState.LOCAL_SCENE;
         localScene = new world.local.LocalSceneSimulation(world, playerState.currentSettlementId,
@@ -2399,6 +2402,7 @@ public final class CampaignSession {
     }
 
     public void leaveLocalScene(LocalPlayerState local) {
+        if (localScene == null) return;
         Person person = world.people.get(playerState.personId);
         if (person != null && local != null) {
             person.health.healthLevel = local.health;
@@ -2406,7 +2410,10 @@ public final class CampaignSession {
             if (person.health.healthLevel <= 0.0 && person.alive) person.die(clock.getWorldMinute(), Person.DeathCause.WAR);
         }
         WorldParty party = world.parties.get(playerState.partyId);
-        if (party != null) party.state = WorldParty.PartyState.AT_SETTLEMENT;
+        if (party != null) {
+            party.state = playerState.atSettlement
+                    ? WorldParty.PartyState.AT_SETTLEMENT : WorldParty.PartyState.IN_FIELD;
+        }
         localScene = null;
         refreshSnapshot();
     }

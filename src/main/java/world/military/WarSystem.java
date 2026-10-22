@@ -227,12 +227,26 @@ public final class WarSystem {
     }
 
     private boolean isArmyInSiegePosition(Army army, long settlementId) {
-        return army != null && army.state != Army.ArmyState.DISBANDED
-                && army.state != Army.ArmyState.TRAVELING
-                && army.state != Army.ArmyState.ENGAGED
-                && army.order == Army.ArmyOrder.BESIEGE
-                && army.currentSettlementId == settlementId
-                && military.strength(army) > 0;
+        if (army == null || army.state == Army.ArmyState.DISBANDED
+                || army.state == Army.ArmyState.TRAVELING
+                || army.state == Army.ArmyState.ENGAGED
+                || army.order != Army.ArmyOrder.BESIEGE
+                || army.currentSettlementId != settlementId
+                || military.strength(army) <= 0) {
+            return false;
+        }
+        Settlement settlement = world.geography.getSettlement(settlementId);
+        if (settlement == null || settlement.position == null || army.position == null
+                || !Double.isFinite(settlement.position.x)
+                || !Double.isFinite(settlement.position.y)
+                || !Double.isFinite(army.position.x)
+                || !Double.isFinite(army.position.y)) {
+            return false;
+        }
+        // currentSettlementId can be an administrative anchor while an army is
+        // in the countryside; only a token actually at the walls is in position.
+        return Math.hypot(army.position.x - settlement.position.x,
+                army.position.y - settlement.position.y) <= 12.0;
     }
 
     private boolean hasBesiegerMarchingToJoin(Siege siege, War war, Settlement settlement) {

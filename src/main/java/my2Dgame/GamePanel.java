@@ -1381,6 +1381,12 @@ public class GamePanel extends JPanel implements Runnable{
 			teleportPlayerForMap(localMap);
 			campaignLocalPlayerState = campaignSession.enterLocalScene(
 				getCurrentMapWidthTiles() * tileSize, getCurrentMapHeightTiles() * tileSize);
+			if (campaignLocalPlayerState == null) {
+				campaignSnapshot = campaignSession.getSnapshot();
+				currentLayer = GameLayer.WORLD_MAP;
+				showCampaignNotice("Ride onto a settlement to enter its local view.");
+				return;
+			}
 			player.health = campaignLocalPlayerState.health;
 			syncCampaignHeroesFromParty();
 			campaignLocalPlaceholders.clear();
@@ -4847,9 +4853,23 @@ System.nanoTime();
 				int mapBottom = activeCampaignTab == CampaignTab.OVERVIEW
 						? screenHeight - 32 : screenHeight - 39 - panelHeight;
 				Rectangle legend = new Rectangle(screenWidth - 276, screenHeight - 102, 268, 62);
-				boolean onLegend = activeCampaignTab == CampaignTab.OVERVIEW
-						&& legend.contains(point);
-				if (point.y < mapBottom && !onLegend) {
+				int eventLines = 0;
+				if (campaignSnapshot != null && campaignSnapshot.player != null) {
+					for (int i = campaignSnapshot.recentEvents.size() - 1;
+							i >= 0 && eventLines < 4; i--) {
+						String line = readableEvent(campaignSnapshot.recentEvents.get(i));
+						if (line != null && !line.isBlank()) eventLines++;
+					}
+				}
+				int statusLines = campaignSnapshot != null
+						&& findCommandedArmy(campaignSnapshot) != null ? 2 : 1;
+				int statusPanelHeight = campaignSnapshot == null || campaignSnapshot.player == null
+						? 0 : 10 + statusLines * 13 + (eventLines == 0 ? 0 : 7 + eventLines * 12);
+				Rectangle statusPanel = new Rectangle(8,
+						screenHeight - 40 - statusPanelHeight, 354, statusPanelHeight);
+				boolean onOverviewPanel = activeCampaignTab == CampaignTab.OVERVIEW
+						&& (legend.contains(point) || statusPanel.contains(point));
+				if (point.y < mapBottom && !onOverviewPanel) {
 					campaignFollowArmyId = null;
 					campaignFollowCaravanId = null;
 					campaignFollowAnchorSettlementId = null;

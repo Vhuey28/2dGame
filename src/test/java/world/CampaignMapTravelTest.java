@@ -3,6 +3,7 @@ package world;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
@@ -191,6 +192,8 @@ class CampaignMapTravelTest {
         assertEquals(targetY, enRoute.player.travelDestinationWorldY, 0.001);
         assertFalse(enRoute.player.atSettlement);
         assertTrue(enRoute.player.travelEtaMinutes > 0L);
+        assertNull(session.enterLocalScene(),
+                "a travelling party cannot enter its anchor settlement's local scene");
 
         advanceWorldMinutes(session, WorldConfig.MINUTES_PER_HOUR);
         assertTrue(player.isTraveling());
@@ -204,6 +207,9 @@ class CampaignMapTravelTest {
         assertEquals(targetY, party.position.y, 0.001);
         assertEquals(origin.id, player.currentSettlementId);
         assertFalse(session.getSnapshot().player.atSettlement);
+        assertNull(session.enterLocalScene(),
+                "a party camped in the field cannot enter a settlement remotely");
+        assertEquals(WorldParty.PartyState.IN_FIELD, party.state);
 
         assertTrue(session.beginTravelTo(origin.id).accepted);
         advanceWorldMinutes(session, WorldConfig.MINUTES_PER_DAY);
